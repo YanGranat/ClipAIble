@@ -473,26 +473,7 @@ export async function finalizeInitialization(modules, initAllCustomSelects, setC
     // Continue initialization even if initAllCustomSelects fails
   }
   
-  // Check current processing state
-  try {
-    await coreModule.checkProcessingState();
-  } catch (error) {
-    logError('CRITICAL: checkProcessingState() failed in init()', error);
-    // Continue initialization even if checkProcessingState fails
-  }
-  
-  try {
-    if (coreModule.checkSummaryStatus) await coreModule.checkSummaryStatus();
-  } catch (error) {
-    logError('CRITICAL: checkSummaryStatus() failed in init()', error);
-  }
-  try {
-    if (coreModule.checkKeyThesesStatus) await coreModule.checkKeyThesesStatus();
-  } catch (error) {
-    logError('CRITICAL: checkKeyThesesStatus() failed in init()', error);
-  }
-
-  // Start polling for state updates
+  // Each view can start observing immediately without waiting on the others.
   try {
     coreModule.startStatePolling();
   } catch (error) {

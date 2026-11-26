@@ -26,7 +26,7 @@ import { isProviderModelReady, resolveProviderApiKey, readApiKeyDraft } from '..
  * @param {function(): void} deps.startStatePolling - Start state polling function
  * @param {() => Promise<import('../../scripts/state/processing-messages.js').ProcessingSnapshot|void>} deps.checkProcessingState - Read the current worker state
  * @param {() => string|null} [deps.getPresentedProcessingRunId] - Running task currently displayed
- * @param {() => void} [deps.noteProcessingAdmission] - Discard popup observations made before admission
+ * @param {(runId: string) => void} [deps.noteProcessingAdmission] - Discard popup observations made before admission
  * @param {Object} deps.stateRefs - State references object
  * @param {import('../../scripts/types.js').SettingsModule} [deps.settingsModule] - Settings module (optional, for getVoiceIdByIndex)
  * @returns {Object} Processing functions (handleSavePdf, handleCancel, handleGenerateSummary, etc.)
@@ -288,6 +288,7 @@ export function initProcessing(deps) {
       ? settingsModule?.getVoiceIdByIndex?.(settings.audioProvider?.value || 'openai', settings.audioVoice.selectedIndex) : null;
     let preparing = false;
     let admitted = false;
+    let observingExistingRun = false;
     let failed = false;
     log('=== handleSavePdf: ENTRY ===', {
       timestamp: Date.now()
@@ -630,7 +631,8 @@ export function initProcessing(deps) {
           linkColor: settings.linkColor ? settings.linkColor.value : '#0066cc',
           stylePreset: settings.stylePreset ? settings.stylePreset.value : 'dark',
           tabId: tab.id,
-          // Audio settings
+          // Narration settings are used only for audio exports.
+          ...(outputFormat === 'audio' ? {
           audioProvider,
           // CRITICAL: Get actual voice ID, not index
           // If audioVoice.value is a number (index), get the actual value from options
@@ -757,12 +759,12 @@ export function initProcessing(deps) {
           respeecherRepetitionPenalty: settings.respeecherRepetitionPenalty ? parseFloat(settings.respeecherRepetitionPenalty.value) : 1.0,
           respeecherTopP: settings.respeecherTopP ? parseFloat(settings.respeecherTopP.value) : 1.0,
           googleTtsApiKey: readApiKeyDraft(settings.googleTtsApiKey),
-          geminiApiKey: settings.geminiApiKey?.dataset.encrypted || null,
           qwenApiKey: readApiKeyDraft(settings.qwenApiKey),
           qwenModel: settings.qwenModel?.value || DEFAULT_QWEN_TTS_MODEL,
           qwenWorkspaceId: settings.qwenWorkspaceId?.value.trim() || '',
           qwenRegion: settings.qwenRegion?.value || 'singapore',
           respeecherApiKey: readApiKeyDraft(settings.respeecherApiKey)
+          } : {})
         }
       });
       
@@ -791,6 +793,15 @@ export function initProcessing(deps) {
         throw Object.assign(new Error(friendly.message), friendly);
       }
 
+      if (response?.started === false && response.busy === true && isValidProcessingRunId(response.activeRunId)) {
+        if (attempt !== latestSaveAttempt) return;
+        // The new request was not admitted. Follow the worker's current run, not this reply's snapshot.
+        observingExistingRun = true;
+        if (!stateRefs.statePollingTimeout?.current) startStatePolling();
+        await checkProcessingState();
+        return;
+      }
+
       if (response?.started !== true || !isValidProcessingRunId(response.processingRunId) || response.success === false || (response.error && typeof response.error !== 'string')) {
         const translationKey = response?.translationKey || 'errorProcessingNotStarted';
         const translationParams = response?.translationParams || {};
@@ -816,7 +827,7 @@ export function initProcessing(deps) {
       }
       admitted = true;
       if (attempt !== latestSaveAttempt) return;
-      noteProcessingAdmission?.();
+      noteProcessingAdmission?.(response.processingRunId);
       
       log('=== handleSavePdf: Processing started successfully ===', {
         timestamp: Date.now()
@@ -850,6 +861,10 @@ export function initProcessing(deps) {
     } catch (error) {
       failed = true;
       if (attempt !== latestSaveAttempt || (elements.apiProviderSelect && elements.apiProviderSelect.value !== provider)) return;
+      if (observingExistingRun || admitted) {
+        logWarn('Failed to read an active processing operation', { error: error?.message });
+        return;
+      }
       const errMsg = error?.message ?? String(error);
       const errStack = error?.stack ?? '';
       const errName = error?.name ?? 'Error';
@@ -886,7 +901,7 @@ export function initProcessing(deps) {
       }
       
     } finally {
-      if (!admitted && attempt === latestSaveAttempt) {
+      if (!admitted && !observingExistingRun && attempt === latestSaveAttempt) {
         if (elements.savePdfBtn) /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = false;
         if (preparing && !failed) {
           const readyText = await t('ready');

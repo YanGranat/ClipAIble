@@ -1,8 +1,32 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { initState } from '../../popup/core/state.js';
+import { finalizeInitialization } from '../../popup/utils/init-helpers.js';
 import { formatMessage } from '../../scripts/locales.js';
 
+beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.unstubAllGlobals());
+
+const running = {
+  isProcessing: true, phase: 'running', currentStage: 'analyzing', statusTranslationKey: 'stageAnalyzing',
+  progress: 3, processingRunId: '7b4087e2-6c9d-44e1-874f-52f829d5a179', outputFormat: 'pdf'
+};
+
+function createObserver(overrides = {}) {
+  const renders = [];
+  vi.stubGlobal('requestAnimationFrame', callback => { renders.push(callback); return 1; });
+  const setStatus = vi.fn(), setProgress = vi.fn(), stopTimerDisplay = vi.fn();
+  const savePdfBtn = { style: {} };
+  const cancelBtn = { style: {}, classList: { toggle: vi.fn() } };
+  const stateRefs = { statePollingTimeout: { current: null } };
+  const state = initState({
+    elements: { savePdfBtn, cancelBtn }, stateRefs, setStatus, setProgress, stopTimerDisplay,
+    checkSummaryStatus: vi.fn(), t: async key => key, ...overrides
+  });
+  async function paint() {
+    while (renders.length) await renders.shift()();
+  }
+  return { state, setStatus, setProgress, stopTimerDisplay, savePdfBtn, cancelBtn, stateRefs, paint, renders };
+}
 
 it('keeps a newer worker snapshot visible when an earlier request returns late', async () => {
   const responses = [];
@@ -117,4 +141,174 @@ it.each([
   expect(setStatus).toHaveBeenCalledExactlyOnceWith('ready', text, null, {
     key, formatKey: 'formatPdf', params: imageTranslationFailureCount ? { format: 'PDF', count: imageTranslationFailureCount } : { format: 'PDF' }
   });
+});
+
+it('renders authoritative progress in the current language while local storage is unavailable', async () => {
+  const t = vi.fn(async (key, lang) => formatMessage(key, lang));
+  vi.stubGlobal('document', { documentElement: { lang: 'ru' } });
+  const { state, setStatus, setProgress, paint } = createObserver({ t });
+  chrome.storage.local.get.mockImplementation(() => new Promise(() => {}));
+  chrome.runtime.sendMessage.mockImplementation((_message, callback) => callback(running));
+  expect(await state.checkProcessingState()).toEqual(running);
+  await paint();
+  expect(t).toHaveBeenCalledWith('stageAnalyzing', 'ru', {});
+  expect(setStatus.mock.lastCall[0]).toBe('processing');
+  expect(setProgress).toHaveBeenCalledWith(3);
+  expect(chrome.storage.local.get).not.toHaveBeenCalled();
+});
+
+it('bounds an explicit read even when neither the worker nor local storage answers', async () => {
+  vi.useFakeTimers();
+  try {
+    const { state } = createObserver();
+    chrome.runtime.sendMessage.mockImplementation(() => {});
+    chrome.storage.local.get.mockImplementation(() => new Promise(() => {}));
+    let finished = false;
+    const pending = state.checkProcessingState().then(result => {
+      finished = true;
+      return result;
+    });
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(finished).toBe(true);
+    expect(await pending).toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('clears unconfirmed progress after a disconnect and repaints the same run after recovery', async () => {
+  vi.useFakeTimers();
+  try {
+    const { state, setStatus, setProgress, stopTimerDisplay, savePdfBtn, cancelBtn, paint } = createObserver();
+    const delayed = [];
+    let connected = true;
+    chrome.runtime.sendMessage.mockImplementation((_message, callback) => {
+      if (connected) callback(running);
+      else delayed.push(callback);
+    });
+    // A worker can refresh this timestamp without advancing the task.
+    chrome.storage.local.get.mockImplementation(async () => ({ processingState: { ...running, lastUpdate: Date.now() } }));
+    state.startStatePolling();
+    await vi.advanceTimersByTimeAsync(0);
+    await paint();
+    expect(state.getPresentedProcessingRunId()).toBe(running.processingRunId);
+    expect(setProgress).toHaveBeenLastCalledWith(3);
+    connected = false;
+    await vi.advanceTimersByTimeAsync(31000);
+    await paint();
+    expect(delayed.length).toBeGreaterThan(1);
+    expect(setStatus).toHaveBeenLastCalledWith('error', 'errorCommunicationFailed', null,
+      { key: 'errorCommunicationFailed', params: {} });
+    expect(setProgress).toHaveBeenLastCalledWith(0, false);
+    expect(stopTimerDisplay).toHaveBeenCalled();
+    expect(state.getPresentedProcessingRunId()).toBeNull();
+    expect(cancelBtn.style.display).toBe('none');
+    expect(savePdfBtn.disabled).toBe(false);
+    delayed[0]({ ...running, progress: 75 });
+    await vi.advanceTimersByTimeAsync(0);
+    await paint();
+    expect(setProgress).toHaveBeenLastCalledWith(0, false);
+    connected = true;
+    await vi.advanceTimersByTimeAsync(10000);
+    await paint();
+    expect(state.getPresentedProcessingRunId()).toBe(running.processingRunId);
+    expect(setStatus.mock.lastCall[0]).toBe('processing');
+    expect(setProgress).toHaveBeenLastCalledWith(3);
+    expect(cancelBtn.style.display).toBe('block');
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('does not substitute a previously saved run after a different admission', async () => {
+  const { state, setStatus, paint } = createObserver();
+  chrome.runtime.sendMessage.mockImplementation((_message, callback) => callback(null));
+  chrome.storage.local.get.mockResolvedValue({ processingState: { ...running, lastUpdate: Date.now() } });
+  const admittedRunId = 'b2f152d6-93ca-4cd9-9cd6-7884cb58a736';
+  state.noteProcessingAdmission(admittedRunId);
+  expect(await state.checkProcessingState()).toBeUndefined();
+  await paint();
+  expect(state.getPresentedProcessingRunId()).toBeNull();
+  expect(setStatus).not.toHaveBeenCalled();
+  chrome.runtime.sendMessage.mockImplementation((_message, callback) => callback({ ...running, processingRunId: admittedRunId }));
+  await state.checkProcessingState();
+  await paint();
+  expect(state.getPresentedProcessingRunId()).toBe(admittedRunId);
+});
+
+it.each(['summary', 'key theses'])('continues polling the document and other panel while the %s read is pending', async panel => {
+  vi.useFakeTimers();
+  try {
+    const summary = vi.fn(async () => {});
+    const keyTheses = vi.fn(async () => {});
+    const [stalled, other] = panel === 'summary' ? [summary, keyTheses] : [keyTheses, summary];
+    stalled.mockImplementation(() => new Promise(() => {}));
+    const { state, setStatus, setProgress, paint } = createObserver({ checkSummaryStatus: summary, checkKeyThesesStatus: keyTheses });
+    let current = running;
+    chrome.runtime.sendMessage.mockImplementation((_message, callback) => callback(current));
+    state.startStatePolling();
+    await vi.advanceTimersByTimeAsync(0);
+    await paint();
+    expect(setProgress).toHaveBeenLastCalledWith(3);
+    await vi.advanceTimersByTimeAsync(20000);
+    await paint();
+    expect(setStatus.mock.lastCall[0]).toBe('processing');
+    expect(setProgress).toHaveBeenLastCalledWith(3);
+    current = { ...running, isProcessing: false, phase: 'complete', statusTranslationKey: 'statusDone', progress: 100 };
+    await vi.advanceTimersByTimeAsync(2000);
+    await paint();
+    expect(setStatus.mock.lastCall[0]).toBe('ready');
+    expect(stalled).toHaveBeenCalledOnce();
+    expect(other.mock.calls.length).toBeGreaterThan(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('observes the current operation when the popup reopens with an independent panel read pending', async () => {
+  vi.useFakeTimers();
+  try {
+    const checkSummaryStatus = vi.fn(() => new Promise(() => {}));
+    const { state, setProgress, paint } = createObserver({ checkSummaryStatus });
+    chrome.runtime.sendMessage.mockImplementation((_message, callback) => callback(running));
+    vi.stubGlobal('document', { getElementById: () => null, documentElement: { lang: 'en' } });
+    let initialized = false;
+    const pending = finalizeInitialization({
+      settingsModule: { loadSettings: async () => {} },
+      uiModule: { applyLocalization: async () => {}, applyTheme: () => {} },
+      handlersModule: { setupEventListeners: () => {} },
+      coreModule: { ...state, checkSummaryStatus }
+    }, () => {}).then(() => { initialized = true; });
+    await vi.advanceTimersByTimeAsync(1);
+    await paint();
+    expect(initialized).toBe(true);
+    await pending;
+    expect(checkSummaryStatus).toHaveBeenCalledOnce();
+    expect(state.getPresentedProcessingRunId()).toBe(running.processingRunId);
+    expect(setProgress).toHaveBeenLastCalledWith(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('does not render or resume polling after its popup releases the timer owner', async () => {
+  vi.useFakeTimers();
+  try {
+    const { state, setStatus, stateRefs, paint } = createObserver();
+    let acknowledge;
+    chrome.runtime.sendMessage.mockImplementation((_message, callback) => { acknowledge = callback; });
+    state.startStatePolling();
+    state.startStatePolling();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledOnce();
+    clearTimeout(stateRefs.statePollingTimeout.current);
+    stateRefs.statePollingTimeout.current = null;
+    acknowledge(running);
+    await vi.advanceTimersByTimeAsync(20000);
+    await paint();
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledOnce();
+    expect(setStatus).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
 });

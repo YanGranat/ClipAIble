@@ -554,6 +554,11 @@ export function getProcessingState() {
   return { ...processingState, processingRunId };
 }
 
+/** Include reservations that precede the first published running snapshot. */
+export function getProcessingAdmissionOwner() {
+  return startingRunId ?? (processingState.isProcessing ? processingRunId : null);
+}
+
 /**
  * Update processing state
  * @param {Partial<ProcessingState> & {stage?: string}} updates - State updates
@@ -823,7 +828,7 @@ export async function setError(error, stopKeepAlive, runId) {
  * @returns {Promise<boolean>} True if started, false if already processing
  */
 export async function startProcessing(startKeepAlive, onStarted) {
-  if (processingState.isProcessing || startingRunId !== null) {
+  if (getProcessingAdmissionOwner()) {
     logWarn('Already processing, rejecting new request');
     return false;
   }

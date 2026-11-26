@@ -107,7 +107,8 @@ it('preserves the clicked document settings and keys during page acquisition', a
   elements.bgColor.value = '#654321';
   elements.googleTtsApiKey.value = 'synthetic-later-key';
   finish(); await operation;
-  expect(packet()).toMatchObject({ generateToc: true, bgColor: '#123456', googleTtsApiKey: 'synthetic-speech-key' });
+  expect(packet()).toMatchObject({ generateToc: true, bgColor: '#123456' });
+  expect(packet()).not.toHaveProperty('googleTtsApiKey');
 });
 
 it('selects the source tab before asynchronous credential work', async () => {

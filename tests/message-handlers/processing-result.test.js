@@ -31,13 +31,59 @@ describe('processing admission responses', () => {
     routeMessage({ action: 'processArticle', data: {} }, { id, url: chrome.runtime.getURL('popup.html') }, send, {});
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ success: false, translationKey: 'errorMessageTooLarge', translationParams: {} }));
   });
-  it('returns a typed failure for an already-running task before invoking a second processor', () => {
+  it('reports the existing owner without invoking a second processor', async () => {
     mocks.sizeValid = true;
-    vi.spyOn(state, 'getProcessingState').mockReturnValue({ isProcessing: true });
-    const start = vi.fn(), send = vi.fn();
-    routeMessage({ action: 'processArticle', data: {} }, { id: chrome.runtime.id, url: chrome.runtime.getURL('popup.html') }, send, { startArticleProcessing: start });
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ started: false, success: false, translationKey: 'errorProcessingNotStarted' }));
-    expect(start).not.toHaveBeenCalled();
+    await state.resetState();
+    try {
+      expect(await state.startProcessing()).toBe(true);
+      const activeRunId = state.getProcessingRunId();
+      const start = vi.fn(), send = vi.fn();
+      routeMessage({ action: 'processArticle', data: {} }, { id: chrome.runtime.id, url: chrome.runtime.getURL('popup.html') }, send, { startArticleProcessing: start });
+      expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ started: false, success: false, busy: true, activeRunId }));
+      expect(start).not.toHaveBeenCalled();
+      expect(state.getProcessingState()).toMatchObject({ processingRunId: activeRunId, isProcessing: true });
+    } finally {
+      await state.resetState();
+    }
+  });
+
+  it('distinguishes a pending reservation from an idle worker', async () => {
+    await state.resetState();
+    let releaseLanguage;
+    chrome.storage.local.get.mockImplementationOnce(() => new Promise(resolve => { releaseLanguage = resolve; }));
+    const reservation = state.startProcessing();
+    try {
+      expect(state.getProcessingState().isProcessing).toBe(false);
+      const start = vi.fn(), send = vi.fn();
+      handleProcessArticle({ data: {} }, {}, send, start, vi.fn());
+      expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        started: false, busy: true, activeRunId: state.getProcessingRunId()
+      }));
+      expect(start).not.toHaveBeenCalled();
+    } finally {
+      releaseLanguage?.({ ui_language: 'en' });
+      await reservation;
+      await state.resetState();
+    }
+  });
+
+  it('does not borrow a validation error from a previous run', async () => {
+    await state.resetState();
+    try {
+      await state.startProcessing();
+      await state.setError({ message: 'Previous validation failed', translationKey: 'errorInvalidKey' });
+      const rejected = await new Promise(resolve => {
+        handleProcessArticle({ data: {} }, {}, resolve, async data => {
+          data.processingRunId = crypto.randomUUID();
+          return false;
+        }, vi.fn());
+      });
+      expect(rejected).toMatchObject({ started: false, translationKey: 'errorProcessingNotStarted' });
+      expect(rejected.error).not.toBe('Previous validation failed');
+      expect(rejected.busy).toBeUndefined();
+    } finally {
+      await state.resetState();
+    }
   });
 });
 

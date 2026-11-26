@@ -176,9 +176,21 @@ it.each([
 
 it('rejects an invalid format before extraction or generation', async () => {
   const { reply } = request('selector', { outputFormat: 'invalid' });
-  expect(await reply).toMatchObject({ started: false, translationKey: 'errorProcessingNotStarted' });
+  expect(await reply).toMatchObject({ started: false, translationKey: 'errorValidation' });
   expect(getProcessingState().error).toBeTruthy();
   for (const process of [processWithoutAI, processWithSelectorMode, processWithExtractMode]) expect(process).not.toHaveBeenCalled();
+  expect(generate).not.toHaveBeenCalled();
+});
+
+it('reports the image preflight reason before any selector request starts', async () => {
+  const { reply } = request('selector', {
+    outputFormat: 'pdf', language: 'fr', translateImages: true, imageTranslationProvider: 'gemini',
+    apiKey: 'synthetic-key', model: 'gemini-4-neon'
+  });
+  expect(await reply).toMatchObject({ started: false, success: false,
+    translationKey: 'errorImageKeyRequired', translationParams: { provider: 'Google' } });
+  expect(getProcessingState()).toMatchObject({ isProcessing: false, errorTranslationKey: 'errorImageKeyRequired' });
+  expect(processWithSelectorMode).not.toHaveBeenCalled();
   expect(generate).not.toHaveBeenCalled();
 });
 

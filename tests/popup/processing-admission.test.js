@@ -8,7 +8,7 @@ import { STORAGE_KEYS } from '../../popup/constants.js';
 import { initializeDOMElements } from '../../popup/utils/init-helpers.js';
 import { getUILanguage, t } from '../../scripts/locales.js';
 
-let elements, processing, status, polling, toast, presentedRunId, checkState;
+let elements, processing, status, polling, toast, presentedRunId, checkState, noteAdmission, warn;
 const admittedRunId = '7b4087e2-6c9d-44e1-874f-52f829d5a179';
 const page = { html: '<article><p>A complete article observation.</p></article>', url: 'https://example.test/observation', title: 'Field observation' };
 beforeEach(() => {
@@ -27,10 +27,12 @@ beforeEach(() => {
   const noop = vi.fn();
   presentedRunId = admittedRunId;
   checkState = vi.fn(async () => {});
+  noteAdmission = vi.fn();
+  warn = vi.fn();
   processing = initProcessing({ elements, t, setStatus: status, setProgress: noop, showToast: toast,
-    log: noop, logError: noop, logWarn: noop, stopTimerDisplay: noop, decryptApiKey: async value => value,
+    log: noop, logError: noop, logWarn: warn, stopTimerDisplay: noop, decryptApiKey: async value => value,
     getProviderFromModel: () => 'claude', startStatePolling: polling, checkProcessingState: checkState,
-    getPresentedProcessingRunId: () => presentedRunId, stateRefs: {} });
+    getPresentedProcessingRunId: () => presentedRunId, noteProcessingAdmission: noteAdmission, stateRefs: {} });
 });
 
 it.each([{ started: false }, undefined, { error: { message: 'Unavailable' } }, { started: true }])('does not report admission for an unconfirmed response: %j', async response => {
@@ -63,6 +65,43 @@ it('keeps an admitted operation active until its state is polled', async () => {
   expect(polling).toHaveBeenCalledOnce();
   expect(elements.savePdfBtn.disabled).toBe(true);
   expect(toast).not.toHaveBeenCalled();
+  expect(noteAdmission).toHaveBeenCalledExactlyOnceWith(admittedRunId);
+});
+
+it('follows worker state without showing a failed start for an existing export', async () => {
+  chrome.runtime.sendMessage.mockResolvedValue({
+    started: false, success: false, busy: true, activeRunId: admittedRunId,
+    translationKey: 'errorProcessingNotStarted'
+  });
+  await processing.handleSavePdf();
+  expect(checkState).toHaveBeenCalledOnce();
+  expect(polling).toHaveBeenCalledOnce();
+  expect(noteAdmission).not.toHaveBeenCalled();
+  expect(elements.savePdfBtn.disabled).toBe(true);
+  expect(status.mock.calls.some(([kind]) => kind === 'error')).toBe(false);
+  expect(toast).not.toHaveBeenCalled();
+});
+
+it('passes an owned preflight failure through to the popup', async () => {
+  chrome.runtime.sendMessage.mockResolvedValue({
+    started: false, success: false, error: 'Image provider key required',
+    translationKey: 'errorImageKeyRequired', translationParams: { provider: 'Google' }
+  });
+  await processing.handleSavePdf();
+  expect(status.mock.lastCall[3]).toMatchObject({ key: 'errorImageKeyRequired', params: { provider: 'Google' } });
+  expect(elements.savePdfBtn.disabled).toBe(false);
+  expect(polling).not.toHaveBeenCalled();
+});
+
+it('omits narration settings for PDF exports', async () => {
+  elements.mainFormatSelect.value = 'pdf';
+  elements.audioVoice.replaceChildren();
+  await processing.handleSavePdf();
+  const packet = chrome.runtime.sendMessage.mock.calls.find(([value]) => value.action === 'processArticle')?.[0];
+  expect(packet?.data.outputFormat).toBe('pdf');
+  expect(packet.data).not.toHaveProperty('audioVoice');
+  expect(packet.data).not.toHaveProperty('googleTtsApiKey');
+  expect(warn.mock.calls.some(([message]) => message.includes('DEFAULT VOICE'))).toBe(false);
 });
 
 it.each(['export', 'summary', 'key theses'])('does not start %s with the previous provider model during a provider switch', async kind => {

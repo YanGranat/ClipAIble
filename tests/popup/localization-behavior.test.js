@@ -15,6 +15,7 @@ let ui;
 let elements;
 beforeEach(() => {
   language = 'en';
+  document.documentElement.lang = 'en';
   vi.stubGlobal('chrome', { storage: { local: { get: vi.fn(async () => ({ ui_language: language })) } }, i18n: { getUILanguage: () => 'en' } });
   vi.stubGlobal('requestAnimationFrame', callback => { callback(); return 0; });
   document.body.innerHTML = `

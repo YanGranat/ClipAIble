@@ -2,7 +2,7 @@
 
 /** @typedef {'idle'|'running'|'cancelled'|'failed'|'complete'} ProcessingPhase */
 /** @typedef {Partial<import('../types.js').ProcessingState> & {isProcessing: boolean, phase?: ProcessingPhase}} ProcessingSnapshot */
-/** @typedef {{started: true, processingRunId: string} | {started: false, success: false, error: string, translationKey?: string, translationParams?: Object}} ProcessingAdmission */
+/** @typedef {{started: true, processingRunId: string} | {started: false, success: false, error: string, translationKey?: string, translationParams?: Object, busy?: true, activeRunId?: string}} ProcessingAdmission */
 /** @typedef {{success: true, cancelledRunId?: string} | {success: false, error: string, translationKey?: string, translationParams?: Object}} ProcessingCancellation */
 
 /** @param {unknown} runId */

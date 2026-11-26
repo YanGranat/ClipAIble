@@ -56,7 +56,7 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model, option
     userPrompt += `\n\nThe previous selector set returned no article content when applied to this page. Recheck the positive selectors and exclusions against the same HTML without assuming either has priority. Return a corrected selector set in the required JSON format.\nPrevious selector set:\n${JSON.stringify(repairFeedback.previousSelectors)}`;
   }
   
-  logDebug('Sending request to AI...', { model, promptLength: userPrompt.length });
+  logDebug('Preparing selector request', { model, promptLength: userPrompt.length });
   
   await options.checkCancelled?.();
   const rawResponse = await callAI(systemPrompt, userPrompt, apiKey, model, true, options);
@@ -1196,7 +1196,7 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   const useCache = data.useCache !== false;
 
   if (!useCache) {
-    log('⏱️ Selector cache disabled (useCache=false); AI call will run (~5s)', { url: url?.slice?.(0, 60) });
+    log('Selector cache disabled; requesting selectors from AI');
   }
 
   if (useCache) {
@@ -1206,7 +1206,7 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
       await updateProgress(PROCESSING_STAGES.ANALYZING, 'statusUsingCachedSelectors', 3);
       log(`💾 Using cached selectors (${cachedEntry.successCount || 0} previous successes)`, { url });
     } else {
-      log('⏱️ No cached selectors for this domain; requesting from AI (~5s)', { url: url?.slice?.(0, 60) });
+      log('No cached selectors for this domain; requesting selectors from AI');
     }
   }
 
@@ -1230,7 +1230,23 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
       }
 
       selectorAiCalls++;
-      selectors = await getSelectorsFromAI(htmlForAnalysis, url, title, apiKey, model, requestOptions, repairFeedback);
+      let requestActive = true;
+      let waiting = false;
+      try {
+        selectors = await getSelectorsFromAI(htmlForAnalysis, url, title, apiKey, model, {
+          ...requestOptions,
+          onRequestStart: () => {
+            if (!requestActive || requestOptions.signal?.aborted) return;
+            requestOptions.onRequestStart?.();
+            if (waiting) return;
+            waiting = true;
+            const key = 'statusWaitingForSelectorResponse';
+            updateState({ status: tSync(key, uiLang), statusTranslationKey: key, statusTranslationParams: {} });
+          }
+        }, repairFeedback);
+      } finally {
+        requestActive = false;
+      }
       if (!selectors) throw new Error(tSync('errorAiEmptySelectors', uiLang));
     }
 

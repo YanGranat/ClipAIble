@@ -172,7 +172,9 @@ export function initOrchestration(deps) {
       const uiLang = await getUILanguageCached();
       await setError({
         message: tSync('errorPdfUrlNotFound', uiLang) || 'Could not determine PDF file URL',
-        code: ERROR_CODES.VALIDATION_ERROR
+        code: ERROR_CODES.VALIDATION_ERROR,
+        translationKey: 'errorPdfUrlNotFound',
+        translationParams: {}
       }, stopKeepAlive, data.processingRunId);
       return false;
     }

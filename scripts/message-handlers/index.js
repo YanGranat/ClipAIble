@@ -544,22 +544,6 @@ export function routeMessage(request, sender, sendResponse, deps) {
     
   };
 
-  // CRITICAL: Prevent concurrent processArticle requests
-  // Check if processing is already in progress for processArticle action
-  if (request.action === 'processArticle') {
-    const currentState = getProcessingState();
-    if (currentState.isProcessing) {
-      logWarn('=== routeMessage: processArticle rejected - already processing ===', {
-        action: request.action,
-        currentStatus: currentState.status,
-        timestamp: Date.now()
-      });
-      safeSendResponse({ started: false, success: false, error: tSync('errorProcessingNotStarted', 'en'),
-        translationKey: 'errorProcessingNotStarted', translationParams: {} });
-      return true;
-    }
-  }
-  
   // Get handler for action
   const handler = handlers[request.action];
 

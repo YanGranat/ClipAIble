@@ -122,7 +122,6 @@ export function setupPanelHandlers(deps) {
   if (elements.toggleSettings) {
     elements.toggleSettings.addEventListener('click', (e) => {
       e.stopPropagation();
-      e.preventDefault();
       
       const isOpen = elements.settingsPanel.classList.contains('open');
       

@@ -6,7 +6,7 @@
  * @typedef {import('../../types.js').AIProvider} AIProvider
  */
 
-import { log, logError, logWarn } from '../logging.js';
+import { log, logDebug, logError, logWarn } from '../logging.js';
 import { getProcessingState } from '../../state/processing.js';
 import { getInstallationKey } from './key-store.js';
 
@@ -200,7 +200,7 @@ export async function decryptApiKey(encryptedBase64) {
 
   // If not encrypted (plain text), return as is (for backward compatibility)
   if (!encryptedBase64.startsWith(ENCRYPTION_PREFIX) && !isEncrypted(encryptedBase64)) {
-    logWarn('API key appears to be plain text, returning as is');
+    logDebug('Using an already unencrypted API key');
     return encryptedBase64;
   }
 

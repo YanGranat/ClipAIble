@@ -4,10 +4,24 @@
 
 import { log, logError } from '../utils/logging.js';
 import { handleError, getErrorTranslation } from '../utils/error-handler.js';
-import { getProcessingState, setError, updateState, isCancelled, isValidProcessingRunId } from '../state/processing.js';
+import { getProcessingAdmissionOwner, getProcessingState, setError, updateState, isCancelled, isValidProcessingRunId } from '../state/processing.js';
 import { finalizeProcessing } from '../utils/pipeline-helpers.js';
 import { generatePdfWithDebugger } from '../generation/pdf.js';
 import { tSync } from '../locales.js';
+
+/** @returns {Extract<import('../state/processing-messages.js').ProcessingAdmission, { started: false }>} */
+function rejectedAdmission(data) {
+  const state = getProcessingState();
+  const runId = data?.processingRunId;
+  const error = isValidProcessingRunId(runId) && state.processingRunId === runId && !state.isProcessing ? state.error : null;
+  if (error) {
+    return { started: false, success: false, error, translationKey: state.errorTranslationKey || undefined,
+      translationParams: state.errorTranslationParams || {} };
+  }
+  const activeRunId = !isValidProcessingRunId(runId) ? getProcessingAdmissionOwner() : null;
+  return { started: false, success: false, error: tSync('errorProcessingNotStarted', 'en'),
+    translationKey: 'errorProcessingNotStarted', translationParams: {}, ...(activeRunId ? { busy: true, activeRunId } : {}) };
+}
 
 /**
  * Handle processArticle request
@@ -19,6 +33,11 @@ import { tSync } from '../locales.js';
  * @returns {boolean} - Always returns true for async handlers
  */
 export function handleProcessArticle(request, sender, sendResponse, startArticleProcessing, stopKeepAlive) {
+  if (getProcessingAdmissionOwner()) {
+    sendResponse(rejectedAdmission(null));
+    return true;
+  }
+
   // DETAILED LOGGING: Voice in processArticle request
   // CRITICAL: Always log voice information, even if not present
   log('[ClipAIble Background] ===== VOICE IN processArticle REQUEST =====', {
@@ -152,10 +171,7 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
       try {
         const runId = request.data.processingRunId;
         /** @type {import('../state/processing-messages.js').ProcessingAdmission} */
-        const response = result === true && isValidProcessingRunId(runId) ? { started: true, processingRunId: runId } : {
-          started: false, success: false, error: tSync('errorProcessingNotStarted', 'en'),
-          translationKey: 'errorProcessingNotStarted', translationParams: {}
-        };
+        const response = result === true && isValidProcessingRunId(runId) ? { started: true, processingRunId: runId } : rejectedAdmission(request.data);
         sendResponse(response);
         log('=== handleProcessArticle: Response sent ===', {
           timestamp: Date.now()

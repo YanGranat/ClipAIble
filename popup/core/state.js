@@ -12,9 +12,26 @@ const STAGE_MESSAGES = {
   loading_images: 'stageLoadingImages', generating: 'stageGenerating', complete: 'stageComplete'
 };
 
+const STATE_READ_TIMEOUT_MS = 5000;
+const STATE_RECOVERY_WINDOW_MS = 15000;
+const STATE_RECOVERY_POLL_MS = 2000;
+
+/**
+ * @template T
+ * @param {Promise<T>} attempt
+ * @returns {Promise<T>}
+ */
+function withinStateReadDeadline(attempt) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Processing state read timed out')), STATE_READ_TIMEOUT_MS);
+  });
+  return Promise.race([attempt, deadline]).finally(() => clearTimeout(timer));
+}
+
 /** @returns {Promise<ProcessingSnapshot|null>} */
 function requestProcessingState() {
-  return new Promise((resolve, reject) => {
+  return withinStateReadDeadline(new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ action: 'getState' }, response => {
       const transportError = chrome.runtime.lastError;
       if (transportError) {
@@ -31,7 +48,7 @@ function requestProcessingState() {
         resolve(readProcessingSnapshot(response));
       }
     });
-  });
+  }));
 }
 
 /**
@@ -39,8 +56,8 @@ function requestProcessingState() {
  * @param {Object} deps - Dependencies
  * @param {Object} deps.elements - DOM elements
  * @param {Function} deps.t - Translation function
- * @param {Function} deps.log - Log function
- * @param {Function} deps.logError - Error logging function
+ * @param {Function} [deps.log] - Log function
+ * @param {Function} [deps.logError] - Error logging function
  * @param {Function} deps.logWarn - Warning logging function
  * @param {Function} deps.setStatus - Set status function
  * @param {Function} deps.setProgress - Set progress function
@@ -55,8 +72,6 @@ export function initState(deps) {
   const {
     elements,
     t,
-    log,
-    logError,
     logWarn,
     setStatus,
     setProgress,
@@ -67,9 +82,16 @@ export function initState(deps) {
     stateRefs
   } = deps;
 
+  // Read the language already applied to this view. A storage read is not needed
+  // to display progress, including when background communication is interrupted.
+  function translate(key, params) {
+    const language = globalThis.document?.documentElement.lang.toLowerCase().split(/[-_]/)[0];
+    return t(key, language === 'uk' ? 'ua' : language || 'en', params);
+  }
+
   async function mapStageLabel(stageId) {
     const key = STAGE_MESSAGES[stageId];
-    return key ? t(key) : null;
+    return key ? translate(key) : null;
   }
 
   let renderRevision = 0;
@@ -79,6 +101,10 @@ export function initState(deps) {
   let presentedRunId = null;
   /** @type {ProcessingSnapshot|null} */
   let lastScheduledState = null;
+  /** @type {number|null} */
+  let recoveryStartedAt = null;
+  /** @type {string|null} */
+  let admittedRunId = null;
 
   /** @param {ProcessingSnapshot} state */
   async function preparePresentation(state) {
@@ -87,13 +113,13 @@ export function initState(deps) {
       const key = state.statusTranslationKey || STAGE_MESSAGES[state.currentStage];
       if (key) {
         const params = state.statusTranslationParams || {};
-        return { kind: 'processing', text: await t(key, null, params), translation: { key, params } };
+        return { kind: 'processing', text: await translate(key, params), translation: { key, params } };
       }
       return { kind: 'processing', text: state.status, translation: null };
     }
 
     if (phase === 'failed') {
-      const cancelledText = state.phase === undefined ? await t('statusCancelled') : null;
+      const cancelledText = state.phase === undefined ? await translate('statusCancelled') : null;
       if (!cancelledText || !state.error?.includes(cancelledText)) {
         const errorKeys = {
           auth_error: 'errorAuth', rate_limit: 'errorRateLimit', timeout: 'errorTimeout', network_error: 'errorNetwork',
@@ -101,19 +127,19 @@ export function initState(deps) {
         };
         const key = state.errorTranslationKey || errorKeys[state.errorCode];
         const translation = key ? (state.errorTranslationKey ? { key, params: state.errorTranslationParams || {} } : { key }) : null;
-        const text = translation ? await t(key, null, translation.params).catch(() => state.error) : state.error;
+        const text = translation ? await translate(key, translation.params).catch(() => state.error) : state.error;
         return { kind: 'error', text, translation };
       }
     }
 
-    if (phase === 'complete' || (phase === 'idle' && !state.phase && state.status && state.status === await t('statusDone'))) {
+    if (phase === 'complete' || (phase === 'idle' && !state.phase && state.status && state.status === await translate('statusDone'))) {
       const format = state.outputFormat || elements.mainFormatSelect?.value || elements.outputFormat?.value;
       const formats = { epub: 'formatEpub', fb2: 'formatFb2', markdown: 'formatMarkdown', audio: 'formatAudio' };
       const formatKey = formats[format] || 'formatPdf';
-      const message = getDocumentReadyMessage(await t(formatKey), state.imageTranslationFailureCount);
-      return { kind: 'ready', text: await t(message.key, null, message.params), translation: { ...message, formatKey } };
+      const message = getDocumentReadyMessage(await translate(formatKey), state.imageTranslationFailureCount);
+      return { kind: 'ready', text: await translate(message.key, message.params), translation: { ...message, formatKey } };
     }
-    return { kind: 'ready', text: await t('ready'), translation: { key: 'ready' } };
+    return { kind: 'ready', text: await translate('ready'), translation: { key: 'ready' } };
   }
 
   /** @param {ProcessingSnapshot} state @param {number} revision */
@@ -146,89 +172,62 @@ export function initState(deps) {
     else setProgress(0, false);
   }
 
-  // Check processing state
-  async function checkProcessingState() {
-    const read = ++readRevision;
-    // IMPROVED: Try both SW and storage in parallel for better reliability
-    const [swState, storageState] = await Promise.allSettled([
-      // Try to get state from service worker
-      requestProcessingState(),
-      // Try to get state from storage (fallback)
-      chrome.storage.local.get(['processingState']).then(result => result.processingState || null)
-    ]);
-    
-    // Prefer SW state if available
-    if (swState.status === 'fulfilled' && swState.value) {
-      scheduleUIUpdate(swState.value, read);
-      return lastScheduledState;
+  /** Read a recent saved view without assuming the service worker is still running. */
+  async function readRecoverySnapshot() {
+    const { processingState } = await withinStateReadDeadline(chrome.storage.local.get(['processingState']));
+    const state = readProcessingSnapshot(processingState);
+    if (!state?.isProcessing || state.isCancelled || !state.processingRunId) return null;
+    const now = Date.now();
+    if (!Number.isFinite(state.lastUpdate) || now - state.lastUpdate >= STATE_RECOVERY_WINDOW_MS ||
+        state.lastUpdate > now || (Number.isFinite(state.inactivityDeadlineAt) && state.inactivityDeadlineAt <= now)) {
+      return null;
     }
-    
-    // CRITICAL: Don't show old state from storage after extension reload
-    // If SW connection failed (rejected), it means extension was reloaded
-    // In this case, always start with clean state - don't restore old processing state
-    const swConnectionFailed = swState.status === 'rejected';
-    const swConnectionError = swState.status === 'rejected' ? swState.reason?.message || String(swState.reason) : '';
-    const isExtensionReload = swConnectionError.includes('Extension context invalidated') || 
-                              swConnectionError.includes('Receiving end does not exist') ||
-                              swConnectionError.includes('Could not establish connection');
-    
-    if (isExtensionReload) {
-      // Extension was reloaded - don't show old state, start fresh
-      log('Extension reloaded detected - starting with clean state (not restoring old processing state)');
-      return; // Return without updating UI - will show default "ready" state
-    }
-    
-    // Fallback to storage only if SW is available but returned null (processing still active)
-    // This handles cases where SW is running but state hasn't been updated yet
-    // CRITICAL: Don't show cancelled state from storage
-    if (storageState.status === 'fulfilled' && storageState.value && !swConnectionFailed) {
-      /** @type {{isProcessing?: boolean, lastUpdate?: number, isCancelled?: boolean, [key: string]: any}} */
-      const savedState = storageState.value;
-      
-      // Don't show cancelled state - it should be cleared
-      if (savedState.isCancelled) {
-        log('State in storage is cancelled - ignoring (should be cleared)', {
-          timeSinceUpdate: Date.now() - (savedState.lastUpdate || 0)
-        });
-        return;
+    return state;
+  }
+
+  async function observeProcessingState(read, ownsObservation = () => true, forceRender = false) {
+    const isCurrent = () => ownsObservation() && read >= acceptedRead;
+    const superseded = () => ({ state: lastScheduledState, connected: recoveryStartedAt === null, changed: false });
+    try {
+      const state = await requestProcessingState();
+      if (!state) throw new Error('Processing state is unavailable');
+      if (!isCurrent()) return superseded();
+      recoveryStartedAt = null;
+      admittedRunId = null;
+      const changed = scheduleUIUpdate(state, read, false, forceRender);
+      return { state, connected: true, changed };
+    } catch (error) {
+      if (!isCurrent()) return superseded();
+      acceptedRead = read;
+      if (recoveryStartedAt === null) {
+        recoveryStartedAt = Date.now();
+        logWarn?.('Unable to read processing state', { error: error?.message || String(error) });
       }
-      
-      // CRITICAL: Don't show old error state from storage - errors should be cleared on reload
-      // Only show errors if they're very recent (< 10 seconds) and processing is not active
-      if (savedState.error && !savedState.isProcessing) {
-        const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
-        if (timeSinceUpdate > 10 * 1000) {
-          // Old error state - clear it
-          log('Old error state in storage - clearing (extension was reloaded)', {
-            timeSinceUpdate,
-            error: savedState.error,
-            errorCode: savedState.errorCode
-          });
-          return;
+
+      const withinRecoveryWindow = () => Date.now() - recoveryStartedAt < STATE_RECOVERY_WINDOW_MS;
+      const invalidated = error?.message?.includes('Extension context invalidated');
+      if (withinRecoveryWindow() && !invalidated) {
+        const saved = await readRecoverySnapshot().catch(() => null);
+        if (!isCurrent()) return superseded();
+        if (saved && withinRecoveryWindow() && scheduleUIUpdate(saved, read, true)) {
+          return { state: saved, connected: false, changed: true };
         }
       }
-      
-      const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
-      
-      // Only show state from storage if it's very recent (< 30 seconds) and processing is active
-      // This handles quick state updates, not stale state after reload
-      if (timeSinceUpdate < 30 * 1000 && savedState.isProcessing) {
-        logWarn('Using state from storage (SW returned null, state is recent)', {
-          timeSinceUpdate,
-          status: savedState.status
-        });
-        scheduleUIUpdate(readProcessingSnapshot(savedState), read, true);
-        return lastScheduledState;
+      if (!withinRecoveryWindow() || invalidated) {
+        scheduleUIUpdate({
+          phase: 'failed',
+          isProcessing: false,
+          error: 'Failed to communicate with background script',
+          errorTranslationKey: 'errorCommunicationFailed'
+        }, read);
       }
+      return { state: null, connected: false, changed: false };
     }
-    
-    // Log errors if both failed (but don't show old state)
-    if (swState.status === 'rejected' && !isExtensionReload) {
-      logError('Error getting state from background', swState.reason);
-    }
-    if (storageState.status === 'rejected') {
-      logError('Error loading from storage', storageState.reason);
-    }
+  }
+
+  async function checkProcessingState() {
+    const { state } = await observeProcessingState(++readRevision, undefined, true);
+    return state ?? undefined;
   }
 
   // Lightweight state comparison - only check key fields instead of full JSON.stringify
@@ -258,201 +257,67 @@ export function initState(deps) {
   }
 
   let pendingUIUpdate = null;
-  let pollingGeneration = 0;
   let scheduledRenderRevision = 0;
 
-  /** @param {ProcessingSnapshot|null} state @param {number} read @param {boolean} fromStorage */
-  function scheduleUIUpdate(state, read, fromStorage = false) {
-    if (!state || read < acceptedRead) return;
-    if (fromStorage && lastScheduledState && (!lastScheduledState.isProcessing ||
-        state.processingRunId !== lastScheduledState.processingRunId ||
-        (state.progress ?? 0) < (lastScheduledState.progress ?? 0))) return;
+  /** @param {ProcessingSnapshot} state @param {number} read */
+  function scheduleUIUpdate(state, read, fromStorage = false, forceRender = false) {
+    if (read < acceptedRead) return false;
+    if (fromStorage && ((admittedRunId && state.processingRunId !== admittedRunId) ||
+        (lastScheduledState && (!lastScheduledState.isProcessing || state.processingRunId !== lastScheduledState.processingRunId ||
+          (state.progress ?? 0) <= (lastScheduledState.progress ?? 0))))) {
+      return false;
+    }
     acceptedRead = read;
+    const changed = stateChanged(state, lastScheduledState);
     lastScheduledState = state;
+    if (!changed && !forceRender) return false;
     scheduledRenderRevision = ++renderRevision;
-    
-    if (pendingUIUpdate !== null) return;
-    
-    // Schedule via requestAnimationFrame for smooth DOM updates
-    pendingUIUpdate = requestAnimationFrame(async () => {
-      pendingUIUpdate = null;
-      if (lastScheduledState) {
-        await updateUIFromState(lastScheduledState, scheduledRenderRevision);
-      }
-    });
+
+    if (pendingUIUpdate === null) {
+      pendingUIUpdate = requestAnimationFrame(async () => {
+        pendingUIUpdate = null;
+        if (lastScheduledState) await updateUIFromState(lastScheduledState, scheduledRenderRevision);
+      });
+    }
+    return changed;
   }
 
-  // Start polling for state updates
-  function startStatePolling() {
-    const generation = ++pollingGeneration;
-    // Clear existing timeout
-    if (stateRefs.statePollingTimeout.current) {
-      clearTimeout(stateRefs.statePollingTimeout.current);
-    }
-    
-    let pollInterval = 2000; // Default 2s for idle (increased from 1s to reduce load)
-    let failedAttempts = 0;
-    let lastState = null; // Track last state for adaptive polling
-    let noChangeCount = 0; // Count consecutive polls with no changes
-    let isPolling = false; // Flag to prevent concurrent poll() calls
-    
-    async function poll() {
-      // Prevent concurrent calls
-      if (isPolling || generation !== pollingGeneration) {
-        return;
-      }
-      
-      // CRITICAL: For audio format during processing, use longer interval to reduce load
-      // But still poll occasionally to detect completion
-      // If processing is complete (isProcessing === false), always check state to update UI
-      const isAudioFormat = lastState?.outputFormat === 'audio';
-      const isProcessing = lastState?.isProcessing;
-      
-      // If audio is processing, use longer interval but still poll to detect completion
-      // Don't skip polling entirely - we need to detect when processing completes
-      if (isAudioFormat && isProcessing) {
-        // Audio is still processing - use longer interval to reduce load
-        // But poll at least every 5 seconds to detect completion
-        pollInterval = 5000; // Check every 5 seconds during processing
-        // Continue to poll below - don't return, we need to check state
-      }
-      
-      isPolling = true;
-      const read = ++readRevision;
-      try {
-        // For non-audio, use normal polling
-        // Use callback-based API to properly handle lastError
-        const state = await requestProcessingState();
-        if (generation !== pollingGeneration) return;
-        if (!state) throw new Error('Processing state is unavailable');
-        
-        // Use lightweight comparison instead of JSON.stringify
-        const changed = stateChanged(state, lastScheduledState);
-        
-        if (changed) {
-          // State changed - reset adaptive polling
-          noChangeCount = 0;
-          
-          // Schedule UI update with debounce and RAF
-          scheduleUIUpdate(state, read);
-          
-          // Simple polling interval - no special handling for audio
-          if (state.isProcessing) {
-            pollInterval = 500; // 500ms during processing
-          } else {
-            pollInterval = 500; // 500ms after completion to quickly update UI
-          }
-        } else {
-          acceptedRead = Math.max(acceptedRead, read);
-          // State didn't change - use standard interval
-          noChangeCount++;
-          if (state.isProcessing) {
-            pollInterval = 1000; // 1s if no changes during processing
-          } else {
-            pollInterval = 2000; // 2s for idle state
-          }
-        }
-        lastState = lastScheduledState;
-        
-        failedAttempts = 0;
-        
-        await checkSummaryStatus();
-        if (checkKeyThesesStatus) await checkKeyThesesStatus();
+  // A pending side-panel read never delays or duplicates the document observer.
+  function createPanelObserver(callback) {
+    let pending = false;
+    return () => {
+      if (!callback || pending) return;
+      pending = true;
+      void Promise.resolve().then(callback)
+        .catch(error => logWarn?.('Unable to read generation status', { error: error?.message || String(error) }))
+        .finally(() => { pending = false; });
+    };
+  }
 
-      } catch (error) {
-        if (generation !== pollingGeneration) return;
-        failedAttempts++;
-        const errorMsg = error.message || String(error);
-        
-        // CRITICAL: Stop polling if receiver is closed (connection error)
-        if (errorMsg.includes('Could not establish connection') || 
-            errorMsg.includes('Receiving end does not exist') ||
-            errorMsg.includes('Extension context invalidated')) {
-          logWarn('Receiver closed, trying storage fallback before stopping', { error: errorMsg });
-          
-          // IMPROVED: Try storage immediately on connection error (SW likely restarted)
-          try {
-            const stored = await chrome.storage.local.get(['processingState']);
-            if (generation !== pollingGeneration) return;
-            if (stored.processingState) {
-              /** @type {{isProcessing?: boolean, lastUpdate?: number, [key: string]: any}} */
-              const savedState = stored.processingState;
-              if (savedState.isProcessing) {
-                const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
-                // Allow longer timeout for connection errors (SW restart scenario)
-                if (timeSinceUpdate < 5 * 60 * 1000) { // 5 minutes for SW restart recovery
-                  logWarn('Using state from storage after connection error', {
-                    timeSinceUpdate,
-                    status: savedState.status
-                  });
-                  scheduleUIUpdate(readProcessingSnapshot(savedState), read, true);
-                  // Continue polling with longer interval to check if SW recovers
-                  pollInterval = 5000; // 5 seconds
-                  isPolling = false;
-                  stateRefs.statePollingTimeout.current = setTimeout(poll, pollInterval);
-                  return; // Continue polling with storage fallback
-                }
-              }
-            }
-          } catch (e) {
-            logError('Error loading from storage after connection error', e);
-          }
-          
-          // If no valid state in storage, stop polling
-          stateRefs.statePollingTimeout.current = null;
-          return; // Stop polling
-        }
-        
-        logWarn('Failed to get state from background', { attempt: failedAttempts, error: errorMsg });
-        
-        // IMPROVED: Try storage earlier (after 1 failed attempt instead of 3)
-        if (failedAttempts >= 1) {
-          try {
-            const stored = await chrome.storage.local.get(['processingState']);
-            if (generation !== pollingGeneration) return;
-            if (stored.processingState) {
-              /** @type {{isProcessing?: boolean, lastUpdate?: number, [key: string]: any}} */
-              const savedState = stored.processingState;
-              if (savedState.isProcessing) {
-                const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
-                if (timeSinceUpdate < 2 * 60 * 1000) {
-                  logWarn('Using state from storage after SW error', {
-                    attempt: failedAttempts,
-                    timeSinceUpdate,
-                    status: savedState.status
-                  });
-                  scheduleUIUpdate(readProcessingSnapshot(savedState), read, true);
-                }
-              }
-            }
-          } catch (e) {
-            // Ignore storage errors
-          }
-        }
-        
-        const isAudioFormat = lastState?.outputFormat === 'audio';
-        if (isAudioFormat && lastState?.isProcessing) {
-          setTimeout(async () => {
-            await checkSummaryStatus();
-            if (checkKeyThesesStatus) await checkKeyThesesStatus();
-          }, 0);
-        } else {
-          await checkSummaryStatus();
-          if (checkKeyThesesStatus) await checkKeyThesesStatus();
-        }
-        
-        // Increase interval on errors
-        pollInterval = Math.min(pollInterval * 2, 5000);
-      } finally {
-        // Always reset polling flag to allow next poll
-        isPolling = false;
-      }
-      
-      // Schedule next poll
-      if (generation === pollingGeneration) stateRefs.statePollingTimeout.current = setTimeout(poll, pollInterval);
+  const observeSummary = createPanelObserver(checkSummaryStatus);
+  const observeKeyTheses = createPanelObserver(checkKeyThesesStatus);
+
+  function startStatePolling() {
+    const pollTimer = stateRefs.statePollingTimeout;
+    if (!pollTimer || pollTimer.current != null) return;
+
+    function schedulePoll(delay) {
+      const owner = setTimeout(() => { void poll(owner); }, delay);
+      pollTimer.current = owner;
     }
-    
-    poll();
+
+    async function poll(owner) {
+      const ownsObservation = () => pollTimer.current === owner;
+      if (!ownsObservation()) return;
+      observeSummary();
+      observeKeyTheses();
+      const { state, connected, changed } = await observeProcessingState(++readRevision, ownsObservation);
+      if (!ownsObservation()) return;
+      const interval = !connected ? STATE_RECOVERY_POLL_MS : changed ? 500 : state?.isProcessing ? 1000 : 2000;
+      schedulePoll(interval);
+    }
+
+    schedulePoll(0);
   }
 
   return {
@@ -460,7 +325,10 @@ export function initState(deps) {
     startStatePolling,
     updateUIFromState,
     getPresentedProcessingRunId: () => presentedRunId,
-    noteProcessingAdmission() {
+    /** @param {string} [runId] */
+    noteProcessingAdmission(runId) {
+      admittedRunId = runId ?? null;
+      recoveryStartedAt = null;
       acceptedRead = ++readRevision;
       renderRevision++;
       lastScheduledState = null;

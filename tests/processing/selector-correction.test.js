@@ -6,16 +6,16 @@ import { SELECTOR_SYSTEM_PROMPT } from '../../scripts/extraction/prompts.js';
 import { cacheSelectors, getCachedSelectors } from '../../scripts/cache/selectors.js';
 import { CONFIG } from '../../scripts/utils/config.js';
 
-const mocks = vi.hoisted(() => ({ callAI: vi.fn(), progress: vi.fn() }));
+const mocks = vi.hoisted(() => ({ callAI: vi.fn(), progress: vi.fn(), state: vi.fn(), requestStarted: vi.fn() }));
 vi.mock('../../scripts/api/index.js', () => ({ callAI: mocks.callAI, getProviderFromModel: () => 'deepseek' }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', tSync: key => key }));
 vi.mock('../../scripts/translation/index.js', () => ({ detectLanguageByCharacters: () => 'en' }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
   getUILanguageCached: async () => 'en',
-  getAIRequestOptions: data => ({ provider: data.provider, checkCancelled: data.checkCancelled }),
+  getAIRequestOptions: data => ({ provider: data.provider, checkCancelled: data.checkCancelled, onRequestStart: mocks.requestStarted }),
   getProcessingCallbacks: data => ({
-    updateState: vi.fn(), updateProgress: mocks.progress,
+    updateState: mocks.state, updateProgress: mocks.progress,
     checkCancellation: async () => { data.checkCancelled?.(); }
   })
 }));
@@ -36,6 +36,8 @@ beforeEach(() => {
   readCount = 0;
   sourceHtml = html;
   mocks.progress.mockReset().mockResolvedValue();
+  mocks.state.mockReset();
+  mocks.requestStarted.mockReset();
   mocks.callAI.mockReset().mockResolvedValue(valid);
   execute = vi.fn(async options => {
     const dom = new JSDOM(sourceHtml, { url, runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
@@ -64,6 +66,52 @@ function assertArticle(result) {
 }
 
 describe('selector request and publication structure', () => {
+  it('waits visibly only after dispatch and preserves progress, transport activity and selected routing', async () => {
+    let beginRequest, finishResponse;
+    mocks.callAI.mockImplementationOnce((_system, _prompt, _key, _model, _json, options) =>
+      new Promise(resolve => {
+        beginRequest = options.onRequestStart;
+        finishResponse = () => resolve(valid);
+      })
+    );
+    const operation = processWithSelectorMode({ ...data(), model: 'gemini-4-neon', provider: 'gemini', useCache: false }, extractAutomaticallyInlined);
+    await vi.waitFor(() => expect(beginRequest).toBeTypeOf('function'));
+    try {
+      expect(mocks.progress.mock.lastCall).toEqual([expect.objectContaining({ id: 'analyzing' }), 'stageAnalyzing', 3]);
+      expect(mocks.state).not.toHaveBeenCalled();
+      beginRequest();
+      beginRequest(); // A transport retry is activity but stays in the same visible phase.
+      expect(mocks.requestStarted).toHaveBeenCalledTimes(2);
+      expect(mocks.state).toHaveBeenCalledExactlyOnceWith({
+        status: 'statusWaitingForSelectorResponse',
+        statusTranslationKey: 'statusWaitingForSelectorResponse',
+        statusTranslationParams: {}
+      });
+      expect(execute).not.toHaveBeenCalled();
+      expect(mocks.callAI.mock.calls[0][3]).toBe('gemini-4-neon');
+      expect(mocks.callAI.mock.calls[0][5].provider).toBe('gemini');
+    } finally {
+      finishResponse();
+      assertArticle(await operation);
+    }
+    expect(mocks.progress).toHaveBeenCalledWith(expect.objectContaining({ id: 'extracting' }), 'statusExtractingFromPage', 5);
+    beginRequest(); // An obsolete attempt cannot publish a waiting label after extraction.
+    expect(mocks.state).toHaveBeenCalledOnce();
+    expect(mocks.requestStarted).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a provider error from the waiting phase and does not retry selector selection', async () => {
+    const error = Object.assign(new Error('Model not found'), { status: 404, translationKey: 'errorModelNotFound' });
+    mocks.callAI.mockImplementationOnce((_system, _prompt, _key, _model, _json, options) => {
+      options.onRequestStart();
+      throw error;
+    });
+    await expect(processWithSelectorMode(data(), extractAutomaticallyInlined)).rejects.toBe(error);
+    expect(mocks.state).toHaveBeenCalledOnce();
+    expect(mocks.callAI).toHaveBeenCalledOnce();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       title: 'Field atlas',
@@ -116,12 +164,17 @@ describe('bounded selector correction', () => {
     mocks.callAI.mockResolvedValue(stale);
     assertArticle(await processWithSelectorMode(data(), extractAutomaticallyInlined));
     expect(mocks.callAI).toHaveBeenCalledTimes(cached ? 0 : 1);
+    if (cached) expect(mocks.state).not.toHaveBeenCalled();
     expect(await getCachedSelectors(url)).toBeNull();
   });
 
   it('reanalyzes a fresh no-content result with the same page, model, provider and cancellation owner', async () => {
     const checkCancelled = vi.fn();
-    mocks.callAI.mockResolvedValueOnce(conflict).mockResolvedValueOnce(valid);
+    const reply = value => async (_system, _prompt, _key, _model, _json, options) => {
+      options.onRequestStart();
+      return value;
+    };
+    mocks.callAI.mockImplementationOnce(reply(conflict)).mockImplementationOnce(reply(valid));
     const result = await processWithSelectorMode({ ...data(), checkCancelled }, extractAutomaticallyInlined);
     assertArticle(result);
     expect(mocks.callAI).toHaveBeenCalledTimes(2);
@@ -131,8 +184,12 @@ describe('bounded selector correction', () => {
     expect(second[1]).toContain(first[1]);
     expect(second[1]).toContain(JSON.stringify(conflict));
     expect(second[1]).toMatch(/no article content/i);
-    expect(second.slice(2)).toEqual(first.slice(2));
-    expect(second[5]).toEqual({ provider: 'deepseek', checkCancelled });
+    expect(second.slice(2, 5)).toEqual(first.slice(2, 5));
+    for (const request of [first, second]) {
+      expect(request[5]).toEqual({ provider: 'deepseek', checkCancelled, onRequestStart: expect.any(Function) });
+    }
+    expect(mocks.state.mock.calls.map(([state]) => state.statusTranslationKey))
+      .toEqual(['statusWaitingForSelectorResponse', 'statusWaitingForSelectorResponse']);
     expect(saved.selector_cache['example.org'].selectors).toEqual(valid);
     const progress = mocks.progress.mock.calls.map(call => call[2]);
     expect(progress).toEqual([3, 5, 5, 5, 8]);

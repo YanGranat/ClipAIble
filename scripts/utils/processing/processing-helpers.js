@@ -59,7 +59,9 @@ export async function validateAndInitializeProcessing(data, stopKeepAlive, start
     const uiLang = await getUILanguageCached();
     await setError({
       message: tSync('errorValidation', uiLang) + `: Invalid output format '${data.outputFormat}'`,
-      code: ERROR_CODES.VALIDATION_ERROR
+      code: ERROR_CODES.VALIDATION_ERROR,
+      translationKey: 'errorValidation',
+      translationParams: {}
     }, stopKeepAlive, data.processingRunId);
     return false;
   }
