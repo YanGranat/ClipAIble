@@ -25,6 +25,16 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe('independent generation ownership', () => {
+  it.each([
+    ['summary', startSummaryGeneration, generateSummary, 'abstractGenerationFailed'],
+    ['key_theses', startKeyThesesGeneration, generateKeyTheses, 'keyThesesGenerationFailed']
+  ])('attributes an unexpected failure to the %s task', async (prefix, start, generate, errorType) => {
+    const failure = new Error('No usable input.');
+    generate.mockRejectedValueOnce(failure);
+    await expect(start(data, vi.fn(), vi.fn())).rejects.toBe(failure);
+    expect(handleError).toHaveBeenCalledWith(failure, expect.objectContaining({ errorType }));
+    expect(stored[`${prefix}_generating`]).toBe(false);
+  });
   it.each([['summary', startSummaryGeneration, generateSummary], ['key theses', startKeyThesesGeneration, generateKeyTheses]])('ends %s quietly after explicit PDF picker dismissal', async (_kind, start, generate) => {
     const result = await start({ ...data, getContent: async () => { throw createPdfSelectionCancelledError(); } }, vi.fn(), vi.fn());
     const prefix = _kind === 'summary' ? 'summary' : 'key_theses';
@@ -52,6 +62,21 @@ describe('independent generation ownership', () => {
       releases.forEach(release => release(result));
       await Promise.allSettled([first, second]);
     }
+  });
+
+  it('captures a prompt revision before extraction and applies edits to the next generation', async () => {
+    stored.prompt_override_summary = 'First instruction in {{targetLanguage}}.';
+    let deliverContent;
+    const readContent = () => new Promise(resolve => { deliverContent = resolve; });
+    generateSummary.mockResolvedValue({ summary: 'Sample result' });
+    const beforeEdit = startSummaryGeneration({ ...data, getContent: readContent }, vi.fn(), vi.fn());
+    await vi.advanceTimersByTimeAsync(0);
+    stored.prompt_override_summary = 'New instruction in {{targetLanguage}}.';
+    deliverContent({ contentItems: data.contentItems });
+    await beforeEdit;
+    expect(generateSummary.mock.calls[0][0].promptOverrides.summary).toBe('First instruction in {{targetLanguage}}.');
+    await startSummaryGeneration(data, vi.fn(), vi.fn());
+    expect(generateSummary.mock.calls[1][0].promptOverrides.summary).toBe('New instruction in {{targetLanguage}}.');
   });
 
   it('cancels extraction before starting a paid generation request', async () => {

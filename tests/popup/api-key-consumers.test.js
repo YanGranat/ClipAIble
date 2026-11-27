@@ -61,6 +61,20 @@ it('selects a stored mask before insertion and uses the replacement draft for sp
   expect(readApiKeyDraft(elements.elevenlabsApiKey)).toBe('ENC:v2:saved-marker');
 });
 
+it('exposes the real visibility state of the API key without changing the accessible name', () => {
+  const { elevenlabsApiKey: input, toggleElevenlabsApiKey: button } = elements;
+  setupAllApiKeyToggles(elements, deps.decryptApiKey, value => value, vi.fn());
+  expect(input.type).toBe('password');
+  expect(button.getAttribute('aria-pressed')).toBe('false');
+  button.click();
+  expect(input.type).toBe('text');
+  expect(button.getAttribute('aria-pressed')).toBe('true');
+  expect(button.getAttribute('aria-label')).toBe('Show or hide API key');
+  button.click();
+  expect(input.type).toBe('password');
+  expect(button.getAttribute('aria-pressed')).toBe('false');
+});
+
 for (const [name, initialize, method] of [
   ['summary', initSummary, 'handleGenerateSummary'],
   ['key claims', initKeyTheses, 'handleGenerateKeyTheses']

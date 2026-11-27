@@ -92,6 +92,12 @@ export function initializeDOMElements(elements) {
   elements.translateImagesGroup = document.getElementById(ELEMENT_IDS.TRANSLATE_IMAGES_GROUP);
   elements.imageTranslationProvider = document.getElementById(ELEMENT_IDS.IMAGE_TRANSLATION_PROVIDER);
   elements.imageTranslationProviderGroup = document.getElementById(ELEMENT_IDS.IMAGE_TRANSLATION_PROVIDER_GROUP);
+  for (const id of ['openrouterImageModel', 'openrouterImageModelGroup', 'openrouterTtsModel', 'openrouterTtsModelGroup',
+    'openrouterTtsVoice', 'openrouterTtsVoiceGroup', 'openrouterImageKey', 'openrouterImageKeyGroup', 'saveOpenrouterImageKey',
+    'openrouterTtsKey', 'openrouterTtsKeyGroup', 'saveOpenrouterTtsKey',
+    'openaiImageKey', 'openaiImageKeyGroup', 'saveOpenaiImageKey']) {
+    elements[id] = document.getElementById(id);
+  }
   const geminiImageModel = /** @type {HTMLSelectElement | null} */ (
     document.querySelector(`select#${ELEMENT_IDS.GEMINI_IMAGE_MODEL}`)
   );
@@ -148,6 +154,7 @@ export function initializeDOMElements(elements) {
   // Audio settings
   elements.audioProvider = document.getElementById(ELEMENT_IDS.AUDIO_PROVIDER);
   elements.audioProviderGroup = document.getElementById(ELEMENT_IDS.AUDIO_PROVIDER_GROUP);
+  elements.supertonicModelGroup = document.getElementById(ELEMENT_IDS.SUPERTONIC_MODEL_GROUP);
   elements.elevenlabsApiKey = document.getElementById(ELEMENT_IDS.ELEVENLABS_API_KEY);
   elements.toggleElevenlabsApiKey = document.getElementById(ELEMENT_IDS.TOGGLE_ELEVENLABS_API_KEY);
   elements.saveElevenlabsApiKey = document.getElementById(ELEMENT_IDS.SAVE_ELEVENLABS_API_KEY);

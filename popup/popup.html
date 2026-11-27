@@ -77,7 +77,7 @@
               placeholder="sk-..."
               autocomplete="off"
             >
-            <button id="toggleApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
+            <button id="toggleApiKey" class="btn-icon" data-i18n-title="toggleApiKeyVisibility" data-i18n-aria-label="toggleApiKeyVisibility" aria-label="Show or hide API key" aria-pressed="false" title="Show or hide API key">
               <span class="eye-icon">👁</span>
             </button>
           </div>
@@ -88,8 +88,8 @@
       <!-- Status Section -->
       <section class="section status-section" id="statusSection">
         <div class="status-indicator" id="statusIndicator">
-          <span class="status-dot"></span>
-          <span class="status-text" id="statusText" role="status" aria-live="polite" data-i18n="ready">Ready</span>
+          <span class="status-dot pending"></span>
+          <span class="status-text" id="statusText" role="status" aria-live="polite" data-i18n="statusCheckingExport">Checking export settings…</span>
         </div>
         <div class="progress-container hidden" id="progressContainer" role="progressbar" data-i18n-aria-label="processing" aria-label="Processing" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div class="progress-track">
@@ -102,7 +102,7 @@
       <!-- Action Button -->
       <section class="section action-section">
         <div class="save-action-group">
-          <button id="savePdfBtn" class="btn btn-primary">
+          <button id="savePdfBtn" class="btn btn-primary" disabled>
             <span class="btn-icon-left" aria-hidden="true" id="saveIcon">📄</span>
             <span id="saveText" data-i18n="save">Save</span>
           </button>
@@ -290,14 +290,25 @@
           <label for="audioProvider" data-i18n="ttsProvider">TTS Provider</label>
           <select id="audioProvider">
             <option value="offline" data-i18n="offlineTts">Piper TTS (offline)</option>
+            <option value="supertonic" data-i18n="supertonicTts">Supertonic 3 (offline)</option>
             <option value="openai" data-i18n="openaiTts">OpenAI TTS</option>
             <option value="elevenlabs" data-i18n="elevenlabs">ElevenLabs</option>
             <option value="google" data-i18n="googleTts">Google Gemini TTS</option>
+            <option value="openrouter">OpenRouter</option>
             <option value="qwen" data-i18n="qwenTts">Qwen TTS</option>
             <option value="respeecher" data-i18n="respeecher">Respeecher (EN/UA)</option>
           </select>
           <p class="setting-hint" data-i18n="ttsProviderHint">Choose text-to-speech provider</p>
         </div>
+        <section class="setting-item hidden" id="supertonicModelGroup" aria-labelledby="supertonicModelHeading">
+          <h3 class="setting-label" id="supertonicModelHeading" data-i18n="supertonicModelHeading">Offline model</h3>
+          <p class="setting-hint" id="supertonicModelStatus" role="status" aria-atomic="true" data-i18n="supertonicModelChecking">Checking the model…</p>
+          <div class="supertonic-progress" id="supertonicModelProgressRow" hidden>
+            <progress id="supertonicModelProgress" aria-label="Model download progress" data-i18n-aria-label="supertonicDownloadProgress"></progress>
+            <span id="supertonicModelProgressText" aria-hidden="true"></span>
+          </div>
+          <button type="button" class="btn btn-secondary" id="supertonicModelAction" hidden></button>
+        </section>
         <div class="setting-item hidden" id="elevenlabsApiKeyGroup">
           <label for="elevenlabsApiKey" data-i18n="elevenlabsApiKey">ElevenLabs API Key</label>
           <div class="input-group">
@@ -308,7 +319,7 @@
               placeholder="Enter ElevenLabs API key"
               autocomplete="off"
             >
-            <button type="button" id="toggleElevenlabsApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
+            <button type="button" id="toggleElevenlabsApiKey" class="btn-icon" data-i18n-title="toggleApiKeyVisibility" data-i18n-aria-label="toggleApiKeyVisibility" aria-label="Show or hide API key" aria-pressed="false" title="Show or hide API key">
               <span class="eye-icon">👁</span>
             </button>
             <button type="button" id="saveElevenlabsApiKey" class="btn btn-small" data-i18n="save">Save</button>
@@ -325,7 +336,7 @@
               placeholder="Enter Qwen API key"
               autocomplete="off"
             >
-            <button type="button" id="toggleQwenApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
+            <button type="button" id="toggleQwenApiKey" class="btn-icon" data-i18n-title="toggleApiKeyVisibility" data-i18n-aria-label="toggleApiKeyVisibility" aria-label="Show or hide API key" aria-pressed="false" title="Show or hide API key">
               <span class="eye-icon">👁</span>
             </button>
             <button type="button" id="saveQwenApiKey" class="btn btn-small" data-i18n="save">Save</button>
@@ -360,7 +371,7 @@
               placeholder="Enter Respeecher API key"
               autocomplete="off"
             >
-            <button type="button" id="toggleRespeecherApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
+            <button type="button" id="toggleRespeecherApiKey" class="btn-icon" data-i18n-title="toggleApiKeyVisibility" data-i18n-aria-label="toggleApiKeyVisibility" aria-label="Show or hide API key" aria-pressed="false" title="Show or hide API key">
               <span class="eye-icon">👁</span>
             </button>
             <button type="button" id="saveRespeecherApiKey" class="btn btn-small" data-i18n="save">Save</button>
@@ -408,7 +419,7 @@
               placeholder="Enter Google TTS API key"
               autocomplete="off"
             >
-            <button type="button" id="toggleGoogleTtsApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
+            <button type="button" id="toggleGoogleTtsApiKey" class="btn-icon" data-i18n-title="toggleApiKeyVisibility" data-i18n-aria-label="toggleApiKeyVisibility" aria-label="Show or hide API key" aria-pressed="false" title="Show or hide API key">
               <span class="eye-icon">👁</span>
             </button>
             <button type="button" id="saveGoogleTtsApiKey" class="btn btn-small" data-i18n="save">Save</button>
@@ -474,6 +485,58 @@
           <label for="openaiInstructions" data-i18n="voiceInstructions">Voice Instructions (Optional)</label>
           <textarea id="openaiInstructions" rows="2" placeholder="e.g., Read slowly and clearly, Read with enthusiasm" data-i18n-placeholder="voiceInstructionsPlaceholder"></textarea>
           <p class="setting-hint" data-i18n="voiceInstructionsHint">Additional instructions for voice style (OpenAI only)</p>
+        </div>
+        <div class="setting-item hidden" id="openrouterTtsModelGroup">
+          <label for="openrouterTtsModel" data-i18n="model">Model</label>
+          <select id="openrouterTtsModel"></select>
+        </div>
+        <div class="setting-item hidden" id="openrouterTtsVoiceGroup">
+          <label for="openrouterTtsVoice" data-i18n="voice">Voice</label>
+          <select id="openrouterTtsVoice"></select>
+          <div id="openrouterTtsOptions" class="hidden">
+            <div class="setting-item hidden">
+              <label for="openrouterTtsInstructions" data-i18n="voiceStylePrompt">Voice style instructions</label>
+              <textarea id="openrouterTtsInstructions" data-speech-option="instructions" rows="2" maxlength="1000"
+                data-i18n-placeholder="voiceStylePromptPlaceholder" placeholder="e.g., Speak slowly and clearly"></textarea>
+              <p class="setting-hint" data-i18n="googleTtsPromptHint">Control voice style and emotion. Leave empty for default natural speech.</p>
+            </div>
+            <div class="setting-item hidden">
+              <label for="openrouterTtsSpeed" data-i18n="speed">Speed</label>
+              <div class="slider-container">
+                <input type="range" id="openrouterTtsSpeed" data-speech-option="speed" step="0.01" min="0.5" max="2" value="1">
+                <output class="slider-value" for="openrouterTtsSpeed">1</output>
+              </div>
+            </div>
+            <div class="setting-item hidden">
+              <label for="openrouterTtsStability" data-i18n="stability">Stability</label>
+              <div class="slider-container">
+                <input type="range" id="openrouterTtsStability" data-speech-option="stability" min="0" max="1" step="0.01" value="0.5">
+                <output class="slider-value" for="openrouterTtsStability">0.5</output>
+              </div>
+              <p class="setting-hint" data-i18n="stabilityHint">Low = more variation, High = more stable</p>
+            </div>
+            <div class="setting-item hidden">
+              <label for="openrouterTtsSimilarity" data-i18n="similarityBoost">Similarity Boost</label>
+              <div class="slider-container">
+                <input type="range" id="openrouterTtsSimilarity" data-speech-option="similarity" min="0" max="1" step="0.01" value="0.75">
+                <output class="slider-value" for="openrouterTtsSimilarity">0.75</output>
+              </div>
+              <p class="setting-hint" data-i18n="similarityHint">How closely the voice matches the original</p>
+            </div>
+            <div class="setting-item hidden">
+              <label for="openrouterTtsStyle" data-i18n="style">Style</label>
+              <select id="openrouterTtsStyle" data-speech-option="style">
+                <option value="" data-i18n="speechDefaultStyle">Default</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="setting-item hidden" id="openrouterTtsKeyGroup">
+          <label for="openrouterTtsKey" data-i18n="openrouterTtsApiKey">OpenRouter speech API key</label>
+          <div class="input-group">
+            <input type="password" id="openrouterTtsKey" autocomplete="off" data-i18n-placeholder="enterOpenRouterApiKey" placeholder="sk-or-...">
+            <button type="button" id="saveOpenrouterTtsKey" class="btn btn-small" data-i18n="save">Save</button>
+          </div>
         </div>
         <div class="setting-item hidden" id="googleTtsModelGroup">
           <label for="googleTtsModel" data-i18n="model">Model</label>
@@ -564,12 +627,31 @@
           <select id="imageTranslationProvider">
             <option value="gemini">Google Gemini</option>
             <option value="openai">OpenAI</option>
+            <option value="openrouter">OpenRouter</option>
           </select>
           <p class="setting-hint" id="imageTranslationModelHint" data-i18n="imageTranslationModelHint" data-i18n-params='{"model":""}'></p>
         </div>
         <div class="setting-item hidden" id="geminiImageModelGroup">
           <label for="geminiImageModel" data-i18n="imageTranslationModel">Image model</label>
           <select id="geminiImageModel"></select>
+        </div>
+        <div class="setting-item hidden" id="openrouterImageModelGroup">
+          <label for="openrouterImageModel" data-i18n="imageTranslationModel">Image model</label>
+          <select id="openrouterImageModel"></select>
+        </div>
+        <div class="setting-item hidden" id="openrouterImageKeyGroup">
+          <label for="openrouterImageKey" data-i18n="openrouterImageApiKey">OpenRouter image API key</label>
+          <div class="input-group">
+            <input type="password" id="openrouterImageKey" autocomplete="off" data-i18n-placeholder="enterOpenRouterApiKey" placeholder="sk-or-...">
+            <button type="button" id="saveOpenrouterImageKey" class="btn btn-small" data-i18n="save">Save</button>
+          </div>
+        </div>
+        <div class="setting-item hidden" id="openaiImageKeyGroup">
+          <label for="openaiImageKey" data-i18n="openaiApiKey">OpenAI API Key</label>
+          <div class="input-group">
+            <input type="password" id="openaiImageKey" autocomplete="off" data-i18n-placeholder="enterOpenAiApiKey" placeholder="sk-...">
+            <button type="button" id="saveOpenaiImageKey" class="btn btn-small" data-i18n="save">Save</button>
+          </div>
         </div>
         <div class="setting-item hidden" id="googleApiGroup">
           <label for="googleApiKey" data-i18n="googleApiKey">Google AI API Key</label>
@@ -579,14 +661,14 @@
               id="googleApiKey"
               autocomplete="off"
             >
-            <button id="toggleGoogleApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
+            <button id="toggleGoogleApiKey" class="btn-icon" data-i18n-title="toggleApiKeyVisibility" data-i18n-aria-label="toggleApiKeyVisibility" aria-label="Show or hide API key" aria-pressed="false" title="Show or hide API key">
               <span class="eye-icon">👁</span>
             </button>
             <button type="button" id="saveGoogleApiKey" class="btn btn-small" data-i18n="save">Save</button>
           </div>
           <p class="setting-hint"><span data-i18n="getGoogleTtsKeyFrom">Get your API key from</span> <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a> <span data-i18n="or">or</span> <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a></p>
         </div>
-        <div class="setting-item">
+        <div class="setting-item hidden">
           <label class="checkbox-label">
             <input type="checkbox" id="generateAbstract">
             <span class="checkbox-text" data-i18n="generateAbstract">Generate TL;DR</span>
@@ -688,6 +770,8 @@
         <div class="settings-divider"></div>
         <button id="resetStylesBtn" class="btn btn-reset" data-i18n="resetAllToDefault">Reset styles to default</button>
         <div class="settings-divider"></div>
+        <button id="openAdvancedSettings" type="button" class="btn btn-secondary btn-small advanced-settings-link" data-i18n="advancedSettings">Advanced settings</button>
+        <div class="settings-divider"></div>
         <div class="setting-item">
           <label data-i18n="importExportSettings">Import/Export Settings</label>
           <div class="import-export-buttons">
@@ -695,6 +779,7 @@
             <button id="importSettingsBtn" class="btn btn-secondary btn-small" data-i18n="importSettings">Import Settings</button>
           </div>
           <p class="setting-hint" data-i18n="exportHint">Export includes: settings (without API keys), optional stats &amp; cache</p>
+          <p class="setting-hint backup-export-warning" id="settingsExportFeedback" role="status" aria-live="polite" aria-atomic="true" hidden></p>
           <input type="file" id="importFileInput" data-i18n-title="importSettings" accept=".json" class="hidden" title="Import settings file">
         </div>
         </div>
@@ -745,6 +830,18 @@
           <input type="checkbox" id="settingsTransferCache">
           <span class="checkbox-text"></span>
         </label>
+        <fieldset id="settingsTransferDataMode" class="transfer-data-mode hidden" aria-describedby="settingsTransferDataHint" disabled>
+          <legend data-i18n="backupDataMode">How to import selected data</legend>
+          <label class="checkbox-label">
+            <input type="radio" name="settingsTransferDataMode" id="settingsTransferAdd" value="add" checked>
+            <span data-i18n="backupDataAdd">Add to existing data</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="radio" name="settingsTransferDataMode" id="settingsTransferReplace" value="replace">
+            <span data-i18n="backupDataReplace">Replace selected data</span>
+          </label>
+          <p id="settingsTransferDataHint" aria-live="polite"></p>
+        </fieldset>
         <label class="checkbox-label">
           <input type="checkbox" id="settingsTransferOverwrite">
           <span class="checkbox-text"></span>

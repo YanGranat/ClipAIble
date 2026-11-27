@@ -12,6 +12,7 @@ import { handleImageRasterMessage } from './scripts/offscreen/image-rasterizatio
 import { pruneExpiredRasterJobs } from './scripts/api/image-raster-storage.js';
 import { handleDownloadMessage } from './scripts/offscreen/download.js';
 import { pruneExpiredDownloads } from './scripts/api/download-storage.js';
+import { routeSupertonicMessage } from './scripts/offscreen/supertonic/controller.js';
 
 void pruneExpiredRasterJobs().catch(error => logWarn('Image operation recovery failed', { error: error.message }));
 void pruneExpiredDownloads().catch(error => logWarn('Download recovery failed', { error: error.message }));
@@ -289,6 +290,10 @@ try {
     }
     if (message.type === 'CREATE_DOWNLOAD_URL' || message.type === 'RELEASE_DOWNLOAD_URL') {
       handleDownloadMessage(message.type, message.data).then(sendResponse, () => sendResponse({ success: false }));
+      return true;
+    }
+    if (message.type.startsWith('SUPERTONIC_')) {
+      routeSupertonicMessage(message.type, message.data).then(sendResponse, () => sendResponse({ ok: false }));
       return true;
     }
     

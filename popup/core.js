@@ -10,6 +10,10 @@ import { initSummary } from './core/summary.js';
 import { initKeyTheses } from './core/key-theses.js';
 import { initProcessing } from './core/processing.js';
 import { initState } from './core/state.js';
+import { getExportPageIssue, inspectExportRequirements, readExportOptions } from './core/export-readiness.js';
+import { AUDIO_PREPARATION_PROMPT_KEY } from '../scripts/settings/prompt-catalog.js';
+import { OPENROUTER_KEY_SLOTS } from '../scripts/utils/storage/openrouter-key-slots.js';
+import { SUPERTONIC_MODEL_STATUS_KEY } from '../scripts/api/supertonic-config.js';
 
 /**
  * Initialize core module with dependencies
@@ -119,7 +123,40 @@ export function initCore(deps) {
     startTimerDisplay,
     checkSummaryStatus: summaryModule.checkSummaryStatus,
     checkKeyThesesStatus: keyThesesModule.checkKeyThesesStatus,
+    async getExportReadiness() {
+      const options = readExportOptions(elements, getProviderFromModel, settingsModule?.getVoiceIdByIndex);
+      const inputs = Object.fromEntries(['apiKey', 'googleApiKey', 'openaiImageKey', 'openrouterImageKey', 'openrouterTtsKey'].map(name => {
+        const input = elements[name];
+        return [name, input && { value: input.value, dataset: { ...input.dataset } }];
+      }));
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const pageIssue = getExportPageIssue(tab);
+      if (pageIssue) return pageIssue;
+      return (await inspectExportRequirements(options, inputs, decryptApiKey, t, tab.url)).issue;
+    },
     stateRefs
+  });
+
+  const exportInputs = new Set(['modeSelect', 'mainFormatSelect', 'outputFormat', 'apiProviderSelect', 'modelSelect',
+    'languageSelect', 'audioProvider', 'audioVoice', 'translateImages', 'imageTranslationProvider', 'geminiImageModel',
+    'apiKey', 'googleApiKey', 'openaiImageKey', 'elevenlabsApiKey', 'googleTtsApiKey', 'qwenApiKey', 'respeecherApiKey',
+    'openrouterImageModel', 'openrouterImageKey', 'openrouterTtsKey', 'openrouterTtsModel', 'openrouterTtsVoice',
+    'qwenWorkspaceId', 'qwenModel', 'qwenRegion', 'googleTtsModel', 'googleTtsVoice'].map(name => elements[name]));
+  const refresh = event => {
+    if (exportInputs.has(event.target)) stateModule.refreshExportReadiness();
+  };
+  globalThis.document?.addEventListener('change', refresh);
+  globalThis.document?.addEventListener('input', refresh);
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    const model = changes[SUPERTONIC_MODEL_STATUS_KEY];
+    if (area === 'local' && model && elements.audioProvider?.value === 'supertonic' &&
+        (/** @type {import('../scripts/api/supertonic-model.js').SupertonicModelStatus|undefined} */ (model.oldValue))?.state !==
+        (/** @type {import('../scripts/api/supertonic-model.js').SupertonicModelStatus|undefined} */ (model.newValue))?.state) {
+      stateModule.refreshExportReadiness();
+    }
+    if (area === 'local' && (changes.openai_api_key || changes[AUDIO_PREPARATION_PROMPT_KEY] || Object.values(OPENROUTER_KEY_SLOTS).some(key => changes[key]))) {
+      stateModule.refreshExportReadiness();
+    }
   });
 
   // Step 3: Initialize processing module (needs state functions and settingsModule for getVoiceIdByIndex)
@@ -139,6 +176,8 @@ export function initCore(deps) {
     checkProcessingState: stateModule.checkProcessingState,
     getPresentedProcessingRunId: stateModule.getPresentedProcessingRunId,
     noteProcessingAdmission: stateModule.noteProcessingAdmission,
+    notePreparation: stateModule.notePreparation,
+    finishPreparation: stateModule.finishPreparation,
     stateRefs,
     settingsModule
   });

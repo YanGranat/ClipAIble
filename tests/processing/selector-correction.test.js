@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { processWithoutAI, processWithSelectorMode } from '../../scripts/processing/modes.js';
 import { extractAutomaticallyInlined } from '../../scripts/extraction/automatic.js';
-import { SELECTOR_SYSTEM_PROMPT } from '../../scripts/extraction/prompts.js';
+import { PROMPTS } from '../../scripts/settings/prompt-catalog.js';
 import { cacheSelectors, getCachedSelectors } from '../../scripts/cache/selectors.js';
 import { CONFIG } from '../../scripts/utils/config.js';
 
@@ -141,7 +141,7 @@ describe('selector request and publication structure', () => {
     const result = await processWithSelectorMode({ ...data(), title, html: sourceHtml }, extractAutomaticallyInlined);
     expect(mocks.callAI).toHaveBeenCalledOnce();
     expect(mocks.callAI.mock.calls[0].slice(0, 2)).toEqual([
-      SELECTOR_SYSTEM_PROMPT,
+      PROMPTS.selector.template,
       `URL: ${url}\nTitle: ${title}\n\nHTML:\n${sourceHtml}`,
     ]);
     expect(result.title).toBe(title);

@@ -1,3 +1,4 @@
+import { renderPrompt } from '../settings/prompt-catalog.js';
 import { assertCompleteAIResponse } from '../api/response-validation.js';
 // Language detection module for ClipAIble extension
 // Handles detection of source language from content
@@ -345,34 +346,7 @@ export async function detectContentLanguage(content, apiKey, model, options = {}
   // Decrypt API key if needed (with automatic encryption for unencrypted keys)
   const decryptedApiKey = await getDecryptedKeyCached(apiKey, provider);
   
-  const systemPrompt = `You are a language detection agent. Your task is to identify the language of the provided text.
-
-INSTRUCTIONS:
-1. Read the text carefully
-2. Determine what language the MAIN CONTENT is written in
-3. Ignore any English words that might appear (like technical terms, names, URLs)
-4. Return ONLY the ISO 639-1 two-letter language code
-
-SUPPORTED CODES:
-- ru = Russian (русский)
-- ua = Ukrainian (українська)  
-- en = English
-- de = German (Deutsch)
-- fr = French (français)
-- es = Spanish (español)
-- it = Italian (italiano)
-- pt = Portuguese (português)
-- zh = Chinese (中文)
-- ja = Japanese (日本語)
-- ko = Korean (한국어)
-- ar = Arabic (العربية)
-- pl = Polish (polski)
-- nl = Dutch (Nederlands)
-- tr = Turkish (Türkçe)
-
-OUTPUT FORMAT: Return ONLY the 2-letter code, nothing else. No quotes, no explanation.
-
-Example outputs: ru, en, ua, de`;
+  const systemPrompt = renderPrompt('detectLanguage', options);
   
   // Use more text for AI analysis (30k chars for accurate detection)
   const textForAI = sampleText.substring(0, 30000);

@@ -50,7 +50,7 @@ describe('Narration of document backlinks', () => {
       { type: 'table', cellFormat: 'html', headers: ['Value ' + backlink], rows: [['Measured 27. ' + backlink]] },
       { type: 'image', caption: 'Plot description. ' + backlink }
     ];
-    expect(contentToPlainText(content)).toBe('Outer. Inner.\n\nValue: Measured 27.\n\nImage: Plot description.');
+    expect(contentToPlainText(content)).toBe('Outer.\n\nInner.\n\nValue: Measured 27.\n\nPlot description.');
     expect(listHtml(content[0])).toContain('role="doc-backlink"');
     expect(tableCellHtml(content[1], content[1].headers[0])).toContain('role="doc-backlink"');
   });
@@ -80,7 +80,7 @@ describe('Narration of document backlinks', () => {
     const native = { pageNum: 1, lines: [{ items: [{ str: backlink }] }] };
     for (const extra of [{ format: 'text' }, native]) {
       expect(contentToPlainText([{ type: 'paragraph', text: backlink, ...extra }])).toBe(backlink);
-      expect(contentToPlainText([{ type: 'image', caption: backlink, ...extra }])).toBe('Image: ' + backlink);
+      expect(contentToPlainText([{ type: 'image', caption: backlink, ...extra }])).toBe(backlink);
     }
     expect(contentToPlainText([{ type: 'table', cellFormat: 'text', rows: [[backlink]] }])).toBe(backlink);
   });

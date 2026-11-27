@@ -5,6 +5,18 @@ import { log, logWarn } from '../../utils/logging.js';
 import { normalizeSpeechText } from '../../utils/audio-text.js';
 
 const MAX_SENTENCE_LENGTH = 200;
+const RUSSIAN_DECIMAL = /(?<![\p{L}\p{N}.,(\[])(?<![(\[][+−-])(\d+),(\d+)(?:[ \t]*(%|°[CС]))?(?![\p{L}\p{N}]|[.,]\d)/gu;
+
+/** Preserve leading zeroes and units Piper can mispronounce in Russian decimals. */
+function normalizeRussianDecimals(text) {
+  return text.replace(RUSSIAN_DECIMAL, (original, whole, fraction, unit) => {
+    if (!unit && !fraction.startsWith('0')) return original;
+    const spoken = `${whole} запятая ${[...fraction].join(' ')}`;
+    if (unit === '%') return spoken + ' процента';
+    if (unit) return spoken + ' градуса Цельсия';
+    return spoken;
+  });
+}
 
 /**
  * Sanitize text for Piper TTS
@@ -22,7 +34,8 @@ export function sanitizeText(text, langCode, messageId) {
   
   log(`[ClipAIble TTS] Text sanitization start`, { messageId, ...beforeStats });
   
-  const sanitized = normalizeSpeechText(text);
+  const normalized = normalizeSpeechText(text);
+  const sanitized = langCode === 'ru' ? normalizeRussianDecimals(normalized) : normalized;
 
   const afterStats = {
     length: sanitized.length,

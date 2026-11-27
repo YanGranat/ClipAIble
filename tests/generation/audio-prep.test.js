@@ -1,7 +1,7 @@
 // Tests for audio preparation module
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { contentToPlainText, splitTextIntoChunks, basicCleanup, AUDIO_CONFIG } from '../../scripts/generation/audio-prep.js';
+import { contentToPlainText, splitTextIntoChunks, AUDIO_CONFIG } from '../../scripts/generation/audio-prep.js';
 
 // Mock dependencies
 vi.mock('../../scripts/utils/logging.js', () => ({
@@ -53,26 +53,24 @@ describe('generation/audio-prep', () => {
       expect(result).toMatch(/Main Heading/);
     });
 
-    it('should handle quotes with prefix', () => {
+    it('keeps the quote without adding an untranslated label', () => {
       const content = [
         { type: 'quote', text: 'Quote text here' }
       ];
 
       const result = contentToPlainText(content);
 
-      expect(result).toContain('Quote:');
-      expect(result).toContain('Quote text here');
+      expect(result).toBe('Quote text here');
     });
 
-    it('should skip code blocks', () => {
+    it('keeps authored code with its literal operators', () => {
       const content = [
         { type: 'code', text: 'const x = 1;', language: 'javascript' }
       ];
 
       const result = contentToPlainText(content);
 
-      // Code blocks are skipped in audio preparation
-      expect(result).not.toContain('const x = 1;');
+      expect(result).toBe('const x = 1;');
     });
 
     it('should handle lists', () => {
@@ -150,14 +148,19 @@ describe('generation/audio-prep', () => {
 
       expect(result).toContain('Title');
       expect(result).toContain('Paragraph 1');
-      expect(result).toContain('Quote:');
+      expect(result).toContain('Quote text');
       expect(result).toContain('List item');
-      // Code blocks are skipped
-      expect(result).not.toContain('code');
+      expect(result).toContain('code');
     });
   });
 
   describe('splitTextIntoChunks', () => {
+    it('keeps non-breaking numeric groups and interior line boundaries intact', () => {
+      const source = 'First line.\nSecond line ends!\n\nThe value is 1\u202f023.5.\nKeep this line.';
+      const parts = splitTextIntoChunks(source, 30).map(chunk => chunk.text);
+      expect(parts).toEqual(['First line.\nSecond line ends!', 'The value is 1\u202f023.5.', 'Keep this line.']);
+    });
+
     it('should split long text into chunks', () => {
       // Use text longer than MAX_CHUNK_SIZE * 2 to ensure splitting
       // Need to add newlines to trigger paragraph splitting
@@ -245,83 +248,6 @@ describe('generation/audio-prep', () => {
           expect(chunk.text.length).toBeGreaterThan(0);
         });
       }
-    });
-  });
-
-  describe('basicCleanup', () => {
-    it('should remove URLs', () => {
-      const text = 'Visit https://example.com for more info';
-      const result = basicCleanup(text);
-
-      expect(result).not.toContain('https://example.com');
-      expect(result).toContain('Visit');
-      expect(result).toContain('for more info');
-    });
-
-    it('should remove email addresses', () => {
-      const text = 'Contact us at test@example.com';
-      const result = basicCleanup(text);
-
-      expect(result).not.toContain('test@example.com');
-      expect(result).toContain('Contact us at');
-    });
-
-    it('should remove code blocks', () => {
-      const text = 'Code: `const x = 1;` and more text';
-      const result = basicCleanup(text);
-
-      expect(result).not.toContain('`const x = 1;`');
-      expect(result).toContain('Code:');
-      expect(result).toContain('and more text');
-    });
-
-    it('should remove footnotes', () => {
-      const text = 'Text with footnote[1] and more text';
-      const result = basicCleanup(text);
-
-      expect(result).not.toContain('[1]');
-      expect(result).toContain('Text with footnote');
-    });
-
-    it('should normalize whitespace', () => {
-      const text = 'Text   with    multiple    spaces';
-      const result = basicCleanup(text);
-
-      expect(result).not.toContain('   ');
-      expect(result).toContain('Text with multiple spaces');
-    });
-
-    it('should handle empty text', () => {
-      const result = basicCleanup('');
-      expect(result).toBe('');
-    });
-
-    it('should handle text with only URLs', () => {
-      const text = 'https://example.com https://test.com';
-      const result = basicCleanup(text);
-
-      // Should return empty or minimal text
-      expect(result.length).toBeLessThan(text.length);
-    });
-
-    it('should preserve sentence structure', () => {
-      const text = 'First sentence. Second sentence! Third sentence?';
-      const result = basicCleanup(text);
-
-      expect(result).toContain('First sentence');
-      expect(result).toContain('Second sentence');
-      expect(result).toContain('Third sentence');
-    });
-
-    it('should handle language-specific cleanup', () => {
-      const text = 'English text with https://example.com';
-      const resultEn = basicCleanup(text, 'en');
-
-      const textRu = 'Русский текст с https://example.com';
-      const resultRu = basicCleanup(textRu, 'ru');
-
-      expect(resultEn).not.toContain('https://example.com');
-      expect(resultRu).not.toContain('https://example.com');
     });
   });
 

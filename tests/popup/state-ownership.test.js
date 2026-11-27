@@ -28,6 +28,50 @@ function createObserver(overrides = {}) {
   return { state, setStatus, setProgress, stopTimerDisplay, savePdfBtn, cancelBtn, stateRefs, paint, renders };
 }
 
+it('rejects an idle export with unmet requirements and restores Ready only once they are met', async () => {
+  const getExportReadiness = vi.fn(async () => ({ key: 'pleaseEnterGeminiApiKey' }));
+  const { state, savePdfBtn, setStatus, paint } = createObserver({ getExportReadiness });
+  chrome.runtime.sendMessage.mockImplementation((_message, cb) => cb({ isProcessing: false, phase: 'idle' }));
+  await state.checkProcessingState();
+  await paint();
+  expect(savePdfBtn.disabled).toBe(true);
+  expect(setStatus.mock.lastCall.slice(0, 2)).toEqual(['error', 'pleaseEnterGeminiApiKey']);
+  getExportReadiness.mockResolvedValue(null);
+  state.refreshExportReadiness();
+  await vi.waitFor(() => expect(savePdfBtn.disabled).toBe(false));
+  expect(setStatus.mock.lastCall.slice(0, 2)).toEqual(['ready', 'ready']);
+});
+
+it('does not reuse a prior successful audio export to admit a newly blocked export after reopening', async () => {
+  const getExportReadiness = vi.fn(async () => ({ key: 'pleaseEnterOpenRouterApiKey' }));
+  const { state, savePdfBtn, setStatus, paint } = createObserver({ getExportReadiness });
+  chrome.runtime.sendMessage.mockImplementation((_message, cb) => cb({ isProcessing: false, phase: 'complete', statusTranslationKey: 'statusDone', outputFormat: 'audio' }));
+  await state.checkProcessingState();
+  await paint();
+  expect(savePdfBtn.disabled).toBe(true);
+  expect(setStatus.mock.lastCall.slice(0, 2)).toEqual(['error', 'pleaseEnterOpenRouterApiKey']);
+  getExportReadiness.mockResolvedValue(null);
+  state.refreshExportReadiness();
+  await vi.waitFor(() => expect(savePdfBtn.disabled).toBe(false));
+});
+
+it('never replaces a local preparation or an in-flight export with Ready from an idle check', async () => {
+  let finishCheck;
+  const getExportReadiness = vi.fn(async () => null)
+    .mockImplementationOnce(() => new Promise(resolve => { finishCheck = resolve; }));
+  const { state, setStatus, savePdfBtn } = createObserver({ getExportReadiness });
+  const previousIdle = state.updateUIFromState({ phase: 'idle', isProcessing: false });
+  await vi.waitFor(() => expect(finishCheck).toBeTypeOf('function'));
+  state.notePreparation();
+  await state.updateUIFromState({ phase: 'idle', isProcessing: false });
+  finishCheck(null);
+  await previousIdle;
+  expect(setStatus).not.toHaveBeenCalled();
+  await state.updateUIFromState(running);
+  expect(setStatus.mock.lastCall.slice(0, 2)).toEqual(['processing', 'stageAnalyzing']);
+  expect(savePdfBtn.disabled).toBe(true);
+});
+
 it('keeps a newer worker snapshot visible when an earlier request returns late', async () => {
   const responses = [];
   chrome.runtime.sendMessage.mockImplementation((_message, callback) => responses.push(callback));

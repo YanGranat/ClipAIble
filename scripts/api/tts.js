@@ -7,8 +7,10 @@ import { textToSpeech as openaiTTS } from './openai-tts.js';
 
 import { log, logError, logDebug, logWarn } from '../utils/logging.js';
 import { callWithRetry } from '../utils/retry.js';
-import { AUDIO_CONFIG } from '../generation/audio-prep.js';
-import { DEFAULT_GOOGLE_TTS_MODEL, getDefaultTtsVoice } from './tts-catalog.js';
+import { DEFAULT_GOOGLE_TTS_MODEL, getDefaultTtsVoice, getOpenRouterTtsModel, resolveOpenRouterTtsSelection, OPENAI_TTS_MAX_INPUT } from './tts-catalog.js';
+import { splitNarrationText } from '../utils/narration-chunks.js';
+import { SUPERTONIC_MAX_INPUT } from './supertonic-config.js';
+import { synthesizeSupertonic } from './supertonic-model.js';
 import { PROCESSING_STAGES, getProcessingSignal, getScopedUpdateState, markProcessingRequestStarted } from '../state/processing.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { getUILanguageCached, checkCancellation } from '../utils/pipeline-helpers.js';
@@ -21,6 +23,7 @@ import { textToSpeech as elevenlabsTTS, ELEVENLABS_CONFIG } from './elevenlabs.j
 import { textToSpeech as qwenTTS, QWEN_CONFIG } from './qwen.js';
 import { textToSpeech as respeecherTTS, RESPEECHER_CONFIG, resolveRespeecherLanguage } from './respeecher.js';
 import { textToSpeech as googleTTS, GOOGLE_TTS_CONFIG } from './google-tts.js';
+import { textToSpeech as openrouterTTS, normalizeOpenRouterSpeechInput } from './openrouter-tts.js';
 
 logDebug('[ClipAIble TTS] Loading offline TTS module...', {
   timestamp: Date.now()
@@ -43,7 +46,7 @@ logDebug('[ClipAIble TTS] === MODULE LOADED ===', {
 
 log('[ClipAIble TTS] TTS module initialized with all providers', {
   timestamp: Date.now(),
-  providers: ['openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'offline']
+  providers: ['openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'openrouter', 'offline']
 });
 
 /**
@@ -89,7 +92,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   options = { ...options, signal: options.signal ?? (options.processingRunId === undefined ? undefined : getProcessingSignal(options.processingRunId)) };
   const entryTime = Date.now();
   const { provider = 'openai' } = options;
-  if (!['openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'offline'].includes(provider)) {
+  if (!['openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'openrouter', 'offline', 'supertonic'].includes(provider)) {
     const translationKey = 'errorUnknownAudioProvider';
     const translationParams = { provider: String(provider) };
     throw Object.assign(new Error(tSync(translationKey, await getUILanguage(), translationParams)), { translationKey, translationParams });
@@ -102,7 +105,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
     hasApiKey: !!apiKey,
     hasTabId: !!options.tabId,
     optionsKeys: Object.keys(options),
-    options: JSON.stringify(options).substring(0, 200)
+    optionKeys: Object.keys(options)
   });
   
   logDebug('[ClipAIble TTS] textToSpeech called', { 
@@ -114,6 +117,11 @@ export async function textToSpeech(text, apiKey, options = {}) {
     timestamp: entryTime
   });
   
+  if (provider === 'supertonic') {
+    markProcessingRequestStarted(options.processingRunId);
+    return synthesizeSupertonic(text, options);
+  }
+
   if (provider === 'offline') {
     log('[ClipAIble TTS] === ROUTING TO OFFLINE TTS ===', {
       timestamp: Date.now(),
@@ -162,6 +170,8 @@ export async function textToSpeech(text, apiKey, options = {}) {
   } else if (provider === 'google') {
     logDebug('[ClipAIble TTS] Routing to Google TTS');
     return textToSpeechGoogle(text, apiKey, options);
+  } else if (provider === 'openrouter') {
+    return openrouterTTS(text, apiKey, options);
   } else {
     logDebug('[ClipAIble TTS] Routing to OpenAI TTS (default)');
     return textToSpeechOpenAI(text, apiKey, options);
@@ -181,56 +191,17 @@ async function textToSpeechOpenAI(text, apiKey, options = {}) {
   });
 }
 
-/**
- * Split text if it exceeds TTS limit
- * @param {string} text - Text to check/split
- * @param {number} maxLength - Maximum length per chunk
- * @returns {Array<string>} Array of text parts
- */
-function splitIfTooLong(text, maxLength) {
-  if (text.length <= maxLength) {
-    return [text];
+export function getTtsInputLimit(provider, openrouterModel = undefined) {
+  switch (provider) {
+    case 'elevenlabs': return ELEVENLABS_CONFIG.MAX_INPUT;
+    case 'qwen': return QWEN_CONFIG.MAX_INPUT;
+    case 'respeecher': return RESPEECHER_CONFIG.MAX_INPUT;
+    case 'google': return GOOGLE_TTS_CONFIG.MAX_INPUT;
+    case 'openrouter': return getOpenRouterTtsModel(openrouterModel).maxInput;
+    case 'offline': return OFFLINE_TTS_CONFIG.MAX_INPUT;
+    case 'supertonic': return SUPERTONIC_MAX_INPUT;
+    default: return OPENAI_TTS_MAX_INPUT;
   }
-  
-  const parts = [];
-  let remaining = text;
-  
-  while (remaining.length > maxLength) {
-    // Find a good split point (end of sentence or word)
-    let splitPoint = maxLength;
-    
-    // Try to find sentence end
-    const sentenceEnd = remaining.lastIndexOf('. ', maxLength);
-    if (sentenceEnd > maxLength * 0.5) {
-      splitPoint = sentenceEnd + 1;
-    } else {
-      // Fall back to word boundary
-      const wordEnd = remaining.lastIndexOf(' ', maxLength);
-      if (wordEnd > maxLength * 0.5) {
-        splitPoint = wordEnd;
-      }
-    }
-    
-    parts.push(remaining.substring(0, splitPoint).trim());
-    remaining = remaining.substring(splitPoint).trim();
-  }
-  
-  if (remaining) {
-    parts.push(remaining);
-  }
-  
-  // Safety: enforce hard cap to avoid provider errors (e.g., Respeecher 450 chars)
-  const capped = [];
-  for (const part of parts) {
-    let current = part;
-    while (current.length > maxLength) {
-      capped.push(current.slice(0, maxLength));
-      current = current.slice(maxLength).trimStart();
-    }
-    if (current) capped.push(current);
-  }
-
-  return capped;
 }
 
 /**
@@ -376,7 +347,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
     textLength: text?.length,
     hasApiKey: !!apiKey,
     optionsKeys: Object.keys(options),
-    options: JSON.stringify(options).substring(0, 200)
+    optionKeys: Object.keys(options)
   });
   
   const {
@@ -529,20 +500,9 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   if (provider === 'respeecher') {
     options = { ...options, language: resolveRespeecherLanguage(chunks.map(chunk => chunk.text).join('\n'), options.language) };
   }
-  let maxInput;
-  if (provider === 'elevenlabs') {
-    maxInput = ELEVENLABS_CONFIG.MAX_INPUT;
-  } else if (provider === 'qwen') {
-    maxInput = QWEN_CONFIG.MAX_INPUT;
-  } else if (provider === 'respeecher') {
-    maxInput = RESPEECHER_CONFIG.MAX_INPUT;
-  } else if (provider === 'google') {
-    maxInput = GOOGLE_TTS_CONFIG.MAX_INPUT;
-  } else if (provider === 'offline') {
-    maxInput = OFFLINE_TTS_CONFIG.MAX_INPUT;
-  } else {
-    maxInput = AUDIO_CONFIG.TTS_MAX_INPUT;
-  }
+  const maxInput = getTtsInputLimit(provider, options.openrouterTtsModel);
+  const routerSelection = provider === 'openrouter'
+    ? resolveOpenRouterTtsSelection(options.openrouterTtsModel, options.openrouterTtsVoice) : null;
   
   log('TTS provider config', { provider, maxInput });
   
@@ -563,7 +523,8 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   // Expand chunks that exceed TTS limit
   const expandedChunks = [];
   for (const chunk of chunks) {
-    const parts = splitIfTooLong(chunk.text, maxInput);
+    const text = routerSelection ? normalizeOpenRouterSpeechInput(chunk.text, routerSelection.model, routerSelection.voice) : chunk.text;
+    const parts = splitNarrationText(text, maxInput);
     for (let i = 0; i < parts.length; i++) {
       expandedChunks.push({
         text: parts[i],

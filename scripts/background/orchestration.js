@@ -1,4 +1,5 @@
 // @ts-check
+import { AUDIO_PREPARATION_PROMPT_KEY, loadPromptOverrides, readPromptOverrides } from '../settings/prompt-catalog.js';
 // Article processing orchestration for background service worker
 // Uses dependency injection pattern for better testability and modularity
 
@@ -61,6 +62,22 @@ export function initOrchestration(deps) {
   }
   if (isCancelled(data.processingRunId)) return false;
   
+  try {
+    data.promptOverrides = await loadPromptOverrides();
+    if (data.outputFormat === 'audio' && Object.hasOwn(data, 'audioPreparationPrompt')) {
+      const prompt = readPromptOverrides({ [AUDIO_PREPARATION_PROMPT_KEY]: data.audioPreparationPrompt }).audioPreparation;
+      if (prompt) data.promptOverrides.audioPreparation = prompt;
+      else delete data.promptOverrides.audioPreparation;
+    }
+  } catch {
+    const uiLang = await getUILanguageCached();
+    await setError({
+      message: tSync('promptLoadFailed', uiLang), code: ERROR_CODES.VALIDATION_ERROR,
+      translationKey: 'promptLoadFailed', translationParams: {}
+    }, stopKeepAlive, data.processingRunId);
+    return false;
+  }
+  if (isCancelled(data.processingRunId)) return false;
   const processingStartTime = Date.now();
   
   // DETAILED LOGGING: All processing settings at start

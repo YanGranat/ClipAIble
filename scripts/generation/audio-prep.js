@@ -2,28 +2,20 @@
 // Audio preparation module for ClipAIble extension
 // Handles text chunking and cleanup for TTS conversion
 
-import { log, logError, logWarn } from '../utils/logging.js';
-import { normalizeSpeechText } from '../utils/audio-text.js';
+import { renderPrompt } from '../settings/prompt-catalog.js';
+import { log, logWarn } from '../utils/logging.js';
+import { splitNarrationText } from '../utils/narration-chunks.js';
+import { isLocalSpeechProvider } from '../api/supertonic-config.js';
 import { documentText, listHtml, tableCellHtml, flatTableProjection } from './document-content.js';
 import { isNativePdfContent } from './xml.js';
-import { stripHtml as stripRichHtml } from '../utils/html.js';
-import { tokenizeHtml, decodeEntities } from '../utils/html/tokenizer.js';
+import { sanitizeMarkdownHtml } from '../utils/html.js';
+import { tokenizeHtml, decodeEntities, plainText as plainHtmlText } from '../utils/html/tokenizer.js';
 import { isTerminalAIResponseError } from '../api/response-validation.js';
 import { callAI } from '../api/index.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
-import { handleError } from '../utils/error-handler.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
 import { OPENAI_TTS_VOICES, DEFAULT_OPENAI_TTS_VOICE, OPENAI_TTS_MIN_SPEED, OPENAI_TTS_MAX_SPEED, OPENAI_TTS_MAX_INPUT } from '../api/tts-catalog.js';
-import {
-  buildPreparationSettings,
-  logContentAnalysis,
-  logPlainTextConversion,
-  logChunkSplitting,
-  logChunkSplittingResults,
-  processChunkForAudio,
-  logAudioPreparationComplete
-} from './audio-prep-helpers.js';
 
 /**
  * Configuration for audio preparation
@@ -59,7 +51,7 @@ export const AUDIO_CONFIG = {
 };
 
 /** Project reading text and semantic math without marked backlink controls. */
-function narrationPlainText(html) {
+function narrationPlainText(html, preserveTextNewlines = false) {
   /** @type {Array<{name: string, math: boolean, literal: boolean, script: boolean, backlink: boolean}>} */
   const stack = [];
   let output = '';
@@ -89,417 +81,64 @@ function narrationPlainText(html) {
     if (backlink && !parent?.backlink) output += ' ';
     if (!backlink) output += script ? (token.name === 'sup' ? '^{' : '_{') : token.raw;
   }
-  return stripRichHtml(output);
+  return plainHtmlText(output, { preserveBreaks: true, preserveTextNewlines });
 }
 
-/**
- * Convert content items to plain text
- * @param {Array} content - Array of content items from extraction
- * @returns {string} Plain text representation
- */
+function narrationItemText(item) {
+  const literal = item.format === 'text' || isNativePdfContent(item);
+  const html = !literal && typeof item.html === 'string' ? sanitizeMarkdownHtml(item.html) : documentText(item);
+  return narrationPlainText(html, literal);
+}
+
+/** Project article content without rewriting the resulting narration. */
 export function contentToPlainText(content) {
-  log('=== contentToPlainText START ===', { 
-    itemCount: content?.length,
-    itemTypes: content?.map(i => i.type) || []
-  });
-  
-  if (!content || !Array.isArray(content)) return '';
-  
-  const textParts = [];
-  let skippedItems = [];
-  let processedItems = [];
-  let itemIndex = 0;
-  
+  if (!Array.isArray(content)) return '';
+  const parts = [];
   for (const item of content) {
-    itemIndex++;
-    const itemLog = {
-      index: itemIndex,
-      type: item.type,
-      originalLength: item.text?.length || item.html?.length || 0
-    };
-    
+    if (!item) continue;
     switch (item.type) {
       case 'heading':
-        // Add heading with newlines for natural pauses
-        const headingText = narrationPlainText(documentText(item));
-        if (headingText) {
-          textParts.push(`\n\n${headingText}\n`);
-          itemLog.extractedLength = headingText.length;
-          itemLog.added = true;
-        } else {
-          itemLog.added = false;
-          itemLog.reason = 'Empty after stripHtml';
-        }
-        processedItems.push(itemLog);
-        break;
-        
       case 'subtitle':
       case 'paragraph':
-        const paraText = narrationPlainText(documentText(item));
-        if (paraText) {
-          textParts.push(paraText);
-          itemLog.extractedLength = paraText.length;
-          itemLog.added = true;
-        } else {
-          itemLog.added = false;
-          itemLog.reason = 'Empty after stripHtml';
-        }
-        processedItems.push(itemLog);
-        break;
-        
       case 'quote':
       case 'blockquote':
-        const quoteText = narrationPlainText(documentText(item));
-        if (quoteText) {
-          textParts.push(`Quote: ${quoteText}`);
-          itemLog.extractedLength = quoteText.length;
-          itemLog.added = true;
-        } else {
-          itemLog.added = false;
-          itemLog.reason = 'Empty after stripHtml';
-        }
-        processedItems.push(itemLog);
+        parts.push(narrationItemText(item));
         break;
-        
-      case 'list':
-        if (item.items && Array.isArray(item.items)) {
-          const listItems = [narrationPlainText(listHtml(item))];
-          if (listItems.length > 0) {
-            const listText = listItems.join('\n');
-            textParts.push(listText);
-            itemLog.extractedLength = listText.length;
-            itemLog.itemsCount = listItems.length;
-            itemLog.added = true;
-          } else {
-            itemLog.added = false;
-            itemLog.reason = 'No valid list items';
-          }
-        } else {
-          itemLog.added = false;
-          itemLog.reason = 'No items array';
-        }
-        processedItems.push(itemLog);
-        break;
-        
       case 'code':
-        // Skip code blocks - not suitable for audio
-        skippedItems.push({ type: 'code', length: item.text?.length || 0 });
-        itemLog.skipped = true;
-        itemLog.reason = 'Code blocks not suitable for audio';
-        processedItems.push(itemLog);
+        parts.push(narrationItemText({ ...item, format: 'text' }));
         break;
-        
-      case 'image':
-        if (item.isGraphic && item.alt?.trim()) {
-          textParts.push(item.alt.trim());
-          itemLog.added = true;
-          itemLog.extractedLength = item.alt.trim().length;
-        }
-        // Include image caption if present
+      case 'list':
+        if (Array.isArray(item.items)) parts.push(narrationPlainText(listHtml(item)));
+        break;
+      case 'image': {
+        if (item.isGraphic && item.alt?.trim()) parts.push(item.alt.trim());
         if (item.caption) {
-          const literalCaption = item.format === 'text' || isNativePdfContent(item);
-          const captionText = narrationPlainText(documentText(literalCaption
-            ? { format: 'text', text: item.caption }
-            : { html: item.caption }));
-          if (captionText) {
-            textParts.push(`Image: ${captionText}`);
-            itemLog.extractedLength = captionText.length;
-            itemLog.added = true;
-            itemLog.hasCaption = true;
-          } else {
-            itemLog.added = false;
-            itemLog.reason = 'Empty caption after stripHtml';
-          }
-        } else {
-          itemLog.added = !!(item.isGraphic && item.alt?.trim());
-          if (!itemLog.added) itemLog.reason = 'No caption';
+          const literal = item.format === 'text' || isNativePdfContent(item);
+          parts.push(narrationItemText(literal ? { format: 'text', text: item.caption } : { html: item.caption }));
         }
-        processedItems.push(itemLog);
         break;
-        
-      case 'table':
-        const tableProjection = flatTableProjection(item);
-        const tableHeaders = Array.isArray(tableProjection.headers)
-          ? tableProjection.headers.map(value => narrationPlainText(tableCellHtml(item, value))) : [];
-        const tableRows = Array.isArray(tableProjection.rows) ? tableProjection.rows : [];
-        const narrationRows = [];
-        for (const row of tableRows) {
-          if (!Array.isArray(row)) continue;
-          const fields = [];
-          row.forEach((cell, column) => {
-            const value = narrationPlainText(tableCellHtml(item, cell));
-            if (value) fields.push(tableHeaders[column] ? `${tableHeaders[column]}: ${value}` : value);
-          });
-          if (fields.length) narrationRows.push(fields.join('; '));
-        }
-        const tableText = narrationRows.length ? narrationRows.join('\n\n') : tableHeaders.filter(Boolean).join('; ');
-        if (tableText) {
-          textParts.push(tableText);
-          itemLog.extractedLength = tableText.length;
-          itemLog.added = true;
-        } else {
-          itemLog.added = false;
-          itemLog.reason = 'Empty table';
-        }
-        itemLog.rows = tableRows.length;
-        processedItems.push(itemLog);
+      }
+      case 'table': {
+        const table = flatTableProjection(item);
+        const value = cell => narrationPlainText(tableCellHtml(item, cell), item.cellFormat === 'text' || isNativePdfContent(item));
+        const headers = Array.isArray(table.headers) ? table.headers.map(cell => value(cell).replace(/\s+/g, ' ')) : [];
+        const rows = Array.isArray(table.rows) ? table.rows.filter(Array.isArray).map(row => row.map((cell, column) => {
+          const text = value(cell);
+          return !text ? '' : headers[column] ? `${headers[column]}: ${text}` : text;
+        }).filter(Boolean).join('; ')).filter(Boolean) : [];
+        parts.push(rows.length ? rows.join('\n\n') : headers.filter(Boolean).join('; '));
         break;
-        
-      case 'separator':
-        textParts.push('\n');
-        itemLog.added = true;
-        itemLog.extractedLength = 1;
-        processedItems.push(itemLog);
-        break;
-        
+      }
       case 'infobox_start':
-        if (item.title) {
-          textParts.push(`\n${item.title}:`);
-          itemLog.extractedLength = item.title.length;
-          itemLog.added = true;
-        } else {
-          itemLog.added = false;
-          itemLog.reason = 'No title';
-        }
-        processedItems.push(itemLog);
+        if (item.title?.trim()) parts.push(item.title.trim() + ':');
         break;
-        
-      case 'infobox_end':
-        textParts.push('\n');
-        itemLog.added = true;
-        itemLog.extractedLength = 1;
-        processedItems.push(itemLog);
-        break;
-        
-      default:
-        itemLog.added = false;
-        itemLog.reason = `Unknown type: ${item.type}`;
-        processedItems.push(itemLog);
-        logWarn('Unknown content item type in contentToPlainText', itemLog);
     }
   }
-  
-  // Log detailed extraction summary
-  const addedCount = processedItems.filter(i => i.added).length;
-  const skippedCount = processedItems.filter(i => i.skipped).length;
-  const emptyCount = processedItems.filter(i => !i.added && !i.skipped).length;
-  
-  log('=== contentToPlainText EXTRACTION DETAILS ===', {
-    totalItems: content.length,
-    addedItems: addedCount,
-    skippedItems: skippedCount,
-    emptyItems: emptyCount,
-    itemsByType: processedItems.reduce((acc, item) => {
-      acc[item.type] = (acc[item.type] || 0) + 1;
-      return acc;
-    }, {}),
-    processedItemsPreview: processedItems.slice(0, 10).map(i => ({
-      index: i.index,
-      type: i.type,
-      added: i.added,
-      skipped: i.skipped,
-      length: i.extractedLength || i.originalLength
-    }))
-  });
-  
-  const result = textParts.join('\n\n').trim();
-  
-  log('=== contentToPlainText COMPLETE ===', {
-    inputItems: content.length,
-    outputParts: textParts.length,
-    outputLength: result.length,
-    skippedItems: skippedItems.length > 0 ? skippedItems : 'none',
-    preview: result.substring(0, 200) + '...',
-    endPreview: '...' + result.substring(Math.max(0, result.length - 100)),
-    nonAsciiCount: (result.match(/[^\x00-\x7F]/g) || []).length,
-    hasNewlines: result.includes('\n'),
-    newlineCount: (result.match(/\n/g) || []).length
-  });
-  
-  return result;
+  return parts.filter(Boolean).join('\n\n');
 }
 
-/**
- * Smart text chunking for TTS
- * Splits text into chunks of 2-4k characters at natural boundaries
- * @param {string} text - Full text to split
- * @returns {Array<{text: string, index: number}>} Array of text chunks with indices
- */
-export function splitTextIntoChunks(text) {
-  if (!text) return [];
-  
-  const chunks = [];
-  let currentChunk = '';
-  let chunkIndex = 0;
-  
-  // Split by paragraphs first (double newline)
-  const paragraphs = text.split(/\n\n+/).filter(p => p.trim());
-  
-  for (const paragraph of paragraphs) {
-    const trimmedPara = paragraph.trim();
-    if (!trimmedPara) continue;
-    
-    // If adding this paragraph would exceed max, finalize current chunk
-    if (currentChunk && (currentChunk.length + trimmedPara.length + 2) > AUDIO_CONFIG.MAX_CHUNK_SIZE) {
-      // Check if current chunk is large enough
-      if (currentChunk.length >= AUDIO_CONFIG.MIN_CHUNK_SIZE) {
-        chunks.push({ text: currentChunk.trim(), index: chunkIndex++ });
-        currentChunk = trimmedPara;
-      } else {
-        // Try to split the paragraph by sentences
-        const sentences = splitIntoSentences(trimmedPara);
-        for (const sentence of sentences) {
-          if ((currentChunk.length + sentence.length + 1) > AUDIO_CONFIG.MAX_CHUNK_SIZE) {
-            if (currentChunk.length >= AUDIO_CONFIG.MIN_CHUNK_SIZE) {
-              chunks.push({ text: currentChunk.trim(), index: chunkIndex++ });
-              currentChunk = sentence;
-            } else {
-              // Force split within sentence if needed
-              currentChunk += ' ' + sentence;
-              if (currentChunk.length > AUDIO_CONFIG.MAX_CHUNK_SIZE) {
-                const forceSplit = forceSplitText(currentChunk, AUDIO_CONFIG.IDEAL_CHUNK_SIZE);
-                for (let i = 0; i < forceSplit.length - 1; i++) {
-                  chunks.push({ text: forceSplit[i].trim(), index: chunkIndex++ });
-                }
-                currentChunk = forceSplit[forceSplit.length - 1];
-              }
-            }
-          } else {
-            currentChunk += (currentChunk ? ' ' : '') + sentence;
-          }
-        }
-      }
-    } else {
-      currentChunk += (currentChunk ? '\n\n' : '') + trimmedPara;
-    }
-  }
-  
-  // Add remaining content
-  if (currentChunk.trim()) {
-    // If last chunk is too small, try to merge with previous
-    if (currentChunk.length < AUDIO_CONFIG.MIN_CHUNK_SIZE / 2 && chunks.length > 0) {
-      const lastChunk = chunks[chunks.length - 1];
-      if (lastChunk.text.length + currentChunk.length <= AUDIO_CONFIG.MAX_CHUNK_SIZE) {
-        lastChunk.text += '\n\n' + currentChunk.trim();
-      } else {
-        chunks.push({ text: currentChunk.trim(), index: chunkIndex });
-      }
-    } else {
-      chunks.push({ text: currentChunk.trim(), index: chunkIndex });
-    }
-  }
-  
-  const boundedChunks = chunks.flatMap(chunk =>
-    chunk.text.length > AUDIO_CONFIG.MAX_CHUNK_SIZE
-      ? forceSplitText(chunk.text, AUDIO_CONFIG.IDEAL_CHUNK_SIZE).map(text => ({ text }))
-      : [chunk]
-  ).map((chunk, index) => ({ ...chunk, index }));
-
-  log('Text split into chunks', { 
-    totalChunks: boundedChunks.length,
-    chunkSizes: boundedChunks.map(c => c.text.length)
-  });
-  
-  return boundedChunks;
-}
-
-/**
- * Split text into sentences
- * @param {string} text - Text to split
- * @returns {Array<string>} Array of sentences
- */
-function splitIntoSentences(text) {
-  if (!text) return [];
-  
-  // Split by sentence-ending punctuation followed by space and capital letter
-  // Also handle common abbreviations
-  const sentences = [];
-  let current = '';
-  
-  const words = text.split(/\s+/);
-  
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i];
-    current += (current ? ' ' : '') + word;
-    
-    // Check if this looks like end of sentence
-    if (/[.!?]$/.test(word)) {
-      // Check if next word starts with capital (if exists)
-      const nextWord = words[i + 1];
-      if (!nextWord || /^[A-ZА-ЯЁЇІЄҐ]/.test(nextWord)) {
-        // Check it's not an abbreviation
-        if (!isAbbreviation(word)) {
-          sentences.push(current);
-          current = '';
-        }
-      }
-    }
-  }
-  
-  if (current) {
-    sentences.push(current);
-  }
-  
-  return sentences.filter(s => s.trim());
-}
-
-/**
- * Check if word is a common abbreviation
- * @param {string} word - Word to check
- * @returns {boolean} True if abbreviation
- */
-function isAbbreviation(word) {
-  const abbreviations = [
-    'mr.', 'mrs.', 'ms.', 'dr.', 'prof.', 'sr.', 'jr.',
-    'inc.', 'ltd.', 'corp.', 'co.', 'etc.', 'e.g.', 'i.e.',
-    'vs.', 'fig.', 'al.', 'no.', 'vol.', 'pp.', 'p.',
-    'т.е.', 'т.д.', 'т.п.', 'др.', 'пр.', 'см.', 'ср.'
-  ];
-  return abbreviations.includes(word.toLowerCase());
-}
-
-/**
- * Force split text at word boundaries
- * @param {string} text - Text to split
- * @param {number} targetSize - Target chunk size
- * @returns {Array<string>} Array of text parts
- */
-function forceSplitText(text, targetSize) {
-  const parts = [];
-  const words = text.split(/\s+/);
-  let current = '';
-  
-  for (const word of words) {
-    if (word.length > targetSize) {
-      if (current) {
-        parts.push(current);
-        current = '';
-      }
-      let remaining = word;
-      while (remaining.length > targetSize) {
-        let end = targetSize;
-        if (/^[\uDC00-\uDFFF]$/.test(remaining[end]) && /[\uD800-\uDBFF]$/.test(remaining[end - 1])) {
-          end--;
-        }
-        parts.push(remaining.slice(0, end));
-        remaining = remaining.slice(end);
-      }
-      current = remaining;
-      continue;
-    }
-    if (current && (current.length + word.length + 1) > targetSize) {
-      parts.push(current);
-      current = word;
-    } else {
-      current += (current ? ' ' : '') + word;
-    }
-  }
-  
-  if (current) {
-    parts.push(current);
-  }
-  
-  return parts;
+export function splitTextIntoChunks(text, maxLength = AUDIO_CONFIG.MAX_CHUNK_SIZE) {
+  return splitNarrationText(text, maxLength).map((text, index) => ({ text, index }));
 }
 
 // Language names for prompts
@@ -518,460 +157,60 @@ const LANGUAGE_NAMES_FOR_PROMPT = {
   'auto': null
 };
 
-/**
- * Prepare single chunk for audio using AI
- * Cleans up text to be suitable for TTS (removes URLs, code references, etc.)
- * @param {string} chunkText - Raw chunk text
- * @param {number} chunkIndex - Index of this chunk
- * @param {number} totalChunks - Total number of chunks
- * @param {string} apiKey - API key
- * @param {string} model - Model to use
- * @param {string} language - Target language code (e.g., 'ru', 'en', 'auto')
- * @returns {Promise<string>} Cleaned text ready for TTS
- */
+/** Rewrite a segment only when the user explicitly chose a custom preparation prompt. */
 export async function prepareChunkForAudio(chunkText, chunkIndex, totalChunks, apiKey, model, language = 'auto', requestOptions = {}) {
-  // Log all chunk preparation settings
-  const chunkSettings = {
-    timestamp: Date.now(),
-    chunkIndex, 
-    totalChunks, 
-    textLength: chunkText.length,
-    language,
-    model,
-    hasApiKey: !!apiKey,
-    textPreview: chunkText.substring(0, 150) + '...',
-    textEnd: '...' + chunkText.substring(chunkText.length - 100),
-    // Language detection
-    langName: LANGUAGE_NAMES_FOR_PROMPT[language] || null,
-    languageInstruction: LANGUAGE_NAMES_FOR_PROMPT[language] 
-      ? `The text is in ${LANGUAGE_NAMES_FOR_PROMPT[language]}. Keep all text in ${LANGUAGE_NAMES_FOR_PROMPT[language]}.`
-      : 'Keep the original language of the text.'
-  };
-  
-  log('=== prepareChunkForAudio START with all settings ===', chunkSettings);
-  
-  const langName = LANGUAGE_NAMES_FOR_PROMPT[language] || null;
-  const languageInstruction = langName 
-    ? `The text is in ${langName}. Keep all text in ${langName}.` 
-    : 'Keep the original language of the text.';
-  
-  const systemPrompt = `You are a text preparation assistant for text-to-speech conversion.
-
-Your task is to clean up the provided text so it can be read aloud naturally.
-${languageInstruction}
-
-RULES:
-1. REMOVE completely:
-   - URLs and web addresses (replace with descriptive text if context needed)
-   - Email addresses
-   - Code snippets and technical syntax
-   - Footnote markers like [1], [2], etc.
-   - Bracketed reference markers like [^1], [^2]
-   - File paths
-   - Markdown formatting symbols (*, _, #, etc.)
-   - PDF page numbers and page references: "Page X", "Page X of Y", "see page X", "refer to page X"
-
-2. CONVERT to readable form:
-   - Abbreviations → full words (e.g., "etc." → "and so on", "e.g." → "for example")
-   - Numbers → written out for small numbers or keep as digits for large ones
-   - Dates → natural spoken form
-   - Technical terms → keep but ensure pronounceable
-   - Mathematical operators, powers and indices → spoken form in the original language, preserving their meaning and operands
-
-3. PRESERVE:
-   - All meaningful content and ideas
-   - Meaningful numbers, including standalone years, counts, and mathematical exponents
-   - Natural paragraph structure
-   - Quotes and attributions
-   - Names of people, places, companies
-
-4. IMPROVE for listening:
-   - Do not add transitions, explanations, facts or summaries
-   - Keep version numbers and all factual qualifications
-   - Ensure sentences are complete and make sense when read aloud
-   - ${languageInstruction}
-
-OUTPUT: Return ONLY the cleaned text. No explanations, no prefixes, no quotes around the text.`;
-
-  const userPrompt = `Clean this text chunk (${chunkIndex + 1} of ${totalChunks}) for audio narration:
-
-${chunkText}`;
-
+  const langName = LANGUAGE_NAMES_FOR_PROMPT[language];
+  const languageInstruction = langName ? `Keep the original ${langName} text.` : 'Keep the original language of the text.';
+  const systemPrompt = renderPrompt('audioPreparation', requestOptions, { languageInstruction });
+  const userPrompt = `Clean this text chunk (${chunkIndex + 1} of ${totalChunks}) for audio narration:\n\n${chunkText}`;
   try {
-    // Log before AI call
-    const beforeAICall = Date.now();
-    log('=== prepareChunkForAudio: Calling AI for cleanup ===', {
-      chunkIndex,
-      originalLength: chunkText.length,
-      language,
-      model,
-      originalPreview: chunkText.substring(0, 200),
-      originalEnd: '...' + chunkText.substring(Math.max(0, chunkText.length - 100)),
-      nonAsciiCount: (chunkText.match(/[^\x00-\x7F]/g) || []).length,
-      urlCount: (chunkText.match(/https?:\/\/\S+/g) || []).length,
-      markdownCount: (chunkText.match(/[*_`#\[\]]/g) || []).length
-    });
-    
-    const cleanedResponse = await callAI(systemPrompt, userPrompt, apiKey, model, false, requestOptions);
-    const aiCallDuration = Date.now() - beforeAICall;
-    
-    // Extract string from response (callAI returns string when jsonResponse=false)
-    if (typeof cleanedResponse !== 'string' || !cleanedResponse.trim()) throw new Error('Narration preparation returned no text');
-    const cleaned = cleanedResponse;
-    
-    log('=== prepareChunkForAudio: AI cleanup complete ===', {
-      chunkIndex,
-      aiCallDuration,
-      aiCleanedLength: cleaned.length,
-      aiLengthChange: cleaned.length - chunkText.length,
-      aiCleanedPreview: cleaned.substring(0, 200),
-      aiCleanedEnd: '...' + cleaned.substring(Math.max(0, cleaned.length - 100))
-    });
-    
-    // Additional cleanup
-    const beforePostCleanup = cleaned;
-    let result = cleaned
-      .trim()
-      // Remove any remaining markdown
-      .replace(/\*\*([^*]+)\*\*/g, '$1')
-      .replace(/\*([^*]+)\*/g, '$1')
-      .replace(/__([^_]+)__/g, '$1')
-      .replace(/_(?!\{)([^_]+)_(?!\{)/g, '$1')
-      .replace(/`([^`]+)`/g, '$1')
-      // Remove leftover URLs
-      .replace(/https?:\/\/\S+/g, '')
-      .replace(/www\.\S+/g, '')
-      // Remove PDF-specific elements: page numbers and page references
-      .replace(/\bpage\s+\d+\s+of\s+\d+\b/gi, '') // "Page X of Y"
-      .replace(/\bpage\s+\d+\b/gi, '') // "Page X" or "page X"
-      .replace(/\bsee\s+page\s+\d+\b/gi, '') // "see page 5"
-      .replace(/\brefer\s+to\s+page\s+\d+\b/gi, '') // "refer to page 5"
-      // Clean up whitespace
-      .replace(/\s+/g, ' ')
-      .replace(/\n\s*\n/g, '\n\n')
-      .trim();
-    
-    const postCleanupChange = result.length - beforePostCleanup.length;
-    const lengthChange = result.length - chunkText.length;
-    const changePercent = Math.round((lengthChange / chunkText.length) * 100);
-    
-    log('=== prepareChunkForAudio COMPLETE ===', { 
-      chunkIndex, 
-      originalLength: chunkText.length,
-      aiCleanedLength: cleaned.length,
-      finalLength: result.length,
-      aiLengthChange: cleaned.length - chunkText.length,
-      postCleanupChange,
-      totalLengthChange: `${lengthChange > 0 ? '+' : ''}${lengthChange} (${changePercent}%)`,
-      cleanedPreview: result.substring(0, 150) + '...',
-      cleanedEnd: '...' + result.substring(result.length - 100),
-      nonAsciiCount: (result.match(/[^\x00-\x7F]/g) || []).length,
-      hasUrls: /https?:\/\/\S+/.test(result),
-      hasMarkdown: /[*_`#\[\]]/.test(result)
-    });
-    
-    // Warn if text was significantly shortened
-    if (changePercent < -20) {
-      logWarn('AI significantly shortened text', {
-        chunkIndex,
-        originalLength: chunkText.length,
-        cleanedLength: result.length,
-        reduction: `${Math.abs(changePercent)}%`
-      });
-    }
-    
-    return result;
+    const result = await callAI(systemPrompt, userPrompt, apiKey, model, false, requestOptions);
+    await requestOptions.checkCancelled?.();
+    requestOptions.signal?.throwIfAborted();
+    return typeof result === 'string' && result.trim() ? result.trim() : chunkText;
   } catch (error) {
     await requestOptions.checkCancelled?.();
-    if (requestOptions.signal?.aborted || error.name === 'AbortError' || error.retryable === false ||
+    requestOptions.signal?.throwIfAborted();
+    if (error.name === 'AbortError' || error.retryable === false ||
         [400, 401, 403, 429].includes(error.status) || isTerminalAIResponseError(error)) throw error;
-    logError('Failed to prepare chunk for audio', { chunkIndex, error });
-    // Fallback: basic cleanup without AI
-    return basicCleanup(chunkText);
+    logWarn('Custom narration preparation unavailable', { chunkIndex });
+    return chunkText;
   }
 }
 
-/**
- * Sanitize text for Piper TTS phonemizer
- * Removes problematic Unicode characters that cause phoneme index errors
- * This is the same sanitization used in offscreen.js for consistency
- * @param {string} text - Text to sanitize
- * @param {string} language - Language code (optional, for language-specific sanitization)
- * @returns {string} Sanitized text safe for Piper TTS
- */
-export function sanitizeForPiperTTS(text, language = 'auto') {
-  return normalizeSpeechText(text);
+function preparationError(key, uiLanguage) {
+  return Object.assign(new Error(tSync(key, uiLanguage)), { translationKey: key, translationParams: {} });
 }
 
-/**
- * Basic text cleanup without AI (for offline TTS or fallback)
- * Removes URLs, markdown, footnotes, and other non-speech elements
- * Also applies Piper TTS sanitization to prevent phoneme errors
- * @param {string} text - Text to clean
- * @param {string} language - Language code (optional, for language-specific sanitization)
- * @returns {string} Cleaned text ready for TTS
- */
-export function basicCleanup(text, language = 'auto') {
-  if (!text || typeof text !== 'string') return '';
-  
-  // Log before cleanup
-  const beforeCleanup = {
-    length: text.length,
-    language,
-    nonAsciiCount: (text.match(/[^\x00-\x7F]/g) || []).length,
-    urlCount: (text.match(/https?:\/\/\S+/g) || []).length,
-    markdownCount: (text.match(/[*_`#\[\]]/g) || []).length,
-    preview: text.substring(0, 200)
-  };
-  
-  log('=== basicCleanup START ===', beforeCleanup);
-  
-  // First, remove URLs, markdown, and other non-speech elements
-  let cleaned = text
-    // Remove URLs
-    .replace(/https?:\/\/\S+/g, '')
-    .replace(/www\.\S+/g, '')
-    // Remove footnotes and references
-    .replace(/\[\d+\]/g, '')
-    .replace(/\[\^\d+\]/g, '')
-    // Remove PDF-specific elements: page numbers and page references
-    .replace(/\bpage\s+\d+\s+of\s+\d+\b/gi, '') // "Page X of Y"
-    .replace(/\bpage\s+\d+\b/gi, '') // "Page X" or "page X" (standalone, not part of other text)
-    .replace(/\bsee\s+page\s+\d+\b/gi, '') // "see page 5"
-    .replace(/\brefer\s+to\s+page\s+\d+\b/gi, '') // "refer to page 5"
-    // Remove code blocks and inline code
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`]+`/g, '')
-    // Remove markdown formatting
-    .replace(/\*\*([^*]+)\*\*/g, '$1') // Bold
-    .replace(/\*([^*]+)\*/g, '$1')     // Italic
-    .replace(/__([^_]+)__/g, '$1')     // Bold underscore
-    .replace(/_(?!\{)([^_]+)_(?!\{)/g, '$1') // Italic underscore, excluding mathematical indices
-    .replace(/#{1,6}\s+/g, '')         // Headers
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Links [text](url) -> text
-    // Remove email addresses
-    .replace(/\S+@\S+\.\S+/g, '')
-    // Remove file paths (basic)
-    .replace(/[A-Z]:\\[^\s]+/gi, '')
-    .replace(/\/[^\s]+\.[a-z]{2,4}/gi, '')
-    // Normalize whitespace (preserve paragraph breaks)
-    .replace(/[ \t]+/g, ' ')           // Multiple spaces/tabs to single space
-    .replace(/\n{3,}/g, '\n\n')        // Multiple newlines to double newline
-    .trim();
-  
-  // Then apply Piper TTS sanitization to prevent phoneme errors
-  const beforeSanitization = {
-    length: cleaned.length,
-    preview: cleaned.substring(0, 200)
-  };
-  
-  cleaned = sanitizeForPiperTTS(cleaned, language);
-  
-  const afterCleanup = {
-    originalLength: text.length,
-    cleanedLength: cleaned.length,
-    lengthChange: cleaned.length - text.length,
-    lengthChangePercent: Math.round(((cleaned.length - text.length) / text.length) * 100),
-    nonAsciiCount: (cleaned.match(/[^\x00-\x7F]/g) || []).length,
-    preview: cleaned.substring(0, 200),
-    end: '...' + cleaned.substring(Math.max(0, cleaned.length - 100))
-  };
-  
-  log('=== basicCleanup COMPLETE ===', {
-    ...afterCleanup,
-    beforeCleanup,
-    beforeSanitization
-  });
-  
-  return cleaned;
-}
-
-/**
- * Full audio preparation pipeline
- * Takes article content and prepares it for TTS
- * @param {Array} content - Content items from extraction
- * @param {string} title - Article title
- * @param {string} apiKey - API key
- * @param {string} model - Model to use
- * @param {string} language - Target language code (e.g., 'ru', 'en', 'auto')
- * @param {import('../types.js').UpdateStateFunction} updateState - State update callback
- * @returns {Promise<Array<{text: string, index: number}>>} Prepared chunks ready for TTS
- */
-export async function prepareContentForAudio(content, title, apiKey, model, language = 'auto', updateState, provider = null, processingRunId, requestOptions = {}) {
-  // Determine cleanup mode: use AI cleanup for online TTS, basic cleanup for offline
-  const useAICleanup = Boolean(provider !== 'offline' && apiKey && model);
-  
-  // Log all preparation settings
-  const preparationSettings = buildPreparationSettings(
-    { content, title, language, model, apiKey, provider },
-    useAICleanup
-  );
-  log('🎙️ Starting audio preparation', { 
-    provider, 
-    useAICleanup: useAICleanup ? 'AI cleanup' : 'basic cleanup',
-    contentItems: content?.length || 0
-  });
-  
-  // Get UI language for localization
+/** Build narration segments, keeping the source unchanged unless custom preparation was enabled. */
+export async function prepareContentForAudio(content, title, apiKey, model, language = 'auto', updateState, provider = null, processingRunId, requestOptions = {}, maxLength = AUDIO_CONFIG.MAX_CHUNK_SIZE) {
+  const useCustomPrompt = !isLocalSpeechProvider(provider) && Boolean(requestOptions.promptOverrides?.audioPreparation);
   const uiLang = await getUILanguage();
-  
-  // Get current progress to avoid rollback (e.g., if translation was done, progress might be 60%)
-  const currentState = getProcessingState();
-  const currentProgress = currentState?.progress || 0;
-  
-  // If current progress is already >= 60% (translation was done), use 60% as base
-  // Otherwise, use normal progression 10-60%
-  const progressBase = currentProgress >= 60 ? 60 : 20;
-  const progressRange = currentProgress >= 60 ? 0 : 40; // No range if already at 60%
-  const startProgress = currentProgress >= 60 ? 60 : 10;
-  
-  // Log detailed content analysis before conversion
-  logContentAnalysis(content, title);
-  
-  // Convert content to plain text
-  log('📝 Converting content to plain text');
-  const convertingStatus = tSync('stageConvertingToText', uiLang);
-  updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: convertingStatus,
-    statusTranslationKey: 'stageConvertingToText', statusTranslationParams: {}, progress: startProgress });
-  const plainText = contentToPlainText(content);
-  
-  // Log plain text conversion
-  logPlainTextConversion(content, plainText);
-  log(`✅ Plain text conversion complete: ${plainText.length} characters`);
-  
-  if (!plainText) {
-    // Normalize error with context for better logging and error tracking
-    const noTextError = new Error('No text content to convert to audio');
-    const normalized = await handleError(noTextError, {
-      source: 'audioPrep',
-      errorType: 'noTextError',
-      logError: true,
-      createUserMessage: true, // Use centralized user-friendly message
-      context: {
-        operation: 'validateTextContent',
-        contentItemsCount: content?.length || 0
-      }
-    });
-    
-    /** @type {import('../types.js').ExtendedError} */
-    const error = new Error(normalized.userMessage || 'No text content to convert to audio');
-    error.code = normalized.code;
-    error.originalError = normalized.originalError;
-    error.context = normalized.context;
-    error.translationKey = normalized.translationKey;
-    error.translationParams = normalized.translationParams;
-    throw error;
-  }
-  
-  log('Converted to plain text', { length: plainText.length });
-  
-  // Add title at the beginning, but avoid duplication if plainText already starts with title
-  let fullText = plainText;
-  if (title) {
-    // Check if plainText already starts with title (case-insensitive, ignoring whitespace)
-    const titleNormalized = title.trim().toLowerCase();
-    const plainTextStart = plainText.trim().substring(0, titleNormalized.length).toLowerCase();
-    if (plainTextStart !== titleNormalized) {
-      fullText = `${title}\n\n${plainText}`;
-      log('Title added to beginning', { title, plainTextStart: plainText.substring(0, 100) });
-    } else {
-      log('Title already present in plainText, skipping duplicate', { title, plainTextStart: plainText.substring(0, 100) });
-    }
-  }
-  
-  // Split into chunks
-  log('✂️ Splitting text into chunks for TTS');
-  const splittingStatus = tSync('stageSplittingIntoChunks', uiLang);
-  const splitProgress = currentProgress >= 60 ? 60 : 15;
-  updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: splittingStatus,
-    statusTranslationKey: 'stageSplittingIntoChunks', statusTranslationParams: {}, progress: splitProgress });
-  
-  logChunkSplitting(fullText);
-  
-  const chunks = splitTextIntoChunks(fullText);
-  const avgChunkSize = chunks.length > 0 ? Math.round(chunks.reduce((sum, c) => sum + c.text.length, 0) / chunks.length) : 0;
-  const maxChunkSize = chunks.length > 0 ? Math.max(...chunks.map(c => c.text.length)) : 0;
-  const maxChunkUsage = Math.round((maxChunkSize / AUDIO_CONFIG.MAX_CHUNK_SIZE) * 100);
-  
-  log(`✅ Text split into ${chunks.length} chunks`, {
-    totalTextLength: fullText.length,
-    chunkSizeLimit: AUDIO_CONFIG.MAX_CHUNK_SIZE,
-    avgChunkSize: avgChunkSize,
-    maxChunkSize: maxChunkSize,
-    maxChunkUsage: `${maxChunkUsage}%`,
-    warning: maxChunkUsage > 90 ? '⚠️ Large chunks' : 'OK'
-  });
-  
-  if (chunks.length === 0) {
-    // Normalize error with context for better logging and error tracking
-    const splitError = new Error('Failed to split text into chunks');
-    const normalized = await handleError(splitError, {
-      source: 'audioPrep',
-      errorType: 'splitError',
-      logError: true,
-      createUserMessage: true, // Use centralized user-friendly message
-      context: {
-        operation: 'splitTextIntoChunks',
-        fullTextLength: fullText?.length || 0
-      }
-    });
-    
-    /** @type {import('../types.js').ExtendedError} */
-    const error = new Error(normalized.userMessage || 'Failed to split text into chunks');
-    error.code = normalized.code;
-    error.originalError = normalized.originalError;
-    error.context = normalized.context;
-    error.translationKey = normalized.translationKey;
-    error.translationParams = normalized.translationParams;
-    throw error;
-  }
-  
-  logChunkSplittingResults(chunks);
-  
-  // Prepare each chunk for audio
-  const preparedChunks = [];
-  
-  for (let i = 0; i < chunks.length; i++) {
-    // Check if processing was cancelled before processing each chunk
-    await checkCancellation(`audio preparation chunk ${i + 1}/${chunks.length}`, processingRunId);
-    
-    const chunk = chunks[i];
-    
-    // If already at 60%, keep it there (progress protection will prevent rollback)
-    // Otherwise, progress from base to 60%
-    const progress = currentProgress >= 60 ? 60 : (progressBase + Math.floor((i / chunks.length) * progressRange));
-    const preparingStatus = tSync('stagePreparingSegment', uiLang)
-      .replace('{current}', String(i + 1))
-      .replace('{total}', String(chunks.length));
-    updateState?.({ 
-      stage: PROCESSING_STAGES.GENERATING.id,
-      status: preparingStatus, 
-      statusTranslationKey: 'stagePreparingSegment', statusTranslationParams: { current: i + 1, total: chunks.length },
-      progress 
-    });
-    
-    // Process chunk using helper function
-    const preparedChunk = await processChunkForAudio(
-      chunk,
-      i,
-      chunks.length,
-      Boolean(useAICleanup),
-      apiKey || '',
-      model || '',
-      language,
-      prepareChunkForAudio,
-      basicCleanup,
-      requestOptions
-    );
-    
-    if (preparedChunk) {
-      preparedChunks.push(preparedChunk);
-    }
-  }
-  
-  // Log completion
-  logAudioPreparationComplete(plainText, chunks, preparedChunks, provider, useAICleanup);
-  
-  return preparedChunks;
-}
+  await checkCancellation('audio text preparation', processingRunId);
+  if (useCustomPrompt && !model) throw preparationError('errorExportModelRequired', uiLang);
+  if (useCustomPrompt && !apiKey) throw preparationError('errorNoApiKey', uiLang);
 
+  const base = getProcessingState()?.progress >= 60 ? 60 : 10;
+  const update = (key, progress, params = {}) => updateState?.({ stage: PROCESSING_STAGES.GENERATING.id,
+    status: tSync(key, uiLang, params), statusTranslationKey: key, statusTranslationParams: params, progress });
+  update('stageConvertingToText', base);
+  const body = contentToPlainText(content);
+  if (!body) throw preparationError('errorNoContentToConvert', uiLang);
+  const heading = String(title || '').trim();
+  const comparable = value => value.replace(/\s+/g, ' ').toLowerCase();
+  const firstBlock = body.split(/\n\n/, 1)[0];
+  const text = heading && comparable(heading) !== comparable(firstBlock) ? `${heading}\n\n${body}` : body;
+
+  const splitProgress = Math.max(15, base);
+  update('stageSplittingIntoChunks', splitProgress);
+  const chunks = splitTextIntoChunks(text, maxLength);
+  log('Narration prepared', { provider, chunks: chunks.length, characters: text.length, useCustomPrompt });
+  if (!useCustomPrompt) return chunks;
+  for (const chunk of chunks) {
+    await checkCancellation('custom audio preparation', processingRunId);
+    update('stagePreparingSegment', splitProgress + Math.floor((60 - splitProgress) * chunk.index / chunks.length),
+      { current: chunk.index + 1, total: chunks.length });
+    chunk.text = await prepareChunkForAudio(chunk.text, chunk.index, chunks.length, apiKey, model, language, requestOptions);
+  }
+  return chunks;
+}

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { translateImageWithOpenAI } from '../../scripts/api/openai-images.js';
 import { OPENAI_IMAGE_TRANSLATION_MODEL } from '../../scripts/api/image-translation-catalog.js';
+import { createImageTranslationPrompt } from '../../scripts/api/image-data.js';
 vi.mock('../../scripts/utils/config.js', () => ({ CONFIG: { API_TIMEOUT_MS: 2000 } }));
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGPUCKhgYGBgYgADAAsaAPSWyA61AAAAAElFTkSuQmCC';
@@ -22,9 +23,16 @@ describe('OpenAI image text translation', () => {
     const body = JSON.parse(request.body);
     expect(body).toEqual({ model: OPENAI_IMAGE_TRANSLATION_MODEL, prompt: expect.any(String), images: [{ image_url: image() }], n: 1, output_format: 'png', size: 'auto', quality: 'medium', complexity: 'medium' });
     expect(OPENAI_IMAGE_TRANSLATION_MODEL).toBe('gpt-image-2.6-sunburst');
-    expect(body.prompt).toContain('"French"');
-    for (const contract of ['readable text', 'layout', 'aspect ratio', 'colors', 'arrows', 'formulas', 'numbers', 'credits', 'background', 'established technical terminology', 'without adding gradients or texture', 'Make no other changes']) expect(body.prompt).toContain(contract);
+    expect(body.prompt).toBe(createImageTranslationPrompt('French'));
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('uses the edited image prompt and still sends the original image and target language', async () => {
+    const text = 'Translate each label into {{targetLanguage}} and retain the layout.';
+    await translateImageWithOpenAI(image(), 'French', 'synthetic-key', { promptOverrides: { translateImage: text } });
+    const body = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(body.prompt).toBe('Translate each label into "French" and retain the layout.');
+    expect(body.images).toEqual([{ image_url: image() }]);
   });
 
   it.each([['png', PNG], ['jpeg', JPEG], ['webp', WEBP]])('retains an accepted %s input MIME type', async (mime, value) => {

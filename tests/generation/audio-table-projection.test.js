@@ -21,7 +21,7 @@ describe('Table narration', () => {
 
   it('narrates authored graphic labels before the separate caption', () => {
     expect(contentToPlainText([{ type: 'image', isGraphic: true, alt: 'Station A\nMeasured current\nStation B', caption: '<a href="https://example.test/data">Measured sequence.</a>' }]))
-      .toBe('Station A\nMeasured current\nStation B\n\nImage: Measured sequence.');
+      .toBe('Station A\nMeasured current\nStation B\n\nMeasured sequence.');
   });
   it('keeps each value with its column header and each row in source order', () => {
     const table = { type: 'table', headers: ['Site', 'Count', 'Change'], rows: [['North', 0, '-2.5%'], ['South', 12, '0%']] };
@@ -84,14 +84,14 @@ describe('Table narration', () => {
     expect(table.rows).toEqual([['Coastal', '27']]);
   });
 
-  it('keeps the existing byte representation of every other supported item type', () => {
+  it('keeps source order and semantic boundaries across article content types', () => {
     const content = [
       { type: 'heading', format: 'text', text: 'Survey' }, { type: 'subtitle', text: 'A short deck.' },
       { type: 'paragraph', html: 'A <strong>measured</strong> result.' }, { type: 'quote', text: 'First statement.' },
       { type: 'blockquote', text: 'Second statement.' }, { type: 'list', items: ['One', 'Two'] },
-      { type: 'code', text: 'not narrated' }, { type: 'image', caption: 'Plot caption.' }, { type: 'separator' },
+      { type: 'code', text: 'x[2] = 17;' }, { type: 'image', caption: 'Plot caption.' }, { type: 'separator' },
       { type: 'infobox_start', title: 'Context' }, { type: 'paragraph', format: 'text', text: 'Literal <tag>.' }, { type: 'infobox_end' }
     ];
-    expect(contentToPlainText(content)).toBe('Survey\n\n\nA short deck.\n\nA measured result.\n\nQuote: First statement.\n\nQuote: Second statement.\n\nOne Two\n\nImage: Plot caption.\n\n\n\n\n\nContext:\n\nLiteral <tag>.');
+    expect(contentToPlainText(content)).toBe('Survey\n\nA short deck.\n\nA measured result.\n\nFirst statement.\n\nSecond statement.\n\nOne\n\nTwo\n\nx[2] = 17;\n\nPlot caption.\n\nContext:\n\nLiteral <tag>.');
   });
 });

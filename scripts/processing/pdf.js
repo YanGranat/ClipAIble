@@ -9,7 +9,8 @@ import { PROCESSING_STAGES, updateState } from '../state/processing.js';
 import { extractPdfContent } from '../extraction/pdf.js';
 import { callAIWithImageAndHistory } from '../api/index.js';
 import { CONFIG } from '../utils/config.js';
-import { PDF_TO_MARKDOWN_SYSTEM_PROMPT, buildPdfPageUserPrompt } from '../extraction/prompts.js';
+import { renderPrompt } from '../settings/prompt-catalog.js';
+import { buildPdfPageUserPrompt } from '../extraction/prompts.js';
 import { extractPdfViaOffscreen, getPdfMetadata, renderAllPdfPages, readRenderedPdfPage } from '../api/pdf-offscreen.js';
 import { removePdfOperation } from '../api/pdf-operation-storage.js';
 import { extractPdfDataFromTab } from '../api/pdf-data-extractor.js';
@@ -355,6 +356,7 @@ async function processPdfPageWithAI(data, pdfUrl) {
     throw createPdfError(tSync('errorPdfNoContent', uiLang), 'errorPdfNoContent');
   }
   
+  const systemPrompt = renderPrompt('pdfDocument', requestOptions);
   log(`PDF has ${numPages} pages - starting parallel extraction`);
   
   // Stage 2: Process each page with AI (10-40%)
@@ -366,7 +368,7 @@ async function processPdfPageWithAI(data, pdfUrl) {
   log('[ClipAIble PDF Processing] === CHAT HISTORY INITIALIZED ===', {
     numPages,
     messageHistoryInitialLength: messageHistory.length,
-    systemPromptLength: PDF_TO_MARKDOWN_SYSTEM_PROMPT.length
+    systemPromptLength: systemPrompt.length
   });
   let documentTitle = metadata.title || data.title || 'Untitled PDF';
   let hasDocumentTitle = typeof metadata.title === 'string' && metadata.title.trim().length > 0;
@@ -417,9 +419,9 @@ async function processPdfPageWithAI(data, pdfUrl) {
       const imageData = await readRenderedPdfPage(page.ref, data.processingRunId);
       await checkCancellation('PDF page image');
       const shouldExtractMetadata = needsMetadata(pageNum);
-      const userPrompt = buildPdfPageUserPrompt(imageData, pageNum, numPages, pageNum === 1, shouldExtractMetadata);
+      const userPrompt = buildPdfPageUserPrompt(imageData, pageNum, numPages, pageNum === 1, shouldExtractMetadata, requestOptions);
       const { result: pageResponse, assistantMessage } = await callAIWithImageAndHistory(
-        PDF_TO_MARKDOWN_SYSTEM_PROMPT, userPrompt, imageData, messageHistory,
+        systemPrompt, userPrompt, imageData, messageHistory,
         apiKey, model, true, requestOptions
       );
       await checkCancellation('PDF page response');

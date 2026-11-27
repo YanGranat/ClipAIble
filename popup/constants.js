@@ -1,6 +1,7 @@
 // @ts-check
 // Element ID constants for ClipAIble popup
 // This file contains all HTML element IDs to avoid magic strings
+import { OPENROUTER_KEY_SLOTS } from '../scripts/utils/storage/openrouter-key-slots.js';
 
 export const ELEMENT_IDS = {
   // Header
@@ -143,6 +144,7 @@ export const ELEMENT_IDS = {
   // Audio settings
   AUDIO_PROVIDER: 'audioProvider',
   AUDIO_PROVIDER_GROUP: 'audioProviderGroup',
+  SUPERTONIC_MODEL_GROUP: 'supertonicModelGroup',
 
   // ElevenLabs
   ELEVENLABS_API_KEY_GROUP: 'elevenlabsApiKeyGroup',
@@ -239,7 +241,9 @@ export const STORAGE_KEYS = {
   CLAUDE_API_KEY: 'claude_api_key',
   GEMINI_API_KEY: 'gemini_api_key',
   GROK_API_KEY: 'grok_api_key',
-  OPENROUTER_API_KEY: 'openrouter_api_key',
+  OPENROUTER_API_KEY: OPENROUTER_KEY_SLOTS.text,
+  OPENROUTER_IMAGE_API_KEY: OPENROUTER_KEY_SLOTS.image,
+  OPENROUTER_TTS_API_KEY: OPENROUTER_KEY_SLOTS.speech,
   DEEPSEEK_API_KEY: 'deepseek_api_key',
   GOOGLE_API_KEY: 'google_api_key',
 
@@ -262,6 +266,7 @@ export const STORAGE_KEYS = {
   STORAGE_TRANSLATE_IMAGES: 'translate_images',
   IMAGE_TRANSLATION_PROVIDER: 'image_translation_provider',
   GEMINI_IMAGE_MODEL: 'gemini_image_model',
+  OPENROUTER_IMAGE_MODEL: 'openrouter_image_model',
 
   // Styles
   STYLE_PRESET: 'pdf_style_preset',
@@ -297,6 +302,8 @@ export const STORAGE_KEYS = {
   RESPEECHER_TOP_P: 'respeecher_top_p',
   STORAGE_GOOGLE_TTS_API_KEY: 'google_tts_api_key',
   GOOGLE_TTS_MODEL: 'google_tts_model',
+  OPENROUTER_TTS_MODEL: 'openrouter_tts_model',
+  OPENROUTER_TTS_VOICE: 'openrouter_tts_voice',
   GOOGLE_TTS_VOICE: 'google_tts_voice',
   GOOGLE_TTS_PROMPT: 'google_tts_prompt',
   OPENAI_INSTRUCTIONS: 'openai_instructions',

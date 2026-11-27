@@ -321,6 +321,7 @@
  * @property {number} totalProcessingTime - Total processing time in milliseconds
  * @property {number|null} lastSaved - Last save timestamp
  * @property {Array<Object>} history - Save history (last 50 items)
+ * @property {number|null} [historyCountedThrough] - Imports at or before this timestamp may already be in the totals
  */
 
 /**
@@ -352,8 +353,9 @@
  * @property {string} [apiProvider] - API provider
  * @property {string} [targetLanguage] - Target language for translation
  * @property {boolean} [translateImages] - Translate images
- * @property {'gemini'|'openai'} [imageTranslationProvider] - Image translation provider
+ * @property {'gemini'|'openai'|'openrouter'} [imageTranslationProvider] - Image translation provider
  * @property {string} [geminiImageModel] - Selected Google image editor model ID
+ * @property {string} [openrouterImageModel] - Selected OpenRouter image editor model ID
  * @property {string|null} [imageApiKey] - Image provider API key
  * @property {string} [pageMode] - PDF page mode ('single'|'multi')
  * @property {string} [fontFamily] - PDF font family
@@ -574,7 +576,9 @@
  * @property {string} [claude_api_key] - Claude API key (encrypted)
  * @property {string} [gemini_api_key] - Gemini API key (encrypted)
  * @property {string} [grok_api_key] - Grok API key (encrypted)
- * @property {string} [openrouter_api_key] - OpenRouter API key (encrypted)
+ * @property {string} [openrouter_api_key] - OpenRouter text API key (encrypted)
+ * @property {string} [openrouter_image_api_key] - OpenRouter image API key (encrypted)
+ * @property {string} [openrouter_tts_api_key] - OpenRouter speech API key (encrypted)
  * @property {string} [elevenlabs_api_key] - ElevenLabs API key (encrypted)
  * @property {string} [qwen_api_key] - Qwen API key (encrypted)
  * @property {string} [respeecher_api_key] - Respeecher API key (encrypted)
@@ -622,13 +626,14 @@
 
 /**
  * @typedef {Object} TTSOptions
+ * @property {import('./settings/prompt-catalog.js').PromptOverrides} [promptOverrides] - Captured task prompt overrides
  * @property {AbortSignal} [signal] - Captured operation cancellation signal
  * @property {boolean} [returnBlob] - Return assembled audio as a Blob
  * @property {string} [processingRunId] - Processing run identity
- * @property {string} [provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', or 'offline'
+ * @property {string} [provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'openrouter', or 'offline'
  * @property {string} [voice] - Voice to use
  * @property {number} [speed] - Speech speed (OpenAI: 0.25-1.5, default: 1.0, offline: 0.1-10.0)
- * @property {string} [format] - Output format (OpenAI/offline/Google: always 'wav')
+ * @property {string} [format] - Output format (OpenAI/offline/Google/OpenRouter: always 'wav')
  * @property {string} [instructions] - Voice style instructions (OpenAI only)
  * @property {string} [openaiInstructions] - Alternative instructions property name (OpenAI only)
  * @property {string} [language] - Language code for Qwen/Offline (auto-detected if not provided)
@@ -642,6 +647,9 @@
  * @property {number} [elevenlabsStyle] - ElevenLabs style
  * @property {boolean} [elevenlabsSpeakerBoost] - ElevenLabs speaker boost
  * @property {string} [googleTtsModel] - Google TTS model
+ * @property {string} [openrouterTtsModel] - OpenRouter TTS model ID
+ * @property {string} [openrouterTtsVoice] - OpenRouter TTS voice ID
+ * @property {import('./api/openrouter-speech-options.js').OpenRouterSpeechOptions} [openrouterTtsOptions] - Active OpenRouter speech options
  * @property {string} [qwenModel] - Qwen synthesis model
  * @property {string} [qwenWorkspaceId] - Qwen workspace ID
  * @property {string} [qwenRegion] - Qwen workspace region
@@ -698,6 +706,9 @@
  * @property {boolean} [elevenlabsSpeakerBoost] - ElevenLabs speaker boost
  * @property {string|null} [openaiInstructions] - OpenAI instructions
  * @property {string} [googleTtsModel] - Google TTS model
+ * @property {string} [openrouterTtsModel] - OpenRouter TTS model ID
+ * @property {string} [openrouterTtsVoice] - OpenRouter TTS voice ID
+ * @property {import('./api/openrouter-speech-options.js').OpenRouterSpeechOptions} [openrouterTtsOptions] - Active OpenRouter speech options
  * @property {string} [qwenModel] - Qwen synthesis model
  * @property {string} [qwenWorkspaceId] - Qwen workspace ID
  * @property {string} [qwenRegion] - Qwen workspace region
@@ -711,6 +722,8 @@
 
 /**
  * @typedef {Object} ProcessingData
+ * @property {import('./settings/prompt-catalog.js').PromptOverrides} [promptOverrides] - Captured task prompt overrides
+ * @property {string|null} [audioPreparationPrompt] - Custom narration prompt captured at admission
  * @property {string} [processingRunId] - Processing run identity
  * @property {function(): void} [checkCancelled] - Synchronous owner check that throws after cancellation
  * @property {AIRequestOptions} [aiRequestOptions] - Captured AI routing and cancellation
@@ -731,8 +744,9 @@
  * @property {string} [pageMode] - PDF page mode
  * @property {string} [language] - Document language
  * @property {boolean} [translateImages] - Whether to translate images
- * @property {'gemini'|'openai'} [imageTranslationProvider] - Image translation provider
+ * @property {'gemini'|'openai'|'openrouter'} [imageTranslationProvider] - Image translation provider
  * @property {string} [geminiImageModel] - Selected Google image editor model ID
+ * @property {string} [openrouterImageModel] - Selected OpenRouter image editor model ID
  * @property {string|null} [imageApiKey] - Image provider API key
  * @property {string|null} [googleApiKey] - Google API key for image translation
  * @property {string} [stylePreset] - PDF style preset
@@ -757,7 +771,11 @@
  * @property {boolean} [elevenlabsSpeakerBoost] - ElevenLabs speaker boost
  * @property {string|null} [openaiInstructions] - OpenAI instructions
  * @property {string|null} [googleTtsApiKey] - Google TTS API key
+ * @property {string|null} [openrouterTtsApiKey] - OpenRouter speech API key
  * @property {string} [googleTtsModel] - Google TTS model
+ * @property {string} [openrouterTtsModel] - OpenRouter TTS model ID
+ * @property {string} [openrouterTtsVoice] - OpenRouter TTS voice ID
+ * @property {import('./api/openrouter-speech-options.js').OpenRouterSpeechOptions} [openrouterTtsOptions] - Active OpenRouter speech options
  * @property {string} [qwenModel] - Qwen synthesis model
  * @property {string} [qwenWorkspaceId] - Qwen workspace ID
  * @property {string} [qwenRegion] - Qwen workspace region
@@ -774,6 +792,7 @@
 
 /**
  * @typedef {Object} AIRequestOptions
+ * @property {import('./settings/prompt-catalog.js').PromptOverrides} [promptOverrides] - Captured task prompt overrides
  * @property {AIProvider} [provider] - Explicit selected AI provider
  * @property {function(): (void|Promise<void>)} [checkCancelled] - Owner check that throws after cancellation
  * @property {AbortSignal} [signal] - Captured operation cancellation signal
@@ -791,12 +810,14 @@
 
 /**
  * @typedef {Object} ImageTranslationOptions
+ * @property {import('./settings/prompt-catalog.js').PromptOverrides} [promptOverrides] - Captured task prompt overrides
  * @property {AIProvider} [provider] - Article classifier provider for Gemini editing
  * @property {function(): (void|Promise<void>)} [checkCancelled] - Image operation owner check
  * @property {AbortSignal} [signal] - Operation cancellation signal
  * @property {() => void} [onRequestStart] - Record admitted provider requests for the operation deadline
- * @property {'gemini'|'openai'} [imageTranslationProvider] - Image editor provider
+ * @property {'gemini'|'openai'|'openrouter'} [imageTranslationProvider] - Image editor provider
  * @property {string} [geminiImageModel] - Selected Google image editor model ID
+ * @property {string} [openrouterImageModel] - Selected OpenRouter image editor model ID
  * @property {string|null} [imageApiKey] - Selected image provider credential
  * @property {ExportFormat} [outputFormat] - Destination document format
  * @property {'low'|'high'} [imageDetail] - Classifier image detail

@@ -1,6 +1,7 @@
 // @ts-check
 // Lifecycle owner for one independent generation task.
 
+import { loadPromptOverrides } from '../settings/prompt-catalog.js';
 import { log, logWarn } from '../utils/logging.js';
 import { handleError } from '../utils/error-handler.js';
 import { getProcessingState } from '../state/processing.js';
@@ -72,9 +73,10 @@ export function createGenerationTask({ prefix, label, generate, timeoutMs, notif
       startKeepAlive();
       try { sendResponse?.({ started: true, generationId: job.id }); }
       catch (error) { logWarn(`Failed to acknowledge ${label} generation`, error); }
+      const promptOverrides = await race(data.getPromptOverrides?.() ?? loadPromptOverrides());
       const content = data.getContent ? await race(data.getContent(checkCancelled)) : {};
       checkCancelled();
-      const effectiveData = { ...data, ...content, checkCancelled };
+      const effectiveData = { ...data, ...content, checkCancelled, promptOverrides };
       const timeout = new Promise((_, reject) => {
         timer = setTimeout(() => {
           job.cancelled = true;
@@ -110,7 +112,8 @@ export function createGenerationTask({ prefix, label, generate, timeoutMs, notif
       if (error?.cancelledGeneration || owner !== job) return { cancelled: true };
       job.cancelled = true;
       const normalized = await handleError(error, {
-        source: `${prefix}Generation`, errorType: 'abstractGenerationFailed',
+        source: `${prefix}Generation`,
+        errorType: prefix === 'key_theses' ? 'keyThesesGenerationFailed' : 'abstractGenerationFailed',
         logError: true, createUserMessage: true, context: { url: data.url || '' }
       });
       await save(job, {

@@ -52,9 +52,11 @@ describe('Gemini synthesis generations', () => {
     expect(new DataView(result.buffer).getUint32(24, true)).toBe(22050);
     expect([...result.slice(44)]).toEqual([1, 0, 2, 0]);
   });
-  it('replaces a saved 2.5 Flash Preview before sending a single current-schema request', async () => {
+  it.each([
+    'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-flash-lite-preview-tts'
+  ])('replaces saved %s before sending a single current-schema request', async model => {
     googleResponse([1, 0, 2, 0], 'audio/L16;rate=24000');
-    const model = 'gemini-2.5-flash-preview-tts';
     const result = new Uint8Array(await google('Article.', 'synthetic-key', { model, voice: 'Kore', prompt: 'Calmly' }));
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.8-flash-lite-tts:generateContent');
@@ -69,11 +71,15 @@ describe('Gemini synthesis generations', () => {
     expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.8-flash-lite-tts:generateContent');
     expect(requestBody().generationConfig.speechConfig.voiceConfig).toEqual({ voice: 'Leda' });
   });
-  it('upgrades a context-menu settings snapshot without changing its Gemini text model or saved voice', async () => {
+  it.each([
+    'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-flash-lite-preview-tts'
+  ])('upgrades saved %s in Quick Save without changing its Gemini text model or saved voice', async model => {
     const settings = {
       api_provider: 'gemini', model_by_provider: { gemini: 'gemini-4-argon' },
       extraction_mode: 'automatic', audio_provider: 'google',
-      google_tts_api_key: 'synthetic-tts-key', google_tts_model: 'gemini-2.5-flash-preview-tts',
+      gemini_api_key: 'synthetic-text-key',
+      google_tts_api_key: 'synthetic-tts-key', google_tts_model: model,
       google_tts_voice: 'Charon', google_tts_prompt: 'Calmly'
     };
     const original = structuredClone(settings);
@@ -109,13 +115,20 @@ describe('Gemini synthesis generations', () => {
   });
   it.each([
     [[1, 0], 'audio/wav', 'STOP', /Invalid WAV/],
+    [[1, 0], undefined, 'STOP', /Missing audio format/],
     [[1, 0], 'audio/L16;rate=0', 'STOP', /sample rate/],
     [[1], 'audio/L16;rate=24000', 'STOP', /Incomplete PCM/],
     [[1, 0], 'audio/mpeg', 'STOP', /Unsupported audio format/],
     [[1, 0], 'audio/L16', 'MAX_TOKENS', /Incomplete audio/]
   ])('rejects malformed or incomplete audio (%s, %s, %s)', async (bytes, mimeType, reason, error) => {
     googleResponse(bytes, mimeType, reason);
-    await expect(google('Article.', 'synthetic-key')).rejects.toThrow(error);
+    await expect(google('Article.', 'synthetic-key')).rejects.toMatchObject({
+      message: expect.stringMatching(error), translationKey: 'errorFailedToParseResponse'
+    });
+  });
+  it('gives an empty speech response its own actionable localization', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ candidates: [] }))));
+    await expect(google('Article.', 'synthetic-key')).rejects.toMatchObject({ translationKey: 'errorNoAudioDataReturned' });
   });
 });
 

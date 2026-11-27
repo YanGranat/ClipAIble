@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as grok from '../../scripts/api/grok.js';
 import * as router from '../../scripts/api/openrouter.js';
+import { getModelMetadata, resolveSavedModel } from '../../scripts/utils/model-catalog.js';
 
 vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options = {}) => operation({ signal: new AbortController().signal, deadline: Date.now() + (options.timeoutMs ?? 600000) }) }));
 
@@ -37,6 +38,30 @@ describe('current Grok and OpenRouter model requests', () => {
     const result = await invoke(providers.router, 'deepseek/deepseek-v4.1-flash-no-thinking', {});
     expect(kind === 'history' ? result.result : result).toEqual({ success: true });
     expect(request()).toMatchObject({ model: 'deepseek/deepseek-v4.1-flash', reasoning: { enabled: false }, provider: { require_parameters: true } });
+  });
+
+  it.each(paths)('routes a migrated DeepSeek preset to Flash 1017 for %s', async (kind, invoke) => {
+    const model = resolveSavedModel('openrouter', 'deepseek/deepseek-v4.1-flash-no-thinking');
+    const result = await invoke(providers.router, model, {});
+    expect(kind === 'history' ? result.result : result).toEqual({ success: true });
+    expect(request().model).toBe('deepseek/deepseek-v4.1-flash-1017');
+    expect(request().reasoning?.enabled).not.toBe(false);
+  });
+
+  it.each(paths)('routes Kimi K3.1 Pro with its exact model ID for %s', async (kind, invoke) => {
+    const model = 'moonshotai/kimi-k3.1-pro';
+    const result = await invoke(providers.router, model + ' (reasoning: low)', {});
+    expect(kind === 'history' ? result.result : result).toEqual({ success: true });
+    expect(request()).toMatchObject({ model, reasoning: { effort: 'low' }, provider: { require_parameters: true } });
+  });
+
+  it('keeps Kimi vision available and uses the gateway non-reasoning mode for short classification', () => {
+    const model = 'moonshotai/kimi-k3.1-pro';
+    expect(getModelMetadata('openrouter', model).inputModalities).toEqual(['text', 'image', 'video']);
+    expect(router.getOpenRouterRequestConfig(model, { shortResponse: true, maxTokens: 16, imageInput: true })).toEqual({
+      model, reasoning: { effort: 'none' }, provider: { require_parameters: true }, max_tokens: 16
+    });
+    expect(router.getOpenRouterRequestConfig(model)).toEqual({ model });
   });
 
   it('sends the managed OpenRouter none effort and preserves image history and MIME', async () => {

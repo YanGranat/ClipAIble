@@ -3,15 +3,14 @@
 
 // @ts-check
 
+import { renderPrompt } from '../settings/prompt-catalog.js';
 import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
 import { callAI, getProviderFromModel } from '../api/index.js';
 import { 
-  EXTRACT_SYSTEM_PROMPT,
   buildChunkSystemPrompt,
   buildChunkUserPrompt,
-  SELECTOR_SYSTEM_PROMPT,
   buildSelectorUserPrompt
 } from '../extraction/prompts.js';
 import { splitHtmlIntoChunks, mergeChunkContent, prepareExtractedMainTitle, filterExtractionNoise, trimHtmlForAnalysis } from '../extraction/html-utils.js';
@@ -50,7 +49,7 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model, option
     throw new Error(tSync('errorHtmlTooLarge', uiLang));
   }
   
-  const systemPrompt = SELECTOR_SYSTEM_PROMPT;
+  const systemPrompt = renderPrompt('selector', options);
   let userPrompt = buildSelectorUserPrompt(html, url, title);
   if (repairFeedback) {
     userPrompt += `\n\nThe previous selector set returned no article content when applied to this page. Recheck the positive selectors and exclusions against the same HTML without assuming either has priority. Return a corrected selector set in the required JSON format.\nPrevious selector set:\n${JSON.stringify(repairFeedback.previousSelectors)}`;
@@ -776,7 +775,7 @@ ${html}`;
   await updateProgress(PROCESSING_STAGES.ANALYZING, 'stageAnalyzing', 10);
   
   await checkCancellation('single chunk request');
-  const result = normalizeHtmlExtractionResponse(await callAI(EXTRACT_SYSTEM_PROMPT, userPrompt, apiKey, model, true, getAIRequestOptions(data)));
+  const result = normalizeHtmlExtractionResponse(await callAI(renderPrompt('extractArticle', getAIRequestOptions(data)), userPrompt, apiKey, model, true, getAIRequestOptions(data)));
   
   // When jsonResponse=true, callAI returns parsed JSON object (AIResponse), not string
   /** @type {any} */ const resultAny = result;
@@ -853,22 +852,19 @@ async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
       timestamp: Date.now()
     });
     
-    const systemPrompt = buildChunkSystemPrompt(i, chunks.length);
+    const systemPrompt = buildChunkSystemPrompt(i, chunks.length, getAIRequestOptions(data));
     const userPrompt = buildChunkUserPrompt(chunks[i], url, title, i, chunks.length);
     const chunkStartTime = Date.now();
     const promptSize = systemPrompt.length + userPrompt.length;
 
-    // FULL PROMPT LOGGING FOR EACH CHUNK
-    log(`=== FULL PROMPT FOR CHUNK ${i + 1}/${chunks.length} AI EXTRACTION ===`, {
+    log('AI extraction prompt lengths', {
       chunkIndex: i,
       totalChunks: chunks.length,
       url,
       title,
       model,
       systemPromptLength: systemPrompt.length,
-      systemPromptFull: systemPrompt, // FULL SYSTEM PROMPT
       userPromptLength: userPrompt.length,
-      userPromptFull: userPrompt, // FULL USER PROMPT - INCLUDES FULL HTML CHUNK
       userPromptPreview: userPrompt.substring(0, 2000) + (userPrompt.length > 2000 ? '...' : ''),
       userPromptEnd: userPrompt.length > 2000 ? userPrompt.substring(userPrompt.length - 2000) : userPrompt,
       timestamp: Date.now()
@@ -1193,7 +1189,8 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   // Check cache first (if enabled)
   let selectors;
   let cachedEntry = null;
-  const useCache = data.useCache !== false;
+  const customizedSelector = Boolean(data.promptOverrides?.selector);
+  const useCache = data.useCache !== false && !customizedSelector;
 
   if (!useCache) {
     log('Selector cache disabled; requesting selectors from AI');
@@ -1280,7 +1277,7 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
       if (cachedEntry) await invalidateCache(url, cachedEntry);
     } else if (cachedEntry) {
       await markCacheSuccess(url, cachedEntry);
-    } else {
+    } else if (!customizedSelector) {
       await cacheSelectors(url, selectors);
     }
   } catch (error) {

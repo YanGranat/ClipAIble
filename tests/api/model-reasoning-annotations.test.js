@@ -13,6 +13,23 @@ import { callWithRetry } from '../../scripts/utils/retry.js';
 
 beforeEach(() => vi.restoreAllMocks());
 
+it.each(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-6-astra'])
+  ('exposes an xhigh preset for %s and sends the base API model with the selected effort', model => {
+    const preset = MODEL_CATALOG.openai.find(entry => entry.apiModel === model && entry.reasoningEffort === 'xhigh');
+    expect(preset?.id).toBe(model + '-xhigh');
+    expect(formatModelLabel('openai', preset.id)).toBe(model + ' (reasoning: xhigh)');
+    expect(normalizeModelSelection('openai', model + ' (reasoning: XHIGH)')).toBe(preset.id);
+    expect(getOpenAIRequestConfig(preset.id, { temperature: 0 })).toEqual({ model, reasoning_effort: 'xhigh' });
+  });
+
+it('sends the built-in xhigh option on an OpenAI text request', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+    choices: [{ message: { content: 'Example output' }, finish_reason: 'stop' }]
+  })));
+  await expect(callOpenAI('', 'Example article', 'synthetic-key', 'gpt-6.2-sol-xhigh', false)).resolves.toBe('Example output');
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({ model: 'gpt-6.2-sol', reasoning_effort: 'xhigh' });
+});
+
 it('parses an explicit effort without predicting a model family or changing model case', () => {
   expect(parseModelSelection('Vendor/ExampleModel(reasoning: XHIGH )')).toEqual({ apiModel: 'Vendor/ExampleModel', reasoningEffort: 'xhigh' });
   expect(normalizeModelSelection('openrouter', 'Vendor/ExampleModel ( reasoning : XHIGH )')).toBe('Vendor/ExampleModel (reasoning: xhigh)');

@@ -6,8 +6,8 @@ import { downloadBlob } from '../api/blob-download.js';
 // @typedef {import('../types.js').ContentItem} ContentItem
 
 import { log, logWarn, logError } from '../utils/logging.js';
-import { prepareContentForAudio } from './audio-prep.js';
-import { chunksToSpeech, getAudioExtension } from '../api/tts.js';
+import { AUDIO_CONFIG, prepareContentForAudio } from './audio-prep.js';
+import { chunksToSpeech, getAudioExtension, getTtsInputLimit } from '../api/tts.js';
 import { PROCESSING_STAGES, getProcessingState, isCancelled, getScopedUpdateState } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { cleanTitleForFilename } from '../utils/html.js';
@@ -55,6 +55,7 @@ export async function generateAudio(params, updateState) {
     format = 'mp3',
     language = 'auto',
     googleTtsVoice,
+    openrouterTtsVoice,
     googleTtsPrompt,
     tabId = null
   } = params;
@@ -70,7 +71,7 @@ export async function generateAudio(params, updateState) {
   }
 
   
-  // Prepare content for narration using the selected model.
+  // Project article text and prepare only an explicitly customized narration.
   // Get current progress to avoid rollback (e.g., if translation was done, progress might be 60%)
   const currentState = getProcessingState();
   const currentProgress = currentState?.progress || 0;
@@ -85,28 +86,17 @@ export async function generateAudio(params, updateState) {
     progress: startProgress 
   });
   
-  // For offline TTS, skip AI cleanup to avoid unnecessary API calls and costs
-  // Offline TTS will use basic cleanup instead
-  const useAICleanup = provider !== 'offline';
-  
-  log('[ClipAIble Audio Generation] Text preparation mode', {
-    provider,
-    useAICleanup,
-    reason: useAICleanup 
-      ? 'Using AI cleanup for better text quality' 
-      : 'Using basic cleanup for offline TTS (no API calls needed)'
-  });
-  
   const preparedChunks = await prepareContentForAudio(
     content,
     title,
-    useAICleanup ? apiKey : null, // Pass null API key for offline to skip AI cleanup
-    useAICleanup ? model : null,  // Pass null model for offline to skip AI cleanup
+    apiKey,
+    model,
     language,
     updateState,
-    provider, // Pass provider to control cleanup mode
+    provider,
     processingRunId,
-    params.aiRequestOptions
+    params.aiRequestOptions,
+    Math.min(AUDIO_CONFIG.MAX_CHUNK_SIZE, getTtsInputLimit(provider, params.openrouterTtsModel))
   );
   
   if (!preparedChunks || preparedChunks.length === 0) {
@@ -137,7 +127,7 @@ export async function generateAudio(params, updateState) {
   }
   
   // Determine voice and format based on provider
-  const { ttsVoice, ttsFormat } = getTTSVoiceAndFormat(provider, voice, format, googleTtsVoice);
+  const { ttsVoice, ttsFormat } = getTTSVoiceAndFormat(provider, voice, format, googleTtsVoice, openrouterTtsVoice);
   const ttsPrompt = provider === 'google' ? googleTtsPrompt : null;
 
   // Log prepared chunks
@@ -165,7 +155,7 @@ export async function generateAudio(params, updateState) {
   logTTSCallPreparation(provider, ttsVoice, speed, ttsFormat, language, tabId, preparedChunks.length, !!ttsApiKey);
 
   // Generate TTS instructions
-  const instructions = getTTSInstructions(language);
+  const instructions = getTTSInstructions(language, params.aiRequestOptions);
   const ttsOptions = buildTTSOptions(params, ttsVoice, ttsFormat, ttsPrompt, instructions);
 
   // Convert chunks to speech

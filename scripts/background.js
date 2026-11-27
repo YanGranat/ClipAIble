@@ -39,6 +39,7 @@ log('[ClipAIble Background] Importing logging utilities...', { timestamp: Date.n
 import { log, logError, logWarn, logDebug } from './utils/logging.js';
 import { CONFIG } from './utils/config.js';
 import { getUILanguage, tSync } from './locales.js';
+import { SUPERTONIC_DOWNLOAD_BYTES, SUPERTONIC_MODEL_STATUS_KEY } from './api/supertonic-config.js';
 
 log('[ClipAIble Background] Logging utilities imported successfully', {
   timestamp: Date.now(),
@@ -442,6 +443,14 @@ contextMenuModule.initContextMenuListeners(startArticleProcessingWrapper);
 try {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request?.target === 'pdf-progress') return false;
+    if (request?.target === SUPERTONIC_MODEL_STATUS_KEY) {
+      if (sender?.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('offscreen.html') || sender.tab) return false;
+      const { state, loaded } = request.status || {};
+      if (!['missing', 'downloading', 'ready', 'deleting', 'error'].includes(state) || !Number.isSafeInteger(loaded) || loaded < 0 || loaded > SUPERTONIC_DOWNLOAD_BYTES) return false;
+      chrome.storage.local.set({ [SUPERTONIC_MODEL_STATUS_KEY]: { state, loaded, total: SUPERTONIC_DOWNLOAD_BYTES } })
+        .then(() => sendResponse(true), () => sendResponse(false));
+      return true;
+    }
     // CRITICAL: Log ALL messages at the very start to catch any issues
     // This includes messages from service worker to offscreen
     const frequentActions = ['getState', 'TTS_PROGRESS'];

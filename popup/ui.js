@@ -334,6 +334,9 @@ export function initUI(deps) {
     } else if (type === 'error') {
       elements.statusDot.classList.add('error');
       elements.statusText.textContent = text;
+    } else if (type === 'pending') {
+      elements.statusDot.classList.add('pending');
+      elements.statusText.textContent = text;
     } else {
       elements.statusText.textContent = text;
     }

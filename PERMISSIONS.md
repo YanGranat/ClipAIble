@@ -13,7 +13,7 @@ ClipAIble declares the following Chrome extension permissions.
 | `alarms` | Schedule background processing checks. |
 | `notifications` | Report processing completion and errors. |
 | `contextMenus` | Add save actions to the page context menu. |
-| `offscreen` | Run PDF processing, Piper speech synthesis, image conversion, and download preparation in a hidden extension document. |
+| `offscreen` | Run PDF processing, local speech synthesis, image conversion, and download preparation in a hidden extension document. |
 | `webNavigation` | Inspect tab frames to find a PDF's source URL in Chrome's PDF viewer. |
 | `<all_urls>` host access | Extract page content, retrieve source images and PDFs, download voice models, and contact configured AI and TTS services. |
 

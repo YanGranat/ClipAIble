@@ -5,14 +5,17 @@ vi.mock('../../scripts/utils/logging.js', () => ({
 }));
 
 import { splitIntoSentences, sanitizeText } from '../../scripts/offscreen/tts/text-processing.js';
-import { sanitizeForPiperTTS } from '../../scripts/generation/audio-prep.js';
-
 describe('Piper text preservation', () => {
-  it.each([sanitizeText, sanitizeForPiperTTS])('normalizes typography without deleting letters or mathematical symbols', sanitize => {
-    expect(sanitize('“Don’t” erase café or naïve names. № 7: €12 + £3 = ¥15 ± 2°.', 'en'))
+  it('normalizes typography without deleting letters or mathematical symbols', () => {
+    expect(sanitizeText('“Don’t” erase café or naïve names. № 7: €12 + £3 = ¥15 ± 2°.', 'en'))
       .toBe('"Don\'t" erase café or naïve names. № 7: €12 + £3 = ¥15 ± 2°.');
-    expect(sanitize('Результат: 5 + 2 = 7; № 3, $10.', 'ru'))
+    expect(sanitizeText('Результат: 5 + 2 = 7; № 3, $10.', 'ru'))
       .toBe('Результат: 5 + 2 = 7; № 3, $10.');
+  });
+  it('keeps the precision and units of decimal numbers on the Russian Piper route', () => {
+    const text = 'Температура −2,5 °C. Изменение 0,05%, положение 1,005. Контроль 4,2. Примеры f(1,02), f(-1,02) и версия 2.3.4.';
+    expect(sanitizeText(text, 'ru')).toBe('Температура −2 запятая 5 градуса Цельсия. Изменение 0 запятая 0 5 процента, положение 1 запятая 0 0 5. Контроль 4,2. Примеры f(1,02), f(-1,02) и версия 2.3.4.');
+    expect(sanitizeText(text, 'en')).toBe(text);
   });
 });
 

@@ -22,6 +22,7 @@ export function initApiKeys(deps) {
   
   // updateModelList will be set after models module is initialized
   let updateModelList = null;
+  let openRouterSaveRevision = 0;
   
   // Set updateModelList function (called after models module initialization)
   function setUpdateModelList(fn) {
@@ -90,7 +91,8 @@ export function initApiKeys(deps) {
   // Save API keys to storage
   async function saveApiKey() {
     const provider = elements.apiProviderSelect?.value || 'openai';
-    const apiKey = elements.apiKey.value.trim();
+    const { value: draft, type: inputType, dataset: { encrypted: previousCiphertext } } = elements.apiKey;
+    const apiKey = draft.trim();
     
     // Check if main API key is provided (not masked)
     const hasKey = elements.apiKey.dataset.provider === provider && apiKey && !apiKey.startsWith('****');
@@ -102,6 +104,7 @@ export function initApiKeys(deps) {
     }
 
     const keysToSave = {};
+    let openRouterRevision;
     
     // Save API key for selected provider
     if (apiKey) {
@@ -186,10 +189,11 @@ export function initApiKeys(deps) {
             return;
           }
           try {
+            openRouterRevision = ++openRouterSaveRevision;
             keysToSave[STORAGE_KEYS.OPENROUTER_API_KEY] = await encryptApiKey(apiKey);
           } catch (error) {
             const failedToEncryptText = await t('failedToEncryptApiKey');
-            showToast(failedToEncryptText, 'error', { key: 'failedToEncryptApiKey' });
+            if (openRouterRevision === openRouterSaveRevision) showToast(failedToEncryptText, 'error', { key: 'failedToEncryptApiKey' });
             logError('Encryption error', error);
             return;
           }
@@ -221,17 +225,30 @@ export function initApiKeys(deps) {
       }
     }
     
-    if (elements.apiProviderSelect?.value !== provider || elements.apiKey.dataset.provider !== provider) return;
+    const isCurrentSave = () => openRouterRevision === undefined || openRouterRevision === openRouterSaveRevision;
+    if (!isCurrentSave() || elements.apiProviderSelect?.value !== provider || elements.apiKey.dataset.provider !== provider) return;
     try {
       await saveApiKeySettings(keysToSave, keysToRemove);
     } catch (error) {
       logError('Failed to save API key', error);
-      showToast(await t('failedToSave'), 'error', { key: 'failedToSave' });
+      const message = await t('failedToSave');
+      if (isCurrentSave()) showToast(message, 'error', { key: 'failedToSave' });
       return;
     }
     
+    if (openRouterRevision !== undefined && isCurrentSave() &&
+        elements.apiProviderSelect?.value === provider && elements.apiKey.dataset.provider === provider &&
+        elements.apiKey.type === inputType && elements.apiKey.value === draft &&
+        elements.apiKey.dataset.encrypted === previousCiphertext) {
+      elements.apiKey.dataset.encrypted = keysToSave[STORAGE_KEYS.OPENROUTER_API_KEY];
+      if (inputType === 'password') {
+        elements.apiKey.value = maskApiKey(apiKey);
+        delete elements.apiKey.dataset.decrypted;
+      }
+    }
+
     const apiKeysSavedText = await t('apiKeysSaved');
-    showToast(apiKeysSavedText, 'success', { key: 'apiKeysSaved' });
+    if (isCurrentSave()) showToast(apiKeysSavedText, 'success', { key: 'apiKeysSaved' });
   }
 
   return {

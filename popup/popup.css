@@ -1174,6 +1174,10 @@ body[data-theme="light"] .section.status-section {
   background: #f87171;
 }
 
+.status-dot.pending {
+  background: var(--text-secondary);
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -1290,6 +1294,10 @@ body[data-theme="light"] .section.settings-toggle {
   padding: 0;
 }
 
+.advanced-settings-link {
+  width: 100%;
+}
+
 .settings-panel.open > .settings-content {
   padding: 12px;
 }
@@ -1308,6 +1316,43 @@ body[data-theme="light"] .settings-panel {
 .setting-item label {
   font-size: 12px;
   color: #a0a0a0;
+}
+
+.setting-item .setting-label {
+  margin: 0;
+  color: #a0a0a0;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.supertonic-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.supertonic-progress progress {
+  flex: 1;
+  min-width: 0;
+  height: 12px;
+  accent-color: var(--accent-primary);
+}
+
+#supertonicModelGroup [hidden] {
+  display: none;
+}
+
+#supertonicModelAction {
+  min-height: 36px;
+  white-space: normal;
+}
+
+#supertonicModelAction:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .setting-item label + input:not([type="checkbox"]):not([type="color"]),
@@ -1619,7 +1664,7 @@ body[data-theme="light"] .custom-model-delete:hover {
   color: #b91c1c;
 }
 
-body[data-theme="light"] .setting-item label {
+body[data-theme="light"] .setting-item :is(label, .setting-label) {
   color: var(--text-secondary);
 }
 
@@ -2304,6 +2349,11 @@ body[data-theme="light"] .btn-reset:hover {
 }
 
 /* Import/Export */
+.backup-export-warning {
+  color: var(--text-warning);
+  scroll-margin-block: 8px;
+}
+
 .import-export-buttons {
   display: flex;
   gap: 8px;
@@ -2892,6 +2942,10 @@ body[data-theme="light"] .modal-body::-webkit-scrollbar-thumb:hover {
 }
 
 /* Modal Overlay and Dialog */
+.modal-overlay[inert] {
+  display: none;
+}
+
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -2974,6 +3028,39 @@ body[data-theme="light"] .modal-dialog {
 
 .modal-body p:last-child {
   margin-bottom: 0;
+}
+
+.transfer-data-mode {
+  min-inline-size: 0;
+  margin: 4px 0 16px;
+  padding: 9px 12px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.transfer-data-mode legend {
+  padding: 0 4px;
+  font-size: 13px;
+}
+
+.transfer-data-mode .checkbox-label {
+  padding: 3px 0;
+}
+
+.transfer-data-mode input[type="radio"] {
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent-primary);
+}
+
+.transfer-data-mode p {
+  margin-top: 6px;
+  color: var(--text-secondary);
+}
+
+#settingsTransferForm .modal-footer .btn {
+  min-height: 44px;
+  padding-inline: 12px;
 }
 
 .modal-footer {

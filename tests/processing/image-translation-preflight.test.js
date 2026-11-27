@@ -33,6 +33,19 @@ it('keeps the legacy Google key path and validates its absence', async () => {
   expect(setError).toHaveBeenCalledWith(expect.objectContaining({ translationKey: 'errorImageKeyRequired', translationParams: { provider: 'Google' } }), expect.any(Function), 'sample-run');
 });
 
+it('rejects an unsupported OpenRouter edit model before article extraction', async () => {
+  const stop = vi.fn();
+  expect(await validateAndInitializeProcessing({ ...base(), imageTranslationProvider: 'openrouter',
+    openrouterImageModel: 'constructor', imageApiKey: 'ENC:synthetic-image-key' }, stop, vi.fn())).toBe(false);
+  expect(setError).toHaveBeenCalledWith(expect.objectContaining({ translationKey: 'errorImageModelUnsupported' }), stop, 'sample-run');
+});
+
+it('retains the Google image credential boundary when OpenRouter lacks its key', async () => {
+  expect(await validateImageTranslation({ ...base(), imageTranslationProvider: 'openrouter' }, vi.fn())).toBe(false);
+  expect(setError).toHaveBeenCalledWith(expect.objectContaining({ translationKey: 'errorImageKeyRequired',
+    translationParams: { provider: 'OpenRouter' } }), expect.any(Function), 'sample-run');
+});
+
 it('rejects an unsupported Google edit model before article extraction', async () => {
   const stop = vi.fn();
   expect(await validateAndInitializeProcessing({ ...base(), imageTranslationProvider: 'gemini', geminiImageModel: 'constructor' }, stop, vi.fn())).toBe(false);

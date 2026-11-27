@@ -23,7 +23,8 @@ vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
   updateProgress: vi.fn(async () => {})
 }));
 
-vi.mock('../../scripts/utils/config.js', () => ({
+vi.mock('../../scripts/utils/config.js', async (original) => ({
+  ...await original(),
   CONFIG: {
     DEFAULT_AUDIO_VOICE: 'nova',
     DEFAULT_AUDIO_SPEED: 1.0,
@@ -198,7 +199,7 @@ describe('generation/audio-helpers', () => {
       const instructions = getTTSInstructions('ru');
       expect(instructions).toBeTruthy();
       expect(typeof instructions).toBe('string');
-      expect(instructions).toContain('русском');
+      expect(instructions).toBe('Read in clear Russian with natural pronunciation.');
     });
 
     it('should return null for auto language', () => {

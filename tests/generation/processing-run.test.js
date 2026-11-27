@@ -16,7 +16,7 @@ vi.mock('../../scripts/locales.js', async importOriginal => ({ ...await importOr
 vi.mock('../../scripts/translation/index.js', () => ({ translateMetadata: vi.fn(async text => text) }));
 vi.mock('../../scripts/api/print-storage.js', () => ({ putPrintJob: vi.fn(async () => {}), removePrintJob: vi.fn(async () => {}), prunePrintJobs: vi.fn(async () => 0) }));
 vi.mock('../../scripts/api/blob-download.js', () => ({ downloadBlob: vi.fn(async () => 1) }));
-vi.mock('../../scripts/api/tts.js', () => ({ chunksToSpeech: vi.fn(async () => new ArrayBuffer(16)), getAudioExtension: vi.fn(() => 'wav') }));
+vi.mock('../../scripts/api/tts.js', async original => ({ ...await original(), chunksToSpeech: vi.fn(async () => new ArrayBuffer(16)), getAudioExtension: vi.fn(() => 'wav') }));
 
 function deferred() {
   let resolve, reject;

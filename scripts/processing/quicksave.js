@@ -14,8 +14,12 @@ import {
   getAudioSpeedFromSettings
 } from '../utils/settings-helpers.js';
 import { CONFIG, STYLE_PRESETS } from '../utils/config.js';
-import { DEFAULT_QWEN_TTS_MODEL, resolveGoogleTtsModel } from '../api/tts-catalog.js';
-import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, isImageTranslationEnabled, readGeminiImageModel } from '../api/image-translation-catalog.js';
+import { DEFAULT_QWEN_TTS_MODEL, resolveGoogleTtsModel, resolveOpenRouterTtsSelection } from '../api/tts-catalog.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, isImageTranslationEnabled, readGeminiImageModel, readOpenRouterImageModel } from '../api/image-translation-catalog.js';
+import { requiresTextModel, supportsCustomNarration, supportsDocumentAbstract } from './export-requirements.js';
+import { AUDIO_PREPARATION_PROMPT_KEY, readPromptOverrides } from '../settings/prompt-catalog.js';
+import { OPENROUTER_KEY_SLOTS } from '../utils/storage/openrouter-key-slots.js';
+import { OPENROUTER_SPEECH_SETTINGS_KEY, readOpenRouterSpeechProfiles, normalizeOpenRouterSpeechOptions } from '../api/openrouter-speech-options.js';
 
 /**
  * Get all settings keys needed for quick save
@@ -24,6 +28,7 @@ import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, isImageTranslationEnabled, readGemi
 export function getQuickSaveSettingsKeys() {
   return [
     'openai_api_key', 'claude_api_key', 'gemini_api_key', 'grok_api_key', 'openrouter_api_key', 'deepseek_api_key',
+    OPENROUTER_KEY_SLOTS.image, OPENROUTER_KEY_SLOTS.speech,
     'openai_model', 'api_provider', 'model_by_provider', 'custom_models',
     'extraction_mode', 'use_selector_cache', 'output_format', 'generate_toc', 'generate_abstract', 'page_mode', 'pdf_language',
     'pdf_style_preset', 'pdf_font_family', 'pdf_font_size', 'pdf_bg_color', 'pdf_text_color',
@@ -35,7 +40,8 @@ export function getQuickSaveSettingsKeys() {
     'elevenlabs_stability', 'elevenlabs_similarity', 'elevenlabs_style', 'elevenlabs_speaker_boost',
     'openai_instructions', 'google_tts_api_key', 'google_tts_model', 'google_tts_voice', 'google_tts_prompt',
     'respeecher_temperature', 'respeecher_repetition_penalty', 'respeecher_top_p',
-    'translate_images', 'google_api_key', 'image_translation_provider', 'gemini_image_model'
+    'translate_images', 'google_api_key', 'image_translation_provider', 'gemini_image_model',
+    'openrouter_image_model', 'openrouter_tts_model', 'openrouter_tts_voice', OPENROUTER_SPEECH_SETTINGS_KEY, AUDIO_PREPARATION_PROMPT_KEY
   ];
 }
 
@@ -56,16 +62,21 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
   
   // Determine provider and model
   const { provider, model } = determineProviderAndModel(settingsObj);
+  const mode = settings.extraction_mode || 'automatic';
+  const language = settings.pdf_language || 'auto';
+  const audioProvider = String(settingsObj.audio_provider || 'openai');
+  const audioPreparationPrompt = supportsCustomNarration(outputFormat, audioProvider) ? readPromptOverrides(settings).audioPreparation ?? null : null;
   
   // Get and decrypt API key
   let apiKey = '';
+  const needsKey = requiresTextModel(mode, language, outputFormat, audioProvider, url, audioPreparationPrompt);
   try {
-    if (getProviderApiKey(provider, settingsObj) || (settings.extraction_mode || 'automatic') !== 'automatic') {
+    if (needsKey || (outputFormat !== 'audio' && getProviderApiKey(provider, settingsObj))) {
       apiKey = await getDecryptedProviderApiKey(provider, settingsObj);
     }
   } catch (error) {
     logError(`Failed to get API key for quick save`, error);
-    throw error;
+    if (needsKey) throw error;
   }
   
   // Prepare translation settings
@@ -73,11 +84,15 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
     language: settings.pdf_language, outputFormat });
   const googleApiKey = settings.google_api_key || null;
   const imageTranslationProvider = settings.image_translation_provider ?? DEFAULT_IMAGE_TRANSLATION_PROVIDER;
-  const imageApiKey = translateImages ? (imageTranslationProvider === 'openai' ? settings.openai_api_key : googleApiKey) || null : null;
+  const imageKeys = {
+    openai: settings.openai_api_key, gemini: googleApiKey, openrouter: settings[OPENROUTER_KEY_SLOTS.image]
+  };
+  const imageApiKey = translateImages && Object.hasOwn(imageKeys, imageTranslationProvider) ? imageKeys[imageTranslationProvider] || null : null;
   
   // Prepare audio settings
-  const audioProvider = String(settingsObj.audio_provider || 'openai');
-  const audioVoice = getVoiceFromSettings(audioProvider, settingsObj);
+  const useOpenRouterSpeech = outputFormat === 'audio' && audioProvider === 'openrouter';
+  const openRouterSpeech = useOpenRouterSpeech ? resolveOpenRouterTtsSelection(settings.openrouter_tts_model, settings.openrouter_tts_voice) : null;
+  const audioVoice = openRouterSpeech?.voice || getVoiceFromSettings(audioProvider, settingsObj);
   const audioSpeed = getAudioSpeedFromSettings(settingsObj);
   
   // CRITICAL: Log voice settings immediately after preparation
@@ -114,17 +129,18 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
     apiKey,
     provider,
     model,
-    mode: settings.extraction_mode || 'automatic',
+    mode,
     useCache: settings.use_selector_cache !== false, // Default: true
     outputFormat,
     generateToc: settings.generate_toc || false,
-    generateAbstract: settings.generate_abstract || false,
+    generateAbstract: supportsDocumentAbstract(mode, outputFormat) && Boolean(settings.generate_abstract),
     pageMode: settings.page_mode || 'single',
-    language: settings.pdf_language || 'auto',
+    language,
     translateImages,
     googleApiKey,
     imageTranslationProvider,
     ...(translateImages && imageTranslationProvider === 'gemini' ? { geminiImageModel: readGeminiImageModel(settings.gemini_image_model) } : {}),
+    ...(translateImages && imageTranslationProvider === 'openrouter' ? { openrouterImageModel: readOpenRouterImageModel(settings.openrouter_image_model) } : {}),
     imageApiKey,
     stylePreset,
     fontFamily: settings.pdf_font_family || '',
@@ -133,6 +149,7 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
     tabId,
     // Audio settings
     audioProvider,
+    ...(outputFormat === 'audio' ? { audioPreparationPrompt } : {}),
     elevenlabsApiKey: settingsObj.elevenlabs_api_key || null,
     qwenApiKey: settingsObj.qwen_api_key || null,
     respeecherApiKey: settingsObj.respeecher_api_key || null,
@@ -149,6 +166,13 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
     googleTtsApiKey: settings.google_tts_api_key || null,
     geminiApiKey: settings.gemini_api_key || null,
     googleTtsModel: resolveGoogleTtsModel(settings.google_tts_model),
+    ...(openRouterSpeech ? {
+      openrouterTtsApiKey: settings[OPENROUTER_KEY_SLOTS.speech] || null,
+      openrouterTtsModel: openRouterSpeech.model,
+      openrouterTtsVoice: openRouterSpeech.voice,
+      openrouterTtsOptions: normalizeOpenRouterSpeechOptions(openRouterSpeech.model,
+        readOpenRouterSpeechProfiles(settings[OPENROUTER_SPEECH_SETTINGS_KEY])[openRouterSpeech.model], openRouterSpeech.voice)
+    } : {}),
     qwenModel: settings.qwen_model || DEFAULT_QWEN_TTS_MODEL,
     qwenWorkspaceId: settings.qwen_workspace_id || '',
     qwenRegion: settings.qwen_region || 'singapore',

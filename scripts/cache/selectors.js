@@ -15,7 +15,12 @@ const STORAGE_KEY = 'selector_cache';
 let pendingMutation = Promise.resolve();
 const observedRevisions = new Map();
 
-/** Serialize cache mutations in the background worker. */
+/**
+ * Serialize cache mutations in the background worker.
+ * @template T
+ * @param {() => T | Promise<T>} operation
+ * @returns {Promise<T>}
+ */
 function mutateCache(operation) {
   const result = pendingMutation.then(operation);
   pendingMutation = result.then(() => undefined, () => undefined);
@@ -402,6 +407,20 @@ export function replaceSelectorCache(cache) {
   return mutateCache(async () => {
     await saveCache(cache);
     observedRevisions.clear();
+  });
+}
+
+/** Add missing domains without changing the selectors or state of existing entries. */
+export function addToSelectorCache(cache, maximumLength) {
+  return mutateCache(async () => {
+    const current = await loadCache();
+    const additions = Object.entries(cache).filter(([domain]) => !Object.hasOwn(current, domain));
+    if (!additions.length) return null;
+    const merged = { ...current, ...Object.fromEntries(additions) };
+    const length = JSON.stringify(merged).length;
+    if (length > maximumLength) return length;
+    await saveCache(merged);
+    return null;
   });
 }
 

@@ -10,7 +10,9 @@ import {
   isQwenAudioModel, isQwenVoiceCompatible, isSupportedGoogleTtsModel, resolveGoogleTtsModel, resolveGoogleTtsVoice
 } from '../../scripts/api/tts-catalog.js';
 import { normalizePiperVoiceId } from '../../scripts/api/piper-voices-mapping.js';
+import { resolveSupertonicVoice, SUPER_OUTPUT_VOICES, SUPERTONIC_MAX_SPEED, SUPERTONIC_MIN_SPEED } from '../../scripts/api/supertonic-config.js';
 import { tSync } from '../../scripts/locales.js';
+import { initSupertonicControls } from './supertonic.js';
 
 export function restoreTtsSelect(select, value) {
   if (!select || !value) return;
@@ -75,6 +77,14 @@ export function initAudio(deps) {
   const baseSpeedMin = elements.audioSpeed?.min;
   const baseSpeedMax = elements.audioSpeed?.max;
   elements.audioSpeed?.addEventListener('input', () => { preferredSpeed = elements.audioSpeed.value; });
+  const supertonic = initSupertonicControls(elements.supertonicModelGroup);
+
+  function showSupertonicModel(show) {
+    if (elements.supertonicModelGroup) {
+      setElementGroupDisplay('supertonicModelGroup', show ? 'flex' : 'none');
+    }
+    supertonic.setActive(show);
+  }
 
   function populateVoices(provider, voices, currentValue) {
     for (const voice of voices) elements.audioVoice.add(new Option(voice.name, voice.id));
@@ -121,6 +131,7 @@ export function initAudio(deps) {
   function hideAllAudioFields() {
     // Audio provider selector
     setElementGroupDisplay('audioProviderGroup', 'none');
+    showSupertonicModel(false);
     
     // Provider-specific API keys
     setElementGroupDisplay('elevenlabsApiKeyGroup', 'none');
@@ -134,6 +145,9 @@ export function initAudio(deps) {
     setElementGroupDisplay('elevenlabsFormatGroup', 'none');
     setElementGroupDisplay('elevenlabsAdvancedGroup', 'none');
     setElementGroupDisplay('googleTtsModelGroup', 'none');
+    setElementGroupDisplay('openrouterTtsModelGroup', 'none');
+    setElementGroupDisplay('openrouterTtsVoiceGroup', 'none');
+    setElementGroupDisplay('openrouterTtsKeyGroup', 'none');
     setElementGroupDisplay('googleTtsVoiceGroup', 'none');
     setElementGroupDisplay('googleTtsPromptGroup', 'none');
     setElementGroupDisplay('respeecherAdvancedGroup', 'none');
@@ -170,7 +184,7 @@ export function initAudio(deps) {
     
     elements.audioVoice.innerHTML = '';
     
-    if (provider === 'google') {
+    if (provider === 'google' || provider === 'openrouter') {
       return; // Gemini uses the separate Google TTS voice setting.
     } else if (provider === 'elevenlabs') {
       populateVoices(provider, ELEVENLABS_TTS_VOICES, currentValue);
@@ -304,6 +318,11 @@ export function initAudio(deps) {
       const normalizedVoice = normalizePiperVoiceId(currentValue);
       restoreTtsSelect(elements.audioVoice, normalizedVoice || getDefaultTtsVoice(provider));
       if (!currentValue || normalizedVoice !== currentValue) saveAudioVoice(provider, elements.audioVoice.value);
+    } else if (provider === 'supertonic') {
+      for (const voice of SUPER_OUTPUT_VOICES) elements.audioVoice.add(new Option(voice.name, voice.id));
+      const selected = resolveSupertonicVoice(currentValue);
+      elements.audioVoice.value = selected;
+      if (selected !== currentValue) saveAudioVoice(provider, selected);
     } else {
       populateVoices(provider, OPENAI_TTS_VOICES.map(id => ({ id, name: id[0].toUpperCase() + id.slice(1) })), currentValue);
       if (currentValue && !OPENAI_TTS_VOICES.includes(currentValue)) markVoiceUnavailable(currentValue);
@@ -346,11 +365,14 @@ export function initAudio(deps) {
     const provider = audioProvider.value;
     const isElevenLabs = provider === 'elevenlabs';
     const isGoogle = provider === 'google';
+    const isOpenRouter = provider === 'openrouter';
+    const isSupertonic = provider === 'supertonic';
     const isQwen = provider === 'qwen';
     const isRespeecher = provider === 'respeecher';
     // Speed is not supported by Qwen, Respeecher, and Google TTS (Google uses prompt for speed control)
     const capabilities = getElevenLabsCapabilities(elements.elevenlabsModel?.value);
-    const supportsSpeed = isElevenLabs ? capabilities.speed : (isQwen ? isQwenAudioModel(elements.qwenModel?.value) : !(isRespeecher || isGoogle));
+    const supportsSpeed = isElevenLabs ? capabilities.speed : (isQwen ? isQwenAudioModel(elements.qwenModel?.value) : !(isRespeecher || isGoogle || isOpenRouter));
+    showSupertonicModel(isSupertonic);
     
     // Show/hide ElevenLabs-specific fields
     setElementGroupDisplay('elevenlabsApiKeyGroup', isElevenLabs ? 'flex' : 'none');
@@ -364,6 +386,9 @@ export function initAudio(deps) {
     setElementGroupDisplay('googleTtsModelGroup', isGoogle ? 'flex' : 'none');
     setElementGroupDisplay('googleTtsVoiceGroup', isGoogle ? 'flex' : 'none');
     setElementGroupDisplay('googleTtsPromptGroup', isGoogle ? 'block' : 'none');
+    setElementGroupDisplay('openrouterTtsModelGroup', isOpenRouter ? 'flex' : 'none');
+    setElementGroupDisplay('openrouterTtsVoiceGroup', isOpenRouter ? 'flex' : 'none');
+    setElementGroupDisplay('openrouterTtsKeyGroup', isOpenRouter ? 'flex' : 'none');
     
     // Show/hide Qwen-specific fields
     setElementGroupDisplay('qwenApiKeyGroup', isQwen ? 'flex' : 'none');
@@ -387,7 +412,7 @@ export function initAudio(deps) {
     
     // Show/hide generic voice selector (for OpenAI, ElevenLabs, Qwen, Respeecher)
     // Hide for Google TTS (it has its own voice selector)
-    setElementGroupDisplay('audioVoiceGroup', !isGoogle ? 'flex' : 'none');
+    setElementGroupDisplay('audioVoiceGroup', !(isGoogle || isOpenRouter) ? 'flex' : 'none');
     
     // Speed control only for providers that support it
     // Hide completely for Qwen/Respeecher/Google (they don't support speed)
@@ -397,8 +422,12 @@ export function initAudio(deps) {
     if (audioSpeed) {
       if (preferredSpeed === null) preferredSpeed = audioSpeed.value;
       audioSpeed.disabled = !supportsSpeed;
-      audioSpeed.min = isElevenLabs && capabilities.speed ? '0.7' : (isQwen && supportsSpeed ? '0.5' : baseSpeedMin);
-      audioSpeed.max = isOpenAI ? String(OPENAI_TTS_MAX_SPEED) : (isElevenLabs && capabilities.speed ? '1.2' : (isQwen && supportsSpeed ? '2.0' : baseSpeedMax));
+      const bounds = isSupertonic ? [String(SUPERTONIC_MIN_SPEED), String(SUPERTONIC_MAX_SPEED)]
+        : isOpenAI ? [baseSpeedMin, String(OPENAI_TTS_MAX_SPEED)]
+        : isElevenLabs && capabilities.speed ? ['0.7', '1.2']
+        : isQwen && supportsSpeed ? ['0.5', '2.0']
+        : [baseSpeedMin, baseSpeedMax];
+      [audioSpeed.min, audioSpeed.max] = bounds;
       audioSpeed.value = preferredSpeed;
       const audioSpeedValue = getElement('audioSpeedValue');
       if (audioSpeedValue) audioSpeedValue.textContent = `${Number(audioSpeed.value).toFixed(1)}x`;

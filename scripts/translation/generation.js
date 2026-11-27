@@ -7,6 +7,7 @@
  * @typedef {import('../types.js').ContentItem} ContentItem
  */
 
+import { renderPrompt } from '../settings/prompt-catalog.js';
 import { log, logError, logWarn } from '../utils/logging.js';
 import { LANGUAGE_NAMES } from '../utils/config.js';
 import { callAI } from '../api/index.js';
@@ -131,23 +132,7 @@ export async function generateAbstract(content, title, apiKey, model, language =
     langInstruction = `Write in ${targetLang}`;
   }
 
-  const systemPrompt = `You are an expert at creating concise text summaries. Generate a single paragraph (TL;DR) that captures the essence of the text.
-
-STRICT REQUIREMENTS:
-- ${langInstruction}
-- Try to identify the most important ideas, theses of the text, find its fundamental essence.
-- Completely avoid metadiscourse and evidential markers such as "the author thinks/writes/argues," "the article demonstrates," "the study shows." 
-- Output EXACTLY ONE paragraph with 2-4 sentences
-- The goal of a TL;DR to convey the essence of ideas directly, not to describe the process of their presentation or distance yourself from them through references to the author.
-- NO line breaks, NO paragraph breaks - output as ONE continuous paragraph
-- Start immediately with the summary content - no introductory phrases
-- Never use phrases like "This article", "The article", "In summary", "To summarize", "The author", etc.
-- Never use quotes or markdown formatting
-- Never add explanations, greetings, or meta-commentary
-- Output ONLY the summary as a single continuous block of text without any line breaks
-- Focus on the core essence and key takeaways, no personal opinions
-- Make it concise and to the point
-- CRITICAL: The output must be a single paragraph with no line breaks or paragraph separators`;
+  const systemPrompt = renderPrompt('abstract', options, { languageInstruction: langInstruction });
 
   const userPrompt = `Article Title: ${title}
 
@@ -197,7 +182,7 @@ Generate the TL;DR:`;
 
 /**
  * Generate summary for article content
- * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string, provider?: import('../types.js').AIProvider, checkCancelled?: () => void}} data - Summary generation data
+ * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string, provider?: import('../types.js').AIProvider, checkCancelled?: () => void, promptOverrides?: import('../settings/prompt-catalog.js').PromptOverrides}} data - Summary generation data
  * @returns {Promise<{summary: string}>} Generated summary
  * @throws {Error} If contentItems is empty
  * @throws {Error} If API key is missing
@@ -206,7 +191,7 @@ Generate the TL;DR:`;
  */
 export async function generateSummary(data) {
   const { contentItems, apiKey, model, url, language } = data;
-  const options = { provider: data.provider, checkCancelled: data.checkCancelled };
+  const options = { provider: data.provider, checkCancelled: data.checkCancelled, promptOverrides: data.promptOverrides };
   options.checkCancelled?.();
   
   log('=== SUMMARY GENERATION START ===', { 
@@ -414,21 +399,7 @@ export async function generateSummary(data) {
     throw error;
   }
   
-  const systemPrompt = `You are an expert at creating summaries. Generate a summary of the text content in Markdown format.
-
-Task: Summarize and summarize the main points, themes, key points, ideas, and concepts. Try to retell the key points as closely as possible to the meaning contained in the text. However, your goal is to formulate everything clearly, concisely, and concisely, so that it is understandable to anyone without context.
-
-This should be a clear retelling of the most important things. Try to make it clear and understandable.
-
-When creating summaries, present ideas and arguments directly, as if explaining the content in your own words. Completely avoid metadiscourse and evidential markers such as "the author thinks/writes/argues," "the article demonstrates," "the study shows." Simply state the theses and facts directly. For example, instead of "The author argues that inflation is overstated," write "Inflation is overstated due to how CPI is calculated." Instead of "In the author's opinion, this doesn't explain the situation," write "This doesn't explain the situation" or "This explanation is unconvincing because..." The goal of a summary is to convey the essence of ideas directly, not to describe the process of their presentation or distance yourself from them through references to the author.
-
-STRICT REQUIREMENTS:
-- Write EXCLUSIVELY in ${langName} language
-- Include all key points and important information
-- Make it comprehensive but concise
-- Don't write a "Summary" or any other introductions, get straight to the point.
-- Output ONLY the summary content - no introductory phrases or meta-commentary
-- IMPORTANT: The summary MUST be written in ${langName}, regardless of the article's original language`;
+  const systemPrompt = renderPrompt('summary', options, { targetLanguage: langName });
 
   const userPrompt = `Article URL: ${url || 'Unknown'}
 
@@ -500,13 +471,13 @@ Generate a summary in Markdown format in ${langName} language:`;
 
 /**
  * Generate key theses from article content (analytical extraction of main claims)
- * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string, provider?: import('../types.js').AIProvider, checkCancelled?: () => void}} data - Same shape as summary
+ * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string, provider?: import('../types.js').AIProvider, checkCancelled?: () => void, promptOverrides?: import('../settings/prompt-catalog.js').PromptOverrides}} data - Same shape as summary
  * @returns {Promise<{keyTheses: string}>} Markdown string of theses (from JSON theses)
  * @throws {Error} If content/API/key missing or generation fails
  */
 export async function generateKeyTheses(data) {
   const { contentItems, apiKey, model, url, language } = data;
-  const options = { provider: data.provider, checkCancelled: data.checkCancelled };
+  const options = { provider: data.provider, checkCancelled: data.checkCancelled, promptOverrides: data.promptOverrides };
   options.checkCancelled?.();
 
   log('=== KEY THESES GENERATION START ===', {
@@ -651,23 +622,7 @@ export async function generateKeyTheses(data) {
     throw err;
   }
 
-  const systemPrompt = `You are an analytical philosopher and expert in rhetoric and logic.
-
-Your task: Analyze the provided content and extract its key theses. Theses may not be stated explicitly; analyze the content deeply to identify what the author(s) or participants actually claim or imply.
-
-Treat "thesis" broadly but aim for crystal-clear analysis and root Subject–Predicate–Object triples where possible.
-
-Instructions:
-1. Study the content carefully. Identify all key claims, theses, ideas, and thoughts that the content advances, argues for, or contains.
-2. Go through the content again; check for omissions; analyze and dissect it thoroughly.
-3. For each thesis provide:
-   - Short formulation: Self-contained assertion, ideally Subject–Predicate–Object. Avoid abstract nominalizations ("attraction", "formation") without concrete participants. Distilled essence, optionally slightly radicalized for clarity. No meta-markers ("the author believes", "the text states").
-   - Expanded formulation: Full academic-style formulation: complete, unambiguous, every word necessary. No filler or bureaucratese.
-
-Output format: You must respond with valid JSON only. No preamble, no explanation, no markdown code fence. Exactly this structure:
-{"theses":[{"short":"...","expanded":"..."},{"short":"...","expanded":"..."}]}
-
-Write all text in ${langName}.`;
+  const systemPrompt = renderPrompt('keyTheses', options, { targetLanguage: langName });
 
   const userPrompt = `URL: ${url || 'Unknown'}
 

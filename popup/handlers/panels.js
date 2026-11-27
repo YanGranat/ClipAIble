@@ -4,7 +4,7 @@ import { formatMessage } from '../../scripts/locales.js';
 import { mutateStatistics } from '../stats.js';
 import { activateModalDialog } from '../utils/dom-helpers.js';
 
-/** @returns {Promise<{includeStats: boolean, includeCache: boolean, overwriteExisting: boolean}|null>} */
+/** @returns {Promise<{includeStats: boolean, includeCache: boolean, overwriteExisting: boolean, dataMode: 'add' | 'replace'}|null>} */
 function reviewSettingsTransfer(mode, origin, language, onAbort, available = { statistics: true, cache: true }) {
   const modal = document.getElementById('settingsTransferModal');
   const form = document.getElementById('settingsTransferForm');
@@ -14,7 +14,12 @@ function reviewSettingsTransfer(mode, origin, language, onAbort, available = { s
   const statistics = document.getElementById('settingsTransferStatistics');
   const cache = document.getElementById('settingsTransferCache');
   const overwrite = document.getElementById('settingsTransferOverwrite');
-  if (!modal || !form || !cancel || !confirmButton || !title ||
+  const dataModeGroup = document.getElementById('settingsTransferDataMode');
+  const dataHint = document.getElementById('settingsTransferDataHint');
+  const add = document.getElementById('settingsTransferAdd');
+  const replace = document.getElementById('settingsTransferReplace');
+  if (!modal || !form || !cancel || !confirmButton || !title || !dataHint ||
+      !(dataModeGroup instanceof HTMLFieldSetElement) || !(add instanceof HTMLInputElement) || !(replace instanceof HTMLInputElement) ||
       !(statistics instanceof HTMLInputElement) || !(cache instanceof HTMLInputElement) ||
       !(overwrite instanceof HTMLInputElement)) return Promise.resolve(null);
   const isImport = mode === 'import';
@@ -30,11 +35,27 @@ function reviewSettingsTransfer(mode, origin, language, onAbort, available = { s
   };
   const action = isImport ? 'importSettings' : 'exportSettings';
   bind(title, action);
-  bind(confirmButton, action);
   bind(cancel, 'cancel');
   toggleOption(statistics, available.statistics, isImport ? 'includeStatisticsInImport' : 'includeStatisticsInExport');
   toggleOption(cache, available.cache, isImport ? 'includeSelectorCacheInImport' : 'includeSelectorCacheInExport');
   toggleOption(overwrite, isImport, 'overwriteExistingSettings');
+  add.checked = true;
+  bind(dataModeGroup.querySelector('legend'), 'backupDataMode');
+  bind(add.nextElementSibling, 'backupDataAdd');
+  bind(replace.nextElementSibling, 'backupDataReplace');
+
+  const selected = input => !input.disabled && input.checked;
+  const syncDataMode = () => {
+    const active = isImport && (selected(statistics) || selected(cache));
+    dataModeGroup.disabled = !active;
+    dataModeGroup.classList.toggle('hidden', !active);
+    if (!active) add.checked = true;
+    const replacing = active && replace.checked;
+    bind(confirmButton, replacing ? 'backupReplaceConfirm' : active ? 'backupImportConfirm' : action);
+    const section = selected(statistics) && selected(cache) ? 'Both' : selected(statistics) ? 'Stats' : 'Cache';
+    bind(dataHint, replacing ? 'backupDataReplaceHint' : `backupDataAdd${section}Hint`);
+  };
+  syncDataMode();
 
   return new Promise(resolve => {
     origin.focus({ preventScroll: true });
@@ -43,6 +64,7 @@ function reviewSettingsTransfer(mode, origin, language, onAbort, available = { s
       modal.classList.add('hidden');
       cancel.removeEventListener('click', onCancel);
       form.removeEventListener('submit', onSubmit);
+      form.removeEventListener('change', syncDataMode);
       modal.removeEventListener('click', onOverlayClick);
       releaseFocus();
       if (!choices) onAbort();
@@ -53,13 +75,15 @@ function reviewSettingsTransfer(mode, origin, language, onAbort, available = { s
     const onSubmit = event => {
       event.preventDefault();
       finish({
-        includeStats: !statistics.disabled && statistics.checked,
-        includeCache: !cache.disabled && cache.checked,
-        overwriteExisting: !overwrite.disabled && overwrite.checked
+        includeStats: selected(statistics),
+        includeCache: selected(cache),
+        overwriteExisting: selected(overwrite),
+        dataMode: isImport && (selected(statistics) || selected(cache)) && replace.checked ? 'replace' : 'add'
       });
     };
     cancel.addEventListener('click', onCancel);
     form.addEventListener('submit', onSubmit);
+    form.addEventListener('change', syncDataMode);
     modal.addEventListener('click', onOverlayClick);
     modal.classList.remove('hidden');
     releaseFocus = activateModalDialog(modal, onCancel, cancel);
@@ -223,6 +247,7 @@ export function setupPanelHandlers(deps) {
 
   // Export settings button
   if (elements.exportSettingsBtn) {
+    const feedback = document.getElementById('settingsExportFeedback');
     elements.exportSettingsBtn.addEventListener('click', async () => {
       if (transferOwner) return;
       const owner = {};
@@ -232,6 +257,11 @@ export function setupPanelHandlers(deps) {
           () => releaseTransfer(owner, null));
         if (!choices) return;
         const { includeStats, includeCache } = choices;
+        if (feedback) {
+          feedback.hidden = true;
+          feedback.removeAttribute('data-i18n-parts');
+          feedback.textContent = '';
+        }
         
         elements.exportSettingsBtn.disabled = true;
         const exportingText = await t('exporting');
@@ -244,8 +274,11 @@ export function setupPanelHandlers(deps) {
           includeCache
         });
         
-        if (response.error) {
+        if (response?.error) {
           throw Object.assign(new Error(response.error), { translationKey: response.translationKey, translationParams: response.translationParams || {} });
+        }
+        if (response?.success === false || typeof response?.data !== 'string' || !response.data) {
+          throw new Error('No backup data received');
         }
         
         const blob = new Blob([response.data], { type: 'application/json' });
@@ -261,11 +294,29 @@ export function setupPanelHandlers(deps) {
           URL.revokeObjectURL(url);
         }
         
-        const settingsExportedText = await t('settingsExportedSuccessfully');
-        showToast(settingsExportedText, 'success', { key: 'settingsExportedSuccessfully' });
+        if (response.warnings?.length) {
+          /** @type {import('../../scripts/types.js').LocalizedMessage[]} */
+          const parts = [{ key: 'backupExportPartial' }];
+          if (response.includesStatistics) parts.push({ key: 'backupExportStatisticsIncluded' });
+          if (response.includesCache) parts.push({ key: 'backupExportCacheIncluded' });
+          parts.push(...response.warnings);
+          const language = await getUILanguage();
+          const message = parts.map(part => formatMessage(part.key, language, part.params)).join(' ');
+          if (feedback) {
+            feedback.dataset.i18nParts = JSON.stringify(parts.flatMap((part, i) => i ? [{ text: ' ' }, part] : [part]));
+            feedback.hidden = false;
+            feedback.textContent = message;
+            requestAnimationFrame(() => {
+              if (!feedback.hidden) feedback.scrollIntoView?.({ block: 'end' });
+            });
+          }
+        } else {
+          const settingsExportedText = await t('settingsExportedSuccessfully');
+          showToast(settingsExportedText, 'success', { key: 'settingsExportedSuccessfully' });
+        }
       } catch (error) {
         logError('Export failed', error);
-        const descriptor = error.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : { key: 'errorSettingsExportFailed', params: { error: error.message } };
+        const descriptor = error?.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : { key: 'errorSettingsExportFailed', params: {} };
         showToast(formatMessage(descriptor.key, await getUILanguage(), descriptor.params), 'error', descriptor);
       } finally {
         if (transferOwner === owner && elements.exportSettingsBtn.disabled) {
@@ -318,7 +369,7 @@ export function setupPanelHandlers(deps) {
           () => releaseTransfer(owner, elements.importFileInput),
           { statistics: Boolean(data.statistics), cache: Boolean(data.selectorCache) });
         if (!choices) return;
-        const { includeStats: importStats, includeCache: importCache, overwriteExisting } = choices;
+        const { includeStats: importStats, includeCache: importCache, overwriteExisting, dataMode } = choices;
         
         elements.importSettingsBtn.disabled = true;
         const importingText = await t('importing');
@@ -331,7 +382,8 @@ export function setupPanelHandlers(deps) {
           options: {
             importStats,
             importCache,
-            overwriteExisting
+            overwriteExisting,
+            dataMode
           }
         });
         
@@ -395,7 +447,7 @@ export function setupPanelHandlers(deps) {
         
       } catch (error) {
         logError('Import failed', error);
-        const descriptor = error.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : { key: 'errorSettingsImportFailed', params: { error: error.message } };
+        const descriptor = error?.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : { key: 'errorSettingsImportFailed', params: {} };
         showToast(formatMessage(descriptor.key, await getUILanguage(), descriptor.params), 'error', descriptor);
       } finally {
         if (transferOwner === owner && elements.importSettingsBtn.disabled) {

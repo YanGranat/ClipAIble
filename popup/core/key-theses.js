@@ -82,7 +82,10 @@ export function initKeyTheses(deps) {
     } catch (error) {
       if (attempt !== currentAttempt) return;
       logWarn('Cancel key theses message failed', error);
-      showToast(error?.message || await t('keyThesesGenerationError'), 'error', error.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : (!error.message ? { key: 'keyThesesGenerationError' } : null));
+      const translation = describeGenerationError(error, 'errorCommunicationFailed');
+      const message = await t(translation.key, undefined, translation.params);
+      if (attempt !== currentAttempt) return;
+      showToast(message, 'error', translation);
       await checkKeyThesesStatus();
     }
   }

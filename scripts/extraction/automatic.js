@@ -2494,9 +2494,166 @@ var clipaibleArticleExtractor = (() => {
     return datauri;
   }
 
+  // scripts/api/supertonic-config.js
+  var SUPERTONIC_REVISION = "aafc6e32416a594460b32413efc49d7fe4ce6d46";
+  var SUPERTONIC_MODEL_URL = `https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/${SUPERTONIC_REVISION}/`;
+  var SUPERTONIC_CACHE = `clipaible-supertonic-3-${SUPERTONIC_REVISION}`;
+  var SUPER_OUTPUT_VOICES = Object.freeze(["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"].map((id) => ({ id, name: id })));
+
   // scripts/api/tts-catalog.js
   var DEFAULT_OPENAI_TTS_VOICE = "marin";
+  var DEFAULT_GOOGLE_TTS_VOICE = "Callirrhoe";
   var DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_v4";
+  var GOOGLE_TTS_VOICES = [
+    DEFAULT_GOOGLE_TTS_VOICE,
+    "Zephyr",
+    "Puck",
+    "Charon",
+    "Kore",
+    "Fenrir",
+    "Leda",
+    "Orus",
+    "Aoede",
+    "Autonoe",
+    "Enceladus",
+    "Iapetus",
+    "Umbriel",
+    "Algieba",
+    "Despina",
+    "Erinome",
+    "Algenib",
+    "Rasalgethi",
+    "Laomedeia",
+    "Achernar",
+    "Alnilam",
+    "Schedar",
+    "Gacrux",
+    "Pulcherrima",
+    "Achird",
+    "Zubenelgenubi",
+    "Vindemiatrix",
+    "Sadachbia",
+    "Sadaltager",
+    "Sulafat"
+  ];
+  var DEFAULT_OPENROUTER_TTS_MODEL = "google/gemini-3.8-flash-tts";
+  var namedVoices = (ids) => ids.map((id) => ({ id, name: id.charAt(0).toUpperCase() + id.slice(1) }));
+  var maiVoices = Object.entries({
+    "en-US": "Harper Ethan Grant Iris Jasper Olivia Sage",
+    "en-AU": "Isla",
+    "en-GB": "Emily Harry",
+    "en-IN": "Dhruv Priya",
+    "cs-CZ": "Grant Harper",
+    "da-DK": "Grant Harper",
+    "de-DE": "Grant Harper Klaus Mia",
+    "es-ES": "Marta",
+    "es-MX": "Alejo Grant Harper Valeria",
+    "fi-FI": "Grant Harper",
+    "fr-FR": "Grant Harper Marc Soleil",
+    "hi-IN": "Arjun Dhruv Grant Harper Kavya Priya",
+    "hu-HU": "Bence Grant Harper Levente Lilla Reka",
+    "id-ID": "Grant Harper",
+    "it-IT": "Grant Harper Luca Rosa",
+    "ko-KR": "Grant Haena Harper Junho",
+    "nb-NO": "Grant Harper",
+    "nl-NL": "Grant Harper Sander",
+    "pl-PL": "Grant Harper",
+    "pt-BR": "Caio Grant Harper Luana Pedro Rafael",
+    "pt-PT": "Grant Harper Rui",
+    "ro-RO": "Andrei Elena Grant Harper Ioana Radu",
+    "ru-RU": "Grant Harper Lev Masha",
+    "sv-SE": "Grant Harper",
+    "th-TH": "Grant Harper Krit Nattapong",
+    "tr-TR": "Aydin Elif Grant Harper",
+    "vi-VN": "Grant Harper",
+    "zh-CN": "Bo Grant Harper Lan Mei Wei"
+  }).flatMap(([locale, names]) => names.split(" ").map((name) => ({
+    id: `${locale}-${name}:MAI-Voice-2.1`,
+    name: `${name} (${locale})`
+  })));
+  var voxtralVoices = [
+    [3150, "James", "en-US"],
+    [478, "Sheila", "en-US"],
+    [447, "Margaret", "en-US"],
+    [485, "Rob", "en-US"],
+    [1787, "Mary", "en-GB"],
+    [1786, "Sky", "en-GB"],
+    [1788, "David", "en-GB"],
+    [590, "Harriet", "en-GB"],
+    [591, "Fred", "en-GB"],
+    [3149, "Hugo", "en-GB"],
+    [3147, "Howard", "en-GB"],
+    [479, "Maryam", "ar"],
+    [3143, "Jordi", "ca"],
+    [481, "Heidi", "de"],
+    [483, "Elena", "es"],
+    [592, "Marie", "fr"],
+    [3137, "Manon", "fr"],
+    [589, "Lea", "fr"],
+    [3141, "Camille", "fr"],
+    [3139, "Ananya", "hi"],
+    [3153, "Himanshu", "hi"],
+    [3146, "Olivia", "hu"],
+    [482, "Lorenzo", "it"],
+    [3133, "Haruto", "ja"],
+    [3136, "Sung", "ko"],
+    [3135, "Jin", "ko"],
+    [3145, "Lotte", "nl"],
+    [3134, "Lars", "no"],
+    [3154, "Leon", "pl"],
+    [480, "Gabriela", "pt"],
+    [3155, "Irina", "ro"],
+    [3132, "Tatiana", "ru"],
+    [3138, "Oran", "tr"],
+    [3140, "Taras", "uk"],
+    [3144, "Huong", "vi"],
+    [3142, "Mei", "zh"]
+  ].map(([id, name, locale]) => ({ id: `voice_${id}`, name: `${name} (${locale})` }));
+  var voxtralStylePresets = [
+    ["en_paul", "Paul", "en-US", "neutral sad happy frustrated excited confident cheerful angry"],
+    ["gb_oliver", "Oliver", "en-GB", "neutral sad excited curious confident cheerful angry"],
+    ["gb_jane", "Jane", "en-GB", "neutral sarcasm confused shameful sad jealousy frustrated curious confident"],
+    ["fr_marie", "Marie", "fr-FR", "neutral sad happy excited curious angry"]
+  ].flatMap(([prefix, name, locale, styles]) => styles.split(" ").map((style) => ({
+    id: `${prefix}_${style}`,
+    name: `${name} — ${style.charAt(0).toUpperCase() + style.slice(1)} (${locale})`
+  })));
+  var OPENROUTER_TTS_MODELS = [
+    ...[
+      { id: DEFAULT_OPENROUTER_TTS_MODEL, name: "Google: Gemini 3.8 Flash TTS" },
+      { id: "google/gemini-3.8-flash-lite-tts", name: "Google: Gemini 3.8 Flash-Lite TTS" }
+    ].map((entry) => ({
+      ...entry,
+      responseFormat: (
+        /** @type {const} */
+        "wav"
+      ),
+      maxInput: 24e3,
+      voices: namedVoices(GOOGLE_TTS_VOICES)
+    })),
+    {
+      id: "elevenlabs/eleven-v4",
+      name: "ElevenLabs: Eleven v4",
+      responseFormat: "pcm",
+      maxInput: 1e4,
+      voices: namedVoices("george sarah adam alice bella bill brian callum charlie chris daniel eric harry jessica laura liam lily matilda river roger will".split(" "))
+    },
+    { id: "microsoft/mai-voice-2.1", name: "Microsoft AI: MAI-Voice-2.1", responseFormat: "pcm", maxInput: 6e3, voices: maiVoices },
+    {
+      id: "x-ai/grok-voice-tts-1.0",
+      name: "Grok Voice TTS 1.0",
+      responseFormat: "pcm",
+      maxInput: 15e3,
+      voices: namedVoices(["eve", "ara", "rex", "sal", "leo"])
+    },
+    {
+      id: "mistralai/voxtral-mini-tts-3-0",
+      name: "Mistral: Voxtral TTS 3",
+      responseFormat: "pcm",
+      maxInput: 4e3,
+      voices: [...voxtralVoices, ...voxtralStylePresets]
+    }
+  ];
 
   // scripts/utils/config.js
   var CONFIG = {
@@ -3592,6 +3749,27 @@ var clipaibleArticleExtractor = (() => {
     }
     const headline = Array.from(root.querySelectorAll("h1")).find(isDocumentHeadline);
     if (!headline) return regions;
+    const categoryLinks = [...root.querySelectorAll('a[href][rel~="category"]')];
+    if (categoryLinks.length) {
+      const bodyStart = [...root.querySelectorAll("p,blockquote,pre")].find((block) => compareDomOrder(headline, block) < 0 && normalize(block.textContent));
+      if (bodyStart) {
+        const groups = new Set(categoryLinks.map((link) => link.closest("li")).filter(Boolean));
+        for (const group of groups) {
+          if (!root.contains(group) || compareDomOrder(group, bodyStart) >= 0 || ownsFragment(group) || group.matches(PROTECTED_READING) || group.querySelector(PROTECTED_READING + ",img,video,picture,input,button,time")) continue;
+          const links = [...group.querySelectorAll("a[href]")];
+          if (!links.every((link) => link.matches('[rel~="category"]') && !getDocumentFragmentTarget(link))) continue;
+          const walker = group.ownerDocument.createTreeWalker(group, group.ownerDocument.defaultView.NodeFilter.SHOW_TEXT);
+          let hasProse = false;
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (/[\p{L}\p{N}]/u.test(node.textContent || "") && !node.parentElement?.closest("a[href]")) {
+              hasProse = true;
+              break;
+            }
+          }
+          if (!hasProse) regions.push(group);
+        }
+      }
+    }
     for (const link of root.querySelectorAll("a[href]")) {
       if (compareDomOrder(link, headline) >= 0 || link.closest("p,blockquote,pre,figure,figcaption") || ownsFragment(link)) continue;
       if (link.matches('[rel~="tag"]')) {

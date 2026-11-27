@@ -2,7 +2,7 @@
 // State management module
 // Handles processing state polling, UI updates, and stage mapping
 
-import { getDocumentReadyMessage } from '../../scripts/locales.js';
+import { getDocumentReadyMessage, getExportFormatLabelKey } from '../../scripts/locales.js';
 import { getProcessingPhase, readProcessingSnapshot } from '../../scripts/state/processing-messages.js';
 
 /** @typedef {import('../../scripts/state/processing-messages.js').ProcessingSnapshot} ProcessingSnapshot */
@@ -65,6 +65,7 @@ function requestProcessingState() {
  * @param {Function} deps.startTimerDisplay - Start timer display function
  * @param {Function} deps.checkSummaryStatus - Check summary status function
  * @param {Function} [deps.checkKeyThesesStatus] - Check key theses status function
+ * @param {() => Promise<import('../../scripts/types.js').LocalizedMessage|null>} [deps.getExportReadiness]
  * @param {Object} deps.stateRefs - State references object
  * @returns {Object} State functions
  */
@@ -79,6 +80,7 @@ export function initState(deps) {
     startTimerDisplay,
     checkSummaryStatus,
     checkKeyThesesStatus,
+    getExportReadiness,
     stateRefs
   } = deps;
 
@@ -105,6 +107,25 @@ export function initState(deps) {
   let recoveryStartedAt = null;
   /** @type {string|null} */
   let admittedRunId = null;
+  let preparingLocally = false;
+  let localFailure = false;
+  let lastIdleStatus = null;
+  let paintedRevision = 0;
+
+  async function readReadinessIssue() {
+    return getExportReadiness
+      ? await withinStateReadDeadline(Promise.resolve().then(getExportReadiness))
+        .catch(() => ({ key: 'errorCommunicationFailed', params: {} })) : null;
+  }
+
+  async function presentReadinessIssue(issue) {
+    return { kind: 'error', text: await translate(issue.key, issue.params), translation: issue, blocked: true };
+  }
+
+  async function presentReadiness() {
+    const issue = await readReadinessIssue();
+    return issue ? presentReadinessIssue(issue) : { kind: 'ready', text: await translate('ready'), translation: { key: 'ready' } };
+  }
 
   /** @param {ProcessingSnapshot} state */
   async function preparePresentation(state) {
@@ -133,20 +154,30 @@ export function initState(deps) {
     }
 
     if (phase === 'complete' || (phase === 'idle' && !state.phase && state.status && state.status === await translate('statusDone'))) {
+      const issue = await readReadinessIssue();
+      if (issue) return presentReadinessIssue(issue);
       const format = state.outputFormat || elements.mainFormatSelect?.value || elements.outputFormat?.value;
-      const formats = { epub: 'formatEpub', fb2: 'formatFb2', markdown: 'formatMarkdown', audio: 'formatAudio' };
-      const formatKey = formats[format] || 'formatPdf';
+      const formatKey = getExportFormatLabelKey(format) || 'formatPdf';
       const message = getDocumentReadyMessage(await translate(formatKey), state.imageTranslationFailureCount);
       return { kind: 'ready', text: await translate(message.key, message.params), translation: { ...message, formatKey } };
     }
-    return { kind: 'ready', text: await translate('ready'), translation: { key: 'ready' } };
+    if (phase === 'cancelled') {
+      const readiness = await presentReadiness();
+      return readiness.kind === 'error' ? readiness :
+        { kind: 'pending', text: await translate('statusCancelled'), translation: { key: 'statusCancelled' } };
+    }
+    return presentReadiness();
   }
 
   /** @param {ProcessingSnapshot} state @param {number} revision */
   async function updateUIFromState(state, revision = ++renderRevision) {
     if (!state) return;
+    const phase = state.phase ?? getProcessingPhase(state);
+    if (preparingLocally && phase !== 'running') return;
+    if (phase === 'idle' && localFailure) return;
     const presentation = await preparePresentation(state);
     if (revision !== renderRevision) return;
+    paintedRevision = revision;
 
     const isProcessing = presentation.kind === 'processing';
     presentedRunId = isProcessing ? state.processingRunId ?? null : null;
@@ -158,7 +189,7 @@ export function initState(deps) {
       stopTimerDisplay();
     }
     if (elements.savePdfBtn) {
-      elements.savePdfBtn.disabled = isProcessing;
+      elements.savePdfBtn.disabled = isProcessing || presentation.blocked === true;
       elements.savePdfBtn.style.display = isProcessing ? 'none' : 'block';
     }
     if (elements.cancelBtn) {
@@ -166,8 +197,12 @@ export function initState(deps) {
       elements.cancelBtn.style.display = isProcessing ? 'block' : 'none';
       if (isProcessing) elements.cancelBtn.disabled = false;
     }
-    setStatus(presentation.kind, presentation.text, isProcessing ? state.startTime || stateRefs.currentStartTime?.current : null,
-      presentation.translation);
+    const idleStatus = phase === 'idle' ? JSON.stringify([presentation.kind, presentation.text, presentation.translation]) : null;
+    if (idleStatus === null || idleStatus !== lastIdleStatus) {
+      setStatus(presentation.kind, presentation.text, isProcessing ? state.startTime || stateRefs.currentStartTime?.current : null,
+        presentation.translation);
+    }
+    lastIdleStatus = idleStatus;
     if (isProcessing) setProgress(state.progress ?? 0);
     else setProgress(0, false);
   }
@@ -202,6 +237,15 @@ export function initState(deps) {
       if (recoveryStartedAt === null) {
         recoveryStartedAt = Date.now();
         logWarn?.('Unable to read processing state', { error: error?.message || String(error) });
+        if (getExportReadiness && !lastScheduledState?.isProcessing && !preparingLocally && !localFailure) {
+          const revision = ++renderRevision;
+          const text = await translate('statusCheckingExport');
+          if (revision === renderRevision && isCurrent()) {
+            if (elements.savePdfBtn) elements.savePdfBtn.disabled = true;
+            lastIdleStatus = null;
+            setStatus('pending', text, null, { key: 'statusCheckingExport' });
+          }
+        }
       }
 
       const withinRecoveryWindow = () => Date.now() - recoveryStartedAt < STATE_RECOVERY_WINDOW_MS;
@@ -270,7 +314,7 @@ export function initState(deps) {
     acceptedRead = read;
     const changed = stateChanged(state, lastScheduledState);
     lastScheduledState = state;
-    if (!changed && !forceRender) return false;
+    if (!changed && !forceRender && (!getExportReadiness || getProcessingPhase(state) !== 'idle')) return false;
     scheduledRenderRevision = ++renderRevision;
 
     if (pendingUIUpdate === null) {
@@ -324,9 +368,38 @@ export function initState(deps) {
     checkProcessingState,
     startStatePolling,
     updateUIFromState,
+    notePreparation() {
+      preparingLocally = true;
+      localFailure = false;
+      lastIdleStatus = null;
+      renderRevision++;
+    },
+    finishPreparation(failed) {
+      preparingLocally = false;
+      localFailure = failed;
+      renderRevision++;
+      if (!failed && lastScheduledState) scheduleUIUpdate(lastScheduledState, acceptedRead, false, true);
+    },
+    refreshExportReadiness() {
+      if (!lastScheduledState || preparingLocally || recoveryStartedAt !== null ||
+          lastScheduledState.errorTranslationKey === 'errorBackgroundInitializationFailed') return;
+      const phase = getProcessingPhase(lastScheduledState);
+      if (phase === 'running') return;
+      localFailure = false;
+      const revision = ++renderRevision;
+      void translate('statusCheckingExport').then(text => {
+        if (revision !== renderRevision || paintedRevision === revision) return;
+        if (elements.savePdfBtn) elements.savePdfBtn.disabled = true;
+        setStatus('pending', text, null, { key: 'statusCheckingExport' });
+      });
+      lastIdleStatus = null;
+      void updateUIFromState({ phase: 'idle', isProcessing: false }, revision);
+    },
     getPresentedProcessingRunId: () => presentedRunId,
     /** @param {string} [runId] */
     noteProcessingAdmission(runId) {
+      preparingLocally = false;
+      localFailure = false;
       admittedRunId = runId ?? null;
       recoveryStartedAt = null;
       acceptedRead = ++readRevision;

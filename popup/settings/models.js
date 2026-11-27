@@ -3,7 +3,7 @@
 // Handles model list updates, custom models, hidden models
 
 import { t, tSync, getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
-import { getModelCatalog, getModelMetadata, resolveSavedModel, resolveStoredModelSelection, normalizeModelSelection, parseModelSelection } from '../../scripts/utils/model-catalog.js';
+import { getModelCatalog, getModelMetadata, resolveHiddenModel, resolveSavedModel, resolveStoredModelSelection, normalizeModelSelection, parseModelSelection } from '../../scripts/utils/model-catalog.js';
 
 /**
  * Initialize models module
@@ -49,7 +49,7 @@ export function initModels(deps) {
   }
 
   function hiddenModelIdentity(provider, value, customIds) {
-    const resolved = resolveSavedModel(provider, value, customIds);
+    const resolved = resolveHiddenModel(provider, value, customIds);
     return normalizedStoredModel(provider, resolved) || resolved;
   }
 

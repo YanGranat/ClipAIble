@@ -179,12 +179,18 @@ export function renderRich(value, sourceUrl = '', options = {}, block = false) {
   return result.trim();
 }
 
-export function plainText(value) {
+export function plainText(value, { preserveBreaks = false, preserveTextNewlines = false } = {}) {
   let dropped = '';
-  return decodeEntities(tokenizeHtml(value).map(token => {
+  const text = decodeEntities(tokenizeHtml(value).map(token => {
     if (dropped) { if (token.type === 'tag' && token.closing && token.name === dropped) dropped = ''; return ''; }
-    if (token.type === 'text') return token.raw;
+    if (token.type === 'text') return preserveBreaks && !preserveTextNewlines ? token.raw.replace(/[\r\n]+/g, ' ') : token.raw;
     if (token.type === 'tag' && DROP.has(token.name) && !token.closing) { if (!['input', 'embed'].includes(token.name)) dropped = token.name; return ''; }
-    return token.type === 'tag' && (token.name === 'br' || token.name === 'hr' || BLOCK_BOUNDARIES.has(token.name)) ? ' ' : '';
-  }).join('')).replace(/\s+/g, ' ').trim();
+    if (token.type !== 'tag') return '';
+    if (token.name === 'br') return preserveBreaks ? '\n' : ' ';
+    if (token.name === 'hr' || BLOCK_BOUNDARIES.has(token.name)) return preserveBreaks ? '\n\n' : ' ';
+    return '';
+  }).join(''));
+  return preserveBreaks
+    ? text.replace(/\r\n?/g, '\n').replace(/[\t\f ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+    : text.replace(/\s+/g, ' ').trim();
 }

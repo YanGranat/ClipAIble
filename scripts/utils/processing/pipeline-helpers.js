@@ -2,9 +2,10 @@
 // Provides common patterns for processing pipeline to reduce code duplication
 
 // @ts-check
+import { supportsDocumentAbstract } from '../../processing/export-requirements.js';
 
 import { isCancelled, isCurrentProcessingRun, getScopedUpdateState, getProcessingSignal, markProcessingRequestStarted } from '../../state/processing.js';
-import { getDocumentReadyMessage, getUILanguage, tSync } from '../../locales.js';
+import { getDocumentReadyMessage, getExportFormatLabelKey, getUILanguage, tSync } from '../../locales.js';
 import { updateState, getProcessingState } from '../../state/processing.js';
 import { PROCESSING_STAGES } from '../../state/processing.js';
 import { log, logError, logWarn } from '../logging.js';
@@ -60,9 +61,10 @@ export function getProcessingCallbacks(data) {
 }
 
 export function getAIRequestOptions(data) {
-  const { provider, processingRunId, extractionOnly, checkCancelled } = data;
+  const { provider, processingRunId, extractionOnly, checkCancelled, promptOverrides } = data;
   return {
     provider,
+    ...(promptOverrides && { promptOverrides }),
     signal: data.signal || (!extractionOnly && processingRunId !== undefined ? getProcessingSignal(processingRunId) : undefined),
     onRequestStart: () => { if (!extractionOnly && processingRunId !== undefined) markProcessingRequestStarted(processingRunId); },
     checkCancelled: () => {
@@ -142,11 +144,10 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
     const processingTime = processingStartTimeRef && processingStartTimeRef.current 
       ? Date.now() - processingStartTimeRef.current 
       : 0;
-    const savedTitle = data.title || 'Untitled';
     const savedFormat = data.outputFormat || 'pdf';
     
     await recordSave({
-      title: savedTitle,
+      title: data.title || '',
       url: data.url,
       format: savedFormat,
       processingTime
@@ -179,14 +180,7 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
     const uiLang = await getUILanguageCached();
     const state = getProcessingState();
     const savedFormat = data.outputFormat || state.outputFormat || 'pdf';
-    const formatKeyMap = {
-      pdf: 'formatPdf',
-      epub: 'formatEpub',
-      fb2: 'formatFb2',
-      markdown: 'formatMarkdown',
-      audio: 'formatAudio'
-    };
-    const formatKey = formatKeyMap[savedFormat] || 'formatPdf';
+    const formatKey = getExportFormatLabelKey(savedFormat) || 'formatPdf';
     const formatLabel = tSync(formatKey, uiLang);
 
     const notice = getDocumentReadyMessage(formatLabel, state.imageTranslationFailureCount);
@@ -379,6 +373,7 @@ export async function handleTranslation(
       result.content, sourceLang, language, 
       data.apiKey, data.googleApiKey, data.model, updateState, {
         ...getAIRequestOptions(data), imageTranslationProvider: data.imageTranslationProvider, geminiImageModel: data.geminiImageModel,
+        openrouterImageModel: data.openrouterImageModel,
         imageApiKey: data.imageApiKey, outputFormat: data.outputFormat
       }
     );
@@ -432,8 +427,8 @@ export async function handleAbstractGeneration(
   await checkCancellation('abstract generation', data.processingRunId);
   
   // Generate abstract if enabled (but skip for audio format)
-  const shouldGenerateAbstract = data.generateAbstract && 
-                                 data.outputFormat !== 'audio' && 
+  const shouldGenerateAbstract = data.generateAbstract &&
+                                 supportsDocumentAbstract(data.mode, data.outputFormat) &&
                                  result.content && 
                                  result.content.length > 0 && 
                                  data.apiKey;

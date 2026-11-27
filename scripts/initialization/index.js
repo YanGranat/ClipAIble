@@ -4,7 +4,8 @@
 // @ts-check
 
 import { log, logError } from '../utils/logging.js';
-import { encryptApiKey, withApiKeyStorageLock } from '../utils/encryption.js';
+import { encryptApiKey, isMaskedKey, withApiKeyStorageLock } from '../utils/encryption.js';
+import { OPENROUTER_KEY_SLOTS, OPENROUTER_KEY_STORAGE_FIELDS, planOpenRouterKeySeparation } from '../utils/storage/openrouter-key-slots.js';
 
 /**
  * Migrate existing plain text API keys to encrypted format
@@ -19,7 +20,7 @@ export async function migrateApiKeys() {
         'deepseek_api_key',
         'gemini_api_key',
         'grok_api_key',
-        'openrouter_api_key',
+        ...OPENROUTER_KEY_STORAGE_FIELDS,
         'google_api_key',
         'elevenlabs_api_key',
         'qwen_api_key',
@@ -38,7 +39,7 @@ export async function migrateApiKeys() {
         'deepseek_api_key',
         'gemini_api_key',
         'grok_api_key',
-        'openrouter_api_key',
+        ...Object.values(OPENROUTER_KEY_SLOTS),
         'google_api_key',
         'elevenlabs_api_key',
         'qwen_api_key',
@@ -49,6 +50,7 @@ export async function migrateApiKeys() {
       for (const keyName of keyNames) {
         const value = result[keyName];
         if (value && typeof value === 'string') {
+          if (Object.values(OPENROUTER_KEY_SLOTS).some(slot => slot === keyName) && isMaskedKey(value.trim())) continue;
           try {
             const encrypted = await encryptApiKey(value);
             if (encrypted !== value) {
@@ -63,10 +65,16 @@ export async function migrateApiKeys() {
         }
       }
 
-      if (hasChanges) {
-        keysToEncrypt.api_keys_migrated = true;
-        await chrome.storage.local.set(keysToEncrypt);
-        log('API keys migrated to encrypted format', { count: Object.keys(keysToEncrypt).length - 1 });
+      let separated = {};
+      try {
+        separated = await planOpenRouterKeySeparation({ ...result, ...keysToEncrypt }, encryptApiKey);
+      } catch (error) {
+        // Leave migration pending without blocking unrelated startup work.
+        logError('Could not initialize OpenRouter media credentials', error);
+      }
+      if (hasChanges || Object.keys(separated).length) {
+        await chrome.storage.local.set({ ...keysToEncrypt, ...separated, api_keys_migrated: true });
+        log('API key storage initialized', { encryptedKeys: Object.keys(keysToEncrypt).length });
       } else if (!result.api_keys_migrated) {
         // Mark as migrated only if no keys to encrypt and not already migrated
         await chrome.storage.local.set({ api_keys_migrated: true });

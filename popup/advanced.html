@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClipAIble — Advanced settings</title>
+  <link rel="icon" href="../icons/icon48.png">
+  <link rel="stylesheet" href="advanced.css">
+  <script type="module" src="advanced.js"></script>
+</head>
+<body>
+  <main class="settings-page">
+    <header class="page-header">
+      <div class="page-header-inner">
+        <div class="brand"><img src="../icons/icon48.png" width="26" height="26" alt="">ClipAIble</div>
+        <h1 data-i18n="advancedSettings">Advanced settings</h1>
+      </div>
+    </header>
+    <div class="prompt-layout">
+      <nav class="prompt-nav" aria-labelledby="prompt-menu-heading">
+        <h2 class="prompt-menu-title" id="prompt-menu-heading" data-i18n="promptEditor">AI prompts</h2>
+        <div class="prompt-menu" id="prompt-menu"></div>
+        <div class="prompt-picker">
+          <label for="prompt-select" data-i18n="promptSelector">Choose a prompt</label>
+          <select id="prompt-select" disabled></select>
+        </div>
+      </nav>
+      <form class="prompt-workspace" id="prompt-form" novalidate>
+        <div class="prompt-content" id="prompt-content">
+          <div class="prompt-header">
+            <div class="prompt-category" id="prompt-category"></div>
+            <div class="prompt-title">
+              <h2><label id="prompt-name" for="prompt-input">AI Selector</label></h2>
+              <span class="prompt-badge" id="prompt-badge" data-i18n="promptDefault">Default</span>
+            </div>
+          </div>
+          <p class="prompt-note" id="prompt-specific-note" hidden></p>
+          <div class="prompt-editor">
+            <textarea id="prompt-input" aria-describedby="prompt-status" rows="5" spellcheck="false" lang="en" dir="ltr" disabled></textarea>
+            <div class="prompt-variables" id="prompt-variables" hidden>
+              <p data-i18n="promptVariables">Keep these variables so ClipAIble can fill in values for each job.</p>
+              <div class="variable-list" id="variable-list"></div>
+            </div>
+          </div>
+          <details class="prompt-default" id="default-prompt" hidden>
+            <summary id="default-prompt-title" data-i18n="promptViewDefault">View default prompt</summary>
+            <pre id="default-text" tabindex="0" aria-labelledby="default-prompt-title" lang="en" dir="ltr"></pre>
+          </details>
+        </div>
+        <div class="prompt-footer">
+          <p class="prompt-feedback" id="prompt-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          <div class="prompt-actions">
+            <button type="button" id="restore-prompt" data-i18n="promptRestoreDefault" disabled>Restore default</button>
+            <button type="button" id="discard-prompt" data-i18n="promptDiscard" disabled>Discard changes</button>
+            <button type="submit" class="primary" id="save-prompt" data-i18n="save" disabled>Save</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </main>
+</body>
+</html>

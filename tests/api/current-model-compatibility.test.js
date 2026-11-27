@@ -4,6 +4,7 @@ import { callGeminiAPI, callGeminiAPIWithImage, callGeminiAPIWithImageAndHistory
 import { callDeepSeekAPI, callDeepSeekAPIWithImage, callDeepSeekAPIWithImageAndHistory } from '../../scripts/api/deepseek.js';
 import { GEMINI_IMAGE_MODEL, resolveSavedModel } from '../../scripts/utils/model-catalog.js';
 import { translateImages } from '../../scripts/translation/images.js';
+import { createImageTranslationPrompt } from '../../scripts/api/image-data.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn(), criticalLog: vi.fn() }));
 vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options = {}) => operation({ signal: new AbortController().signal, deadline: Date.now() + (options.timeoutMs ?? 600000) }) }));
@@ -124,6 +125,7 @@ describe('current first-party model requests', () => {
     const body = JSON.parse(edit.body);
     expect(body.generationConfig.responseModalities).toEqual(['TEXT', 'IMAGE']);
     expect(body.contents[0].parts[0].inline_data).toEqual({ mime_type: 'image/png', data: 'c2FtcGxl' });
+    expect(body.contents[0].parts[1].text).toBe(createImageTranslationPrompt('French'));
   });
 
   it('rejects a model outside the Google editor catalog without sending a request', async () => {
@@ -135,15 +137,16 @@ describe('current first-party model requests', () => {
   });
 
   it.each([
-    ['deepseek-chat', false],
-    ['deepseek-reasoner', true]
-  ])('preserves the migrated %s reasoning mode through a real streaming request', async (savedModel, thinking) => {
+    ['deepseek-chat', [], true],
+    ['deepseek-reasoner', [], true],
+    ['deepseek-flash-no-thinking', ['deepseek-flash-no-thinking'], false]
+  ])('routes a migrated or explicit %s selection through the streaming request', async (savedModel, customIds, thinking) => {
     const stream = 'data: {"choices":[{"delta":{"reasoning_content":"Internal reasoning"}}]}\n\n' +
       'data: {"choices":[{"delta":{"content":"Translated article"},"finish_reason":"stop"}]}\n\n' +
       'data: [DONE]\n\n';
     const fetchMock = vi.fn(async () => new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } }));
     vi.stubGlobal('fetch', fetchMock);
-    expect(await callDeepSeekAPI('System', 'Article', key, resolveSavedModel('deepseek', savedModel), false)).toBe('Translated article');
+    expect(await callDeepSeekAPI('System', 'Article', key, resolveSavedModel('deepseek', savedModel, customIds), false)).toBe('Translated article');
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.model).toBe('deepseek-flash');
     expect(body.thinking.type).toBe(thinking ? 'enabled' : 'disabled');

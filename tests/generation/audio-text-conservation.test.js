@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { runExtraction } from '../../scripts/extraction/extractor/index.js';
-import { basicCleanup, contentToPlainText, prepareChunkForAudio, prepareContentForAudio } from '../../scripts/generation/audio-prep.js';
+import { contentToPlainText, prepareChunkForAudio, prepareContentForAudio } from '../../scripts/generation/audio-prep.js';
 import { callAI } from '../../scripts/api/index.js';
 
 vi.mock('../../scripts/api/index.js', () => ({ callAI: vi.fn() }));
@@ -36,9 +36,12 @@ describe('Narration text conservation', () => {
     'The response scales with x ^2.',
     'The sample contains 10 ^6 particles.',
     'The result is independently supported (see the detailed measurements; several trials agree).',
-    'The second result uses the same method (see the earlier calibration).'
-  ])('preserves meaningful narration in basic cleanup: %s', text => {
-    expect(basicCleanup(text)).toBe(text);
+    'The second result uses the same method (see the earlier calibration).',
+    'Multiply a * b * c, then use arr[3] in version 2.3.4.',
+    'See page 18, not page 23.',
+    'Contact editor@example.test or open https://example.test/data.'
+  ])('preserves meaningful literal narration: %s', text => {
+    expect(contentToPlainText([{ type: 'paragraph', format: 'text', text }])).toBe(text);
   });
 
   it('keeps standalone years and counts through the complete offline preparation path', async () => {
@@ -63,16 +66,13 @@ describe('Narration text conservation', () => {
     expect(normalized(prepared)).toBe(normalized(text));
     expect(callAI).toHaveBeenCalledOnce();
     expect(callAI.mock.calls[0][5]).toBe(requestOptions);
-    expect(callAI.mock.calls[0][0]).toMatch(/PRESERVE:[\s\S]*meaningful numbers[\s\S]*standalone years/i);
+    expect(callAI.mock.calls[0][0]).toMatch(/preserve negation, uncertainty, numbers/i);
     expect(callAI.mock.calls[0][0]).not.toContain('numbers that appear alone on a line');
     expect(callAI.mock.calls[0][0]).not.toContain('Reference markers like ^1');
   });
 
-  it('continues removing explicit citation and page-reference markers', () => {
-    const text = 'Observed results[2] [^3].\n\nPage 7 of 12\n\nSee page 8\n\nRefer to page 9\n\nThe final observation remains.';
-    const cleaned = basicCleanup(text);
-    expect(cleaned).toContain('Observed results');
-    expect(cleaned).toContain('The final observation remains.');
-    expect(cleaned).not.toMatch(/\[2\]|\^3|page\s+\d/i);
+  it('keeps explicit source breaks and strips only rendered markup and marked return controls', () => {
+    const content = [{ type: 'paragraph', html: '<p>See the <a href="https://example.test/survey">second report</a> on page 8.<br>Repeat the test.</p>\n<p>Use <code>a[2] * b</code>. <a role="doc-backlink" href="#note">Return</a></p>' }];
+    expect(contentToPlainText(content)).toBe('See the second report on page 8.\nRepeat the test.\n\nUse a[2] * b.');
   });
 });

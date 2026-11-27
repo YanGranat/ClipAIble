@@ -27,6 +27,10 @@ export const GOOGLE_TTS_CONFIG = {
   MAX_INPUT: 24000
 };
 
+function speechResponseError(message, translationKey = 'errorFailedToParseResponse', cause = undefined) {
+  return Object.assign(new Error(message, { cause }), { translationKey });
+}
+
 /**
  * Convert text to speech using Google Gemini TTS API
  * @param {string} text - Text to convert (max 24000 characters)
@@ -118,13 +122,13 @@ export async function textToSpeech(text, apiKey, options = {}) {
     });
   } catch (e) {
     logError('Failed to parse Google Gemini TTS response', e);
-    throw new Error('Invalid response from Google Gemini TTS API');
+    throw speechResponseError('Invalid response from Google Gemini TTS API', undefined, e);
   }
   
   // Check for API errors
   if (responseData.error) {
     logError('Google Gemini TTS API error', responseData.error);
-    throw new Error(responseData.error.message || 'Google Gemini TTS API error');
+    throw speechResponseError(responseData.error.message || 'Google Gemini TTS API error', 'errorAudioGenerationFailed');
   }
   
   // Extract audio data from response
@@ -134,13 +138,13 @@ export async function textToSpeech(text, apiKey, options = {}) {
   if (responseData.candidates && responseData.candidates[0]) {
     const candidate = responseData.candidates[0];
     if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-      throw new Error(`Incomplete audio from Google Gemini TTS: ${candidate.finishReason}`);
+      throw speechResponseError(`Incomplete audio from Google Gemini TTS: ${candidate.finishReason}`);
     }
     if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
       logError('Invalid candidate structure in Google Gemini TTS response', { 
         candidate: JSON.stringify(candidate).substring(0, 500)
       });
-      throw new Error('Invalid response structure from Google Gemini TTS API');
+      throw speechResponseError('Invalid response structure from Google Gemini TTS API');
     }
     const part = candidate.content.parts[0];
     if (!part.inlineData || !part.inlineData.data) {
@@ -148,7 +152,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
         part: JSON.stringify(part).substring(0, 500),
         responseKeys: Object.keys(responseData)
       });
-      throw new Error('No audio data in Google Gemini TTS API response');
+      throw speechResponseError('No audio data in Google Gemini TTS API response', 'errorNoAudioDataReturned');
     }
     base64Data = part.inlineData.data;
     audioMimeType = part.inlineData.mimeType;
@@ -157,7 +161,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
       responseData: JSON.stringify(responseData).substring(0, 500),
       responseKeys: Object.keys(responseData)
     });
-    throw new Error('No audio data received from Google Gemini TTS API');
+    throw speechResponseError('No audio data received from Google Gemini TTS API', 'errorNoAudioDataReturned');
   }
   
   // Decode base64 to ArrayBuffer
@@ -172,24 +176,24 @@ export async function textToSpeech(text, apiKey, options = {}) {
     pcmData = bytes.buffer;
   } catch (e) {
     logError('Failed to decode base64 audio', e);
-    throw new Error(`Failed to decode audio: ${e.message}`);
+    throw speechResponseError(`Failed to decode audio: ${e.message}`, undefined, e);
   }
   
   if (!pcmData || pcmData.byteLength === 0) {
-    throw new Error('Empty audio data from Google Gemini TTS API');
+    throw speechResponseError('Empty audio data from Google Gemini TTS API', 'errorNoAudioDataReturned');
   }
   
   const hasWavHeader = isWavBuffer(pcmData);
   const wavResponse = /^audio\/(?:wav|x-wav|wave)(?:;|$)/i.test(audioMimeType || '');
-  if (wavResponse && !hasWavHeader) throw new Error('Invalid WAV audio from Google Gemini TTS');
-  if (!audioMimeType && !hasWavHeader) throw new Error('Missing audio format from Google Gemini TTS');
+  if (wavResponse && !hasWavHeader) throw speechResponseError('Invalid WAV audio from Google Gemini TTS');
+  if (!audioMimeType && !hasWavHeader) throw speechResponseError('Missing audio format from Google Gemini TTS');
   if (!hasWavHeader && audioMimeType && !/^audio\/(?:l16|pcm)(?:;|$)/i.test(audioMimeType)) {
-    throw new Error('Unsupported audio format from Google Gemini TTS');
+    throw speechResponseError('Unsupported audio format from Google Gemini TTS');
   }
-  if (!hasWavHeader && pcmData.byteLength % 2 !== 0) throw new Error('Incomplete PCM audio from Google Gemini TTS');
+  if (!hasWavHeader && pcmData.byteLength % 2 !== 0) throw speechResponseError('Incomplete PCM audio from Google Gemini TTS');
   const sampleRate = Number(/(?:^|;)\s*rate=([^;]+)/i.exec(audioMimeType || '')?.[1] || 24000);
   if (!Number.isInteger(sampleRate) || sampleRate <= 0 || sampleRate > 0x7fffffff) {
-    throw new Error('Invalid PCM sample rate from Google Gemini TTS');
+    throw speechResponseError('Invalid PCM sample rate from Google Gemini TTS');
   }
   const audioBuffer = hasWavHeader ? pcmData : pcmToWav(pcmData, sampleRate, 16, 1);
   

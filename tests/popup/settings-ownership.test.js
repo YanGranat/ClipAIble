@@ -86,6 +86,7 @@ it.each([false, null])('refreshes a checked table-of-contents control when an im
     vi.stubGlobal('FileReader', dom.window.FileReader);
     vi.stubGlobal('MutationObserver', dom.window.MutationObserver);
     vi.stubGlobal('HTMLInputElement', dom.window.HTMLInputElement);
+    vi.stubGlobal('HTMLFieldSetElement', dom.window.HTMLFieldSetElement);
     chrome.runtime.sendMessage.mockImplementation(async message => ({ success: true, result: await importSettings(message.jsonData, message.options) }));
     const loadAndDisplayStats = vi.fn(async () => {});
     const logError = vi.fn();

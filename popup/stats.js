@@ -2,7 +2,7 @@
 // Statistics module for popup
 // Handles statistics display, cache stats, history
 
-import { t, getUILanguage, UI_LOCALES, formatMessage, getLocaleTag } from '../scripts/locales.js';
+import { t, getUILanguage, UI_LOCALES, formatMessage, getLocaleTag, getExportFormatLabelKey } from '../scripts/locales.js';
 import { logError, log } from '../scripts/utils/logging.js';
 import { formatRelativeDate } from './utils/format-helpers.js';
 import { ELEMENT_IDS } from './constants.js';
@@ -146,12 +146,15 @@ export function initStats(deps) {
             const dateStr = formatRelativeDate(date, langCode);
             const timeStr = item.processingTime > 0 ? seconds.format(Math.round(item.processingTime / 1000)) : '';
             const entry = item.id || JSON.stringify([item.url, item.date, item.format]);
+            const formatKey = getExportFormatLabelKey(item.format);
+            const formatLabel = formatKey ? formatMessage(formatKey, langCode) : item.format;
+            const title = typeof item.title === 'string' && item.title.trim() ? item.title : formatMessage('untitled', langCode);
             return `
               <div class="history-item" data-index="${index}" data-entry="${escapeHtml(entry)}" data-url="${escapeHtml(item.url || '')}">
                 <a href="${escapeHtml(getSafeHistoryUrl(item.url))}" class="history-link" target="_blank" rel="noopener" title="${escapeHtml(openOriginalArticleText)}">
-                  <div class="history-title">${escapeHtml(item.title)}</div>
+                  <div class="history-title">${escapeHtml(title)}</div>
                   <div class="history-meta">
-                    <span class="history-format">${escapeHtml(item.format)}</span>
+                    <span class="history-format">${escapeHtml(formatLabel)}</span>
                     <span class="history-domain">${escapeHtml(item.domain)}</span>
                     ${timeStr ? `<span class="history-time">${timeStr}</span>` : ''}
                     <span class="history-date">${dateStr}</span>

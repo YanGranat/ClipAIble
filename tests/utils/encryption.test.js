@@ -2,7 +2,7 @@ import { webcrypto } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   isEncrypted, encryptApiKey, decryptApiKey, getDecryptedKeyCached, clearDecryptedKeyCache,
-  withApiKeyStorageLock, saveApiKeySettings, removeApiKeyIfUnchanged
+  withApiKeyStorageLock, saveApiKeySettings, removeApiKeyIfUnchanged, readIsolatedOpenRouterKeys
 } from '../../scripts/utils/encryption.js';
 import { getInstallationKey } from '../../scripts/utils/security/key-store.js';
 import { migrateApiKeys, runInitialization } from '../../scripts/initialization/index.js';
@@ -47,6 +47,59 @@ afterEach(() => {
   clearDecryptedKeyCache();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe('OpenRouter credential isolation', () => {
+  const text = 'openrouter_api_key';
+  const image = 'openrouter_image_api_key';
+  const speech = 'openrouter_tts_api_key';
+  const legacy = 'sk-synthetic-legacy-router-key';
+  const next = 'sk-synthetic-openrouter-replacement';
+  const plain = async key => decryptApiKey((await storage.get(key))[key]);
+
+  it('keeps the legacy value for media if the article key is saved before startup runs', async () => {
+    await storage.set({ [text]: legacy });
+    await Promise.all([saveApiKeySettings({ [text]: await encryptApiKey(next) }), migrateApiKeys()]);
+    expect(await plain(text)).toBe(next);
+    expect(await plain(image)).toBe(legacy);
+    expect(await plain(speech)).toBe(legacy);
+    await saveApiKeySettings({ [image]: await encryptApiKey('sk-synthetic-image-replacement') });
+    await saveApiKeySettings({}, [speech]);
+    await runInitialization();
+    expect(await plain(text)).toBe(next);
+    expect(await plain(image)).toBe('sk-synthetic-image-replacement');
+    expect(await storage.get(speech)).not.toHaveProperty(speech);
+  });
+
+  it('never gives a newly saved text credential to other roles on a fresh profile', async () => {
+    await saveApiKeySettings({ [text]: await encryptApiKey(next) });
+    await migrateApiKeys();
+    expect(await plain(text)).toBe(next);
+    const saved = await storage.get([image, speech]);
+    expect(saved).toEqual({});
+  });
+
+  it('preserves existing explicit media choices, including an intentionally empty slot', async () => {
+    await storage.set({ [text]: await encryptApiKey(legacy), [image]: '', [speech]: await encryptApiKey(next) });
+    await readIsolatedOpenRouterKeys();
+    expect(await plain(text)).toBe(legacy);
+    expect((await storage.get(image))[image]).toBe('');
+    expect(await plain(speech)).toBe(next);
+  });
+
+  it('seeds only the missing slots when a trusted page reads an upgraded profile', async () => {
+    await storage.set({ [text]: await encryptApiKey(legacy), [image]: await encryptApiKey(next) });
+    await readIsolatedOpenRouterKeys();
+    expect(await plain(image)).toBe(next);
+    expect(await plain(speech)).toBe(legacy);
+  });
+
+  it('does not promote a legacy display mask into either media credential', async () => {
+    await storage.set({ [text]: '  ************  ' });
+    await migrateApiKeys();
+    expect(await storage.get([image, speech])).toEqual({});
+    expect(await storage.get('openrouter_keys_separated')).toEqual({ openrouter_keys_separated: true });
+  });
 });
 
 describe('API key encryption', () => {
@@ -209,7 +262,7 @@ describe('decrypted key cache', () => {
 describe('stored key migration', () => {
   it('does not replace a newly saved key while encrypting a startup snapshot', async () => {
     const replacement = await encryptApiKey('sk-synthetic-new-key');
-    const saved = { openai_api_key: plaintext, api_keys_migrated: true };
+    const saved = { openai_api_key: plaintext, api_keys_migrated: true, openrouter_keys_separated: true };
     storage.get.mockImplementation(async () => ({ ...saved }));
     storage.set.mockImplementation(async values => { Object.assign(saved, values); });
     let release;
@@ -235,7 +288,7 @@ describe('stored key migration', () => {
     const pending = new Promise(resolve => { release = resolve; });
     const held = withApiKeyStorageLock(() => pending);
     const replacement = await encryptApiKey('sk-synthetic-new-key');
-    const saved = { openai_api_key: plaintext, api_keys_migrated: true };
+    const saved = { openai_api_key: plaintext, api_keys_migrated: true, openrouter_keys_separated: true };
     storage.get.mockImplementation(async () => ({ ...saved }));
     storage.set.mockImplementation(async values => { Object.assign(saved, values); });
     const saving = saveApiKeySettings({ openai_api_key: replacement });
@@ -275,7 +328,7 @@ describe('stored key migration', () => {
     const initialization = runInitialization().then(() => { completed = true; });
     await Promise.resolve();
     expect(completed).toBe(false);
-    resolveMigration({ api_keys_migrated: true });
+    resolveMigration({ api_keys_migrated: true, openrouter_keys_separated: true });
     await Promise.resolve();
     expect(completed).toBe(false);
     resolveDefaults({ use_selector_cache: false, enable_selector_caching: false, transcription_settings_cleaned: true });
@@ -289,7 +342,7 @@ describe('stored key migration', () => {
     const current = await encryptApiKey(plaintext);
     const longKey = 'a1'.repeat(32);
     storage.get.mockResolvedValue({
-      api_keys_migrated: true, openai_api_key: longKey, deepseek_api_key: longKey,
+      api_keys_migrated: true, openrouter_keys_separated: true, openai_api_key: longKey, deepseek_api_key: longKey,
       claude_api_key: legacy, gemini_api_key: current
     });
     await migrateApiKeys();

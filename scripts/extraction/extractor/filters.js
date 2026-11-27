@@ -308,6 +308,33 @@ function findPublisherWidgets(root, linkedTargets) {
 
   const headline = Array.from(root.querySelectorAll('h1')).find(isDocumentHeadline);
   if (!headline) return regions;
+
+  // A leading list item made entirely of explicit category links is metadata.
+  // Detect the list item itself so separators do not become prose.
+  const categoryLinks = [...root.querySelectorAll('a[href][rel~="category"]')];
+  if (categoryLinks.length) {
+    const bodyStart = [...root.querySelectorAll('p,blockquote,pre')].find(block =>
+      compareDomOrder(headline, block) < 0 && normalize(block.textContent));
+    if (bodyStart) {
+      const groups = new Set(categoryLinks.map(link => link.closest('li')).filter(Boolean));
+      for (const group of groups) {
+        if (!root.contains(group) || compareDomOrder(group, bodyStart) >= 0 || ownsFragment(group) ||
+          group.matches(PROTECTED_READING) || group.querySelector(PROTECTED_READING + ',img,video,picture,input,button,time')) continue;
+        const links = [...group.querySelectorAll('a[href]')];
+        if (!links.every(link => link.matches('[rel~="category"]') && !getDocumentFragmentTarget(link))) continue;
+        const walker = group.ownerDocument.createTreeWalker(group, group.ownerDocument.defaultView.NodeFilter.SHOW_TEXT);
+        let hasProse = false;
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (/[\p{L}\p{N}]/u.test(node.textContent || '') && !node.parentElement?.closest('a[href]')) {
+            hasProse = true;
+            break;
+          }
+        }
+        if (!hasProse) regions.push(group);
+      }
+    }
+  }
+
   // Taxonomy links preceding the headline are category navigation, not body references.
   for (const link of root.querySelectorAll('a[href]')) {
     if (compareDomOrder(link, headline) >= 0 || link.closest('p,blockquote,pre,figure,figcaption') || ownsFragment(link)) continue;

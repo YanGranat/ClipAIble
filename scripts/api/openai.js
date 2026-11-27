@@ -104,11 +104,8 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
   const requestStartTime = Date.now();
   
   try {
-    // CRITICAL: Log full prompts for debugging PDF processing issues
-    log('=== OPENAI REQUEST: FULL PROMPTS ===', {
+    log('OpenAI request prepared', {
       model: modelName,
-      systemPromptFull: systemPrompt,
-      userPromptFull: userPrompt,
       systemPromptLength: systemPrompt.length,
       userPromptLength: userPrompt.length,
       reasoningEffort: reasoningEffort || 'none',

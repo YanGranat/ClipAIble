@@ -287,6 +287,20 @@ describe('Reading ownership', () => {
     expect([result.plain, result.publishDate].join(' ')).toMatch(/May 4, 2024|2024-05-04|2024-05-03T/);
   });
 
+  it.each([null, {}])('excludes leading category lists but keeps reading-owned category links in %j', async selectors => {
+    const opening = 'The first measurement in the report is taken at a fixed distance from the east edge.';
+    const result = await extract('<article><header><h1>Field report</h1></header>' +
+      '<ul><li><time datetime="2024-05-04">May 4, 2024</time></li>' +
+      '<li><a rel="category tag" href="/topics/sensors">Sensor topics</a>, ' +
+      '<a rel="category" href="/topics/devices">Device topics</a></li></ul>' +
+      '<p>' + opening + '</p><ul><li><a rel="category" href="/topics/instruments">Instruments in this study</a></li></ul>' +
+      '<p>' + 'The closing explanation relates the original measurements to the observed interval. '.repeat(6) + '</p></article>', selectors);
+    expect(result.plain).not.toMatch(/Sensor topics|Device topics/);
+    expect(result.plain).toContain(opening);
+    expect(result.plain).toContain('Instruments in this study');
+    expect([result.plain, result.publishDate].join(' ')).toMatch(/May 4, 2024|2024-05-04|2024-05-03T/);
+  });
+
   it('omits the source headline after masthead metadata while keeping later headings and links', async () => {
     const url = 'https://www.google.com/preferences/source?q=example.test';
     const result = await extract('<article><p><a href="/reports">Field reports</a></p><h1>Field report</h1>' +

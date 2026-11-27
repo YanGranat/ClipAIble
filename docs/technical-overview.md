@@ -9,9 +9,10 @@ ClipAIble is a Manifest V3 Chrome extension with native ES modules and a backgro
 - `scripts/content.js` receives subtitle requests on YouTube pages. Article extraction is injected into the selected page through `chrome.scripting`.
 - `offscreen.html` loads `dist/offscreen-bundle.js` for PDF.js, image decoding and conversion, local speech synthesis, and Blob download preparation.
 - `src/tts-worker-entry.js` builds into `dist/tts-worker-bundle.js`. Piper phonemization and ONNX Runtime inference run in this worker with the WebAssembly execution provider.
+- `scripts/offscreen/supertonic/worker.js` runs Supertonic synthesis using the same packaged ONNX Runtime. The worker reads model files from the extension cache.
 - `print/print.html` receives an owned print job and renders the document for PDF export through Chrome's debugging and print interfaces.
 
-The manifest declares extension-origin scripts and WebAssembly in its Content Security Policy. Bundled libraries, fonts, PDF resources, and WebAssembly files are loaded from the extension. Piper voice models are downloaded separately. See [Permissions](../PERMISSIONS.md) for the declared permissions and their uses.
+The manifest declares extension-origin scripts and WebAssembly in its Content Security Policy. Bundled libraries, fonts, PDF resources, and WebAssembly files are loaded from the extension. Local speech models are downloaded separately. See [Permissions](../PERMISSIONS.md) for the declared permissions and their uses.
 
 ## Processing
 
@@ -47,9 +48,9 @@ PDF.js text items also retain line and font information used by native PDF extra
 
 The text AI adapters support OpenAI, Anthropic, Google Gemini, xAI Grok, OpenRouter, and DeepSeek. `scripts/utils/model-catalog.js` holds model IDs, labels, capabilities, defaults, and saved-model migrations. Request adapters apply provider-specific parameters and validate responses.
 
-Image translation is available for PDF, EPUB, and FB2 when a target language is selected. With Google Gemini, the selected article model detects text in images and the chosen **Image model** edits them with a Google AI API key. With OpenAI, dedicated OpenAI models handle both steps with the OpenAI API key. Model bindings and supported output formats are defined in `scripts/api/image-translation-catalog.js`.
+Image translation is available for PDF, EPUB, and FB2 when a target language is selected. With Google Gemini, the selected article model detects text in images and the chosen **Image model** edits them with a Google AI API key. With OpenAI, dedicated OpenAI models handle both steps with the OpenAI API key. With OpenRouter, an image-capable detection model checks for text and the selected editor receives eligible images through the OpenRouter Images API. Model bindings and supported output formats are defined in `scripts/api/image-translation-catalog.js`.
 
-Audio supports OpenAI, ElevenLabs, Google Gemini, Qwen, Respeecher, and local Piper. Model and voice capabilities determine the available controls. Cloud narration preparation can use the selected text AI service before synthesis; Piper preparation and synthesis run locally after a voice model has been downloaded.
+Audio supports OpenAI, ElevenLabs, Google Gemini, OpenRouter, Qwen, Respeecher, and local Piper and Supertonic. OpenRouter sends narration to its Speech API using the selected model and voice. OpenRouter credentials are stored separately for text, image translation, and speech. Model and voice capabilities determine the available controls. Custom cloud narration preparation uses the selected text AI service when enabled. Piper and Supertonic synthesize locally after their model files are downloaded.
 
 Transport retries are bounded and respect cancellation, terminal errors, and request admission. Processing errors and progress messages carry translation keys and interpolation parameters for the popup. See [Privacy](../PRIVACY.md) for the content sent to external services.
 
@@ -58,6 +59,7 @@ Transport retries are bounded and respect cancellation, terminal errors, and req
 - `chrome.storage.local` stores settings, encrypted API keys, progress, summaries, key claims, selector cache, and usage history. The manifest requests `unlimitedStorage`.
 - Extension-origin IndexedDB stores the non-extractable AES-GCM installation key and owned binary or document-preparation records, including PDF bytes, rendered pages, print jobs, image operations, and audio downloads.
 - Piper voice models are cached in the Origin Private File System (OPFS).
+- Supertonic uses a versioned Cache Storage namespace. The extension verifies the byte length and SHA-256 of each model file before marking the download complete. Both publisher download locations are pinned to specific revisions.
 
 API keys are encrypted with AES-256-GCM using the installation key. Legacy encrypted values are migrated locally. Settings exports exclude API keys. Job identifiers and run ownership bind temporary records to their consumers; completion, cancellation, and startup recovery perform the corresponding cleanup.
 

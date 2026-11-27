@@ -104,6 +104,16 @@ it('omits narration settings for PDF exports', async () => {
   expect(warn.mock.calls.some(([message]) => message.includes('DEFAULT VOICE'))).toBe(false);
 });
 
+it.each(['automatic', 'selector'])('uses the remembered TL;DR preference only for eligible documents in %s mode', async mode => {
+  elements.modeSelect.value = mode;
+  elements.modelSelect.replaceChildren(new Option('Example model', 'example-model'));
+  elements.generateAbstract.checked = true;
+  await processing.handleSavePdf();
+  const request = chrome.runtime.sendMessage.mock.calls.find(([packet]) => packet.action === 'processArticle')?.[0];
+  expect(request?.data.generateAbstract).toBe(mode === 'selector');
+  expect(elements.generateAbstract.checked).toBe(true);
+});
+
 it.each(['export', 'summary', 'key theses'])('does not start %s with the previous provider model during a provider switch', async kind => {
   elements.modeSelect.value = 'selector';
   elements.apiProviderSelect.value = 'gemini';
@@ -117,7 +127,7 @@ it.each(['export', 'summary', 'key theses'])('does not start %s with the previou
   else await initKeyTheses(deps).handleGenerateKeyTheses();
   expect(chrome.tabs.query).not.toHaveBeenCalled();
   expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
-  expect(toast).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'error', { key: 'errorProviderModelsLoading' });
+  expect(toast).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'error', expect.objectContaining({ key: 'errorProviderModelsLoading' }));
 });
 
 it.each(['markdown', 'audio'])('admits automatic local %s without forwarding a foreign model while switching providers', async outputFormat => {

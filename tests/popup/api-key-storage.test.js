@@ -14,7 +14,7 @@ vi.mock('../../scripts/utils/security/key-store.js', () => {
 beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto);
   vi.stubGlobal('navigator', { locks: { request: vi.fn((_name, operation) => operation()) } });
-  vi.stubGlobal('chrome', { runtime: { id: 'test-extension-id' }, storage: { local: { set: vi.fn(async () => {}) } } });
+  vi.stubGlobal('chrome', { runtime: { id: 'test-extension-id' }, storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) } } });
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -34,6 +34,33 @@ describe('API key settings storage', () => {
     await settings.saveApiKey();
     expect(navigator.locks.request).not.toHaveBeenCalled();
     expect(chrome.storage.local.set).not.toHaveBeenCalled();
+  });
+
+  it('keeps the newer OpenRouter text save if the older encryption finishes last', async () => {
+    const apiKey = { value: 'sk-synthetic-first', type: 'password', dataset: { provider: 'openrouter' } };
+    const settings = initApiKeys({ elements: { apiProviderSelect: { value: 'openrouter' }, apiKey }, STORAGE_KEYS, showToast: vi.fn() });
+    const realEncrypt = webcrypto.subtle.encrypt.bind(webcrypto.subtle);
+    let release;
+    const deferred = new Promise(resolve => { release = resolve; });
+    const encrypt = vi.spyOn(webcrypto.subtle, 'encrypt').mockImplementationOnce(async (...args) => {
+      await deferred;
+      return realEncrypt(...args);
+    });
+    const first = settings.saveApiKey();
+    try {
+      await vi.waitFor(() => expect(encrypt).toHaveBeenCalledOnce());
+      apiKey.value = 'sk-synthetic-second';
+      await settings.saveApiKey();
+    } finally {
+      release();
+      await first;
+      encrypt.mockRestore();
+    }
+    expect(chrome.storage.local.set).toHaveBeenCalledOnce();
+    const stored = chrome.storage.local.set.mock.calls[0][0];
+    expect(await decryptApiKey(stored.openrouter_api_key)).toBe('sk-synthetic-second');
+    expect(apiKey.value).toMatch(/^\*+cond$/);
+    expect(apiKey.dataset.encrypted).toBe(stored.openrouter_api_key);
   });
 
   it('reports a rejected save without clearing the editable draft', async () => {

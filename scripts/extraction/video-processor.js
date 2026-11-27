@@ -1,96 +1,12 @@
 // @ts-check
 // AI processing of video subtitles - converts subtitles to structured article text
 
+import { renderPrompt } from '../settings/prompt-catalog.js';
 import { callAI } from '../api/index.js';
 import { log, logError } from '../utils/logging.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
 
-/**
- * System prompt for subtitle processing
- */
-const SUBTITLE_PROCESSOR_SYSTEM_PROMPT = `You are a text processing expert. Your task: convert video subtitles into a well-structured article.
 
-INPUT: Array of subtitle entries with timestamps:
-[
-  {"start": 0.0, "duration": 3.5, "text": "Hello and welcome"},
-  {"start": 3.5, "duration": 2.0, "text": "to this video"},
-  ...
-]
-
-YOUR TASK:
-1. Remove ALL timestamps - do NOT include start/duration in output
-2. Merge consecutive subtitles into natural paragraphs
-3. Add proper paragraph breaks where speaker pauses or topic changes
-4. Fix capitalization (first word of sentences, proper nouns)
-5. Remove filler words if they don't add meaning (um, uh, like, you know)
-6. Fix common transcription errors if obvious
-7. Structure content logically - if there are clear sections, you can add headings (h2 level)
-8. Preserve the original meaning and tone
-9. Make text flow naturally as if it was written, not spoken
-10. CRITICAL: Preserve the ORIGINAL LANGUAGE of the subtitles - do NOT translate or change language
-
-CRITICAL RULES:
-- DO NOT summarize or paraphrase - keep ALL content
-- DO NOT add information not in subtitles
-- DO NOT remove important content
-- Only remove timestamps and merge text naturally
-- If subtitles are very short fragments, merge them into longer paragraphs
-- If speaker changes topic, start a new paragraph
-- If there's a clear section break (long pause, topic change), you can add a heading
-- PRESERVE THE ORIGINAL LANGUAGE - output must be in the same language as input subtitles
-
-OUTPUT FORMAT (JSON):
-{
-  "content": [
-    {"type": "heading", "level": 2, "text": "Section title (only if clear section break)"},
-    {"type": "paragraph", "text": "Merged paragraph text..."},
-    {"type": "paragraph", "text": "Next paragraph..."}
-  ]
-}
-
-Return ONLY valid JSON.`;
-
-/**
- * System prompt for subtitle processing (with context)
- * Used for subsequent chunks when processing large subtitles
- */
-const SUBTITLE_PROCESSOR_CONTEXT_SYSTEM_PROMPT = `You are a text processing expert. Your task: continue processing video subtitles, building on previous work.
-
-CONTEXT: You already processed the first part of subtitles. The user will provide:
-1. What you created so far (previous content items)
-2. Next chunk of subtitles to process
-
-YOUR TASK:
-1. Review the previous content to understand the flow and style
-2. Process the new chunk of subtitles
-3. Continue naturally from where you left off
-4. Ensure smooth transition between previous and new content
-5. Follow the same rules as before:
-   - Remove timestamps
-   - Merge into natural paragraphs
-   - Fix capitalization
-   - Add paragraph breaks where appropriate
-   - Only add headings if clear section breaks
-   - CRITICAL: Preserve the ORIGINAL LANGUAGE of the subtitles
-
-CRITICAL:
-- The new content should flow naturally from previous content
-- If previous content ended mid-sentence or mid-thought, continue it
-- Maintain consistent style and formatting
-- DO NOT repeat or summarize previous content
-- DO NOT add headings unless there's a clear new section
-- PRESERVE THE ORIGINAL LANGUAGE - output must be in the same language as input subtitles
-
-OUTPUT FORMAT (JSON):
-{
-  "content": [
-    {"type": "paragraph", "text": "Continuing text from previous part..."},
-    {"type": "heading", "level": 2, "text": "New section (only if clear break)"},
-    {"type": "paragraph", "text": "New paragraph..."}
-  ]
-}
-
-Return ONLY valid JSON.`;
 
 /**
  * Build user prompt for subtitle processing
@@ -128,7 +44,7 @@ async function processSubtitlesSingleChunk(subtitles, apiKey, model, processingR
   await checkCancellation('subtitle request', processingRunId);
   
   const parsed = await callAI(
-    SUBTITLE_PROCESSOR_SYSTEM_PROMPT,
+    renderPrompt('subtitles', requestOptions),
     userPrompt,
     apiKey,
     model,
@@ -203,7 +119,7 @@ Remember:
 
   await checkCancellation('subtitle context request', processingRunId);
   const parsed = await callAI(
-    SUBTITLE_PROCESSOR_CONTEXT_SYSTEM_PROMPT,
+    renderPrompt('subtitleContinuation', requestOptions),
     userPrompt,
     apiKey,
     model,

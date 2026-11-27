@@ -1,4 +1,5 @@
 // @ts-check
+import { SUPERTONIC_DEFAULT_VOICE } from './supertonic-config.js';
 
 export const OPENAI_TTS_MODEL = 'gpt-realtime-2.1-mini';
 export const DEFAULT_OPENAI_TTS_VOICE = 'marin';
@@ -22,6 +23,7 @@ export const GOOGLE_TTS_MODELS = [
 
 const retiredGoogleTtsReplacements = new Map([
   ['gemini-2.5-flash-preview-tts', GOOGLE_TTS_FLASH_LITE_MODEL],
+  ['gemini-2.5-flash-lite-preview-tts', GOOGLE_TTS_FLASH_LITE_MODEL],
   ['gemini-2.5-pro-preview-tts', DEFAULT_GOOGLE_TTS_MODEL],
   ['gemini-3.1-flash-tts-preview', DEFAULT_GOOGLE_TTS_MODEL]
 ]);
@@ -32,6 +34,101 @@ export const GOOGLE_TTS_VOICES = [
   'Achernar', 'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi', 'Vindemiatrix',
   'Sadachbia', 'Sadaltager', 'Sulafat'
 ];
+
+export const DEFAULT_OPENROUTER_TTS_MODEL = 'google/gemini-3.8-flash-tts';
+export const DEFAULT_OPENROUTER_TTS_VOICE = DEFAULT_GOOGLE_TTS_VOICE;
+
+const namedVoices = ids => ids.map(id => ({ id, name: id.charAt(0).toUpperCase() + id.slice(1) }));
+const maiVoices = Object.entries({
+  'en-US': 'Harper Ethan Grant Iris Jasper Olivia Sage', 'en-AU': 'Isla', 'en-GB': 'Emily Harry', 'en-IN': 'Dhruv Priya',
+  'cs-CZ': 'Grant Harper', 'da-DK': 'Grant Harper', 'de-DE': 'Grant Harper Klaus Mia',
+  'es-ES': 'Marta', 'es-MX': 'Alejo Grant Harper Valeria', 'fi-FI': 'Grant Harper',
+  'fr-FR': 'Grant Harper Marc Soleil', 'hi-IN': 'Arjun Dhruv Grant Harper Kavya Priya',
+  'hu-HU': 'Bence Grant Harper Levente Lilla Reka', 'id-ID': 'Grant Harper',
+  'it-IT': 'Grant Harper Luca Rosa', 'ko-KR': 'Grant Haena Harper Junho', 'nb-NO': 'Grant Harper',
+  'nl-NL': 'Grant Harper Sander', 'pl-PL': 'Grant Harper',
+  'pt-BR': 'Caio Grant Harper Luana Pedro Rafael', 'pt-PT': 'Grant Harper Rui',
+  'ro-RO': 'Andrei Elena Grant Harper Ioana Radu', 'ru-RU': 'Grant Harper Lev Masha',
+  'sv-SE': 'Grant Harper', 'th-TH': 'Grant Harper Krit Nattapong', 'tr-TR': 'Aydin Elif Grant Harper',
+  'vi-VN': 'Grant Harper', 'zh-CN': 'Bo Grant Harper Lan Mei Wei'
+}).flatMap(([locale, names]) => names.split(' ').map(name => ({
+  id: `${locale}-${name}:MAI-Voice-2.1`, name: `${name} (${locale})`
+})));
+
+const voxtralVoices = [
+  [3150, 'James', 'en-US'], [478, 'Sheila', 'en-US'], [447, 'Margaret', 'en-US'], [485, 'Rob', 'en-US'],
+  [1787, 'Mary', 'en-GB'], [1786, 'Sky', 'en-GB'], [1788, 'David', 'en-GB'], [590, 'Harriet', 'en-GB'],
+  [591, 'Fred', 'en-GB'], [3149, 'Hugo', 'en-GB'], [3147, 'Howard', 'en-GB'],
+  [479, 'Maryam', 'ar'], [3143, 'Jordi', 'ca'], [481, 'Heidi', 'de'], [483, 'Elena', 'es'],
+  [592, 'Marie', 'fr'], [3137, 'Manon', 'fr'], [589, 'Lea', 'fr'], [3141, 'Camille', 'fr'],
+  [3139, 'Ananya', 'hi'], [3153, 'Himanshu', 'hi'], [3146, 'Olivia', 'hu'], [482, 'Lorenzo', 'it'],
+  [3133, 'Haruto', 'ja'], [3136, 'Sung', 'ko'], [3135, 'Jin', 'ko'], [3145, 'Lotte', 'nl'],
+  [3134, 'Lars', 'no'], [3154, 'Leon', 'pl'], [480, 'Gabriela', 'pt'], [3155, 'Irina', 'ro'],
+  [3132, 'Tatiana', 'ru'], [3138, 'Oran', 'tr'], [3140, 'Taras', 'uk'], [3144, 'Huong', 'vi'], [3142, 'Mei', 'zh']
+].map(([id, name, locale]) => ({ id: `voice_${id}`, name: `${name} (${locale})` }));
+
+const voxtralStylePresets = [
+  ['en_paul', 'Paul', 'en-US', 'neutral sad happy frustrated excited confident cheerful angry'],
+  ['gb_oliver', 'Oliver', 'en-GB', 'neutral sad excited curious confident cheerful angry'],
+  ['gb_jane', 'Jane', 'en-GB', 'neutral sarcasm confused shameful sad jealousy frustrated curious confident'],
+  ['fr_marie', 'Marie', 'fr-FR', 'neutral sad happy excited curious angry']
+].flatMap(([prefix, name, locale, styles]) => styles.split(' ').map(style => ({
+  id: `${prefix}_${style}`, name: `${name} — ${style.charAt(0).toUpperCase() + style.slice(1)} (${locale})`
+})));
+
+/** @type {{id: string, name: string, responseFormat: 'wav' | 'pcm', maxInput: number, voices: {id: string, name: string}[]}[]} */
+export const OPENROUTER_TTS_MODELS = [
+  ...[
+    { id: DEFAULT_OPENROUTER_TTS_MODEL, name: 'Google: Gemini 3.8 Flash TTS' },
+    { id: 'google/gemini-3.8-flash-lite-tts', name: 'Google: Gemini 3.8 Flash-Lite TTS' }
+  ].map(entry => ({
+    ...entry,
+    responseFormat: /** @type {const} */ ('wav'), maxInput: 24000, voices: namedVoices(GOOGLE_TTS_VOICES)
+  })),
+  { id: 'elevenlabs/eleven-v4', name: 'ElevenLabs: Eleven v4', responseFormat: 'pcm', maxInput: 10000,
+    voices: namedVoices('george sarah adam alice bella bill brian callum charlie chris daniel eric harry jessica laura liam lily matilda river roger will'.split(' ')) },
+  { id: 'microsoft/mai-voice-2.1', name: 'Microsoft AI: MAI-Voice-2.1', responseFormat: 'pcm', maxInput: 6000, voices: maiVoices },
+  { id: 'x-ai/grok-voice-tts-1.0', name: 'Grok Voice TTS 1.0', responseFormat: 'pcm', maxInput: 15000,
+    voices: namedVoices(['eve', 'ara', 'rex', 'sal', 'leo']) },
+  { id: 'mistralai/voxtral-mini-tts-3-0', name: 'Mistral: Voxtral TTS 3', responseFormat: 'pcm', maxInput: 4000,
+    voices: [...voxtralVoices, ...voxtralStylePresets] }
+];
+
+/** @param {string | null | undefined} [model] */
+export function getOpenRouterTtsModel(model) {
+  const resolvedModel = model || DEFAULT_OPENROUTER_TTS_MODEL;
+  const entry = OPENROUTER_TTS_MODELS.find(entry => entry.id === resolvedModel);
+  if (!entry) {
+    throw Object.assign(new Error('Select a supported model in OpenRouter speech settings.'), {
+      translationKey: 'errorModelNotFound', translationParams: { model: String(resolvedModel) }
+    });
+  }
+  return entry;
+}
+
+/**
+ * @param {{ voices: { id: string, name: string }[] }} entry
+ * @param {unknown} voice
+ */
+export function findOpenRouterTtsVoice(entry, voice) {
+  const normalized = typeof voice === 'string' ? voice.trim().toLowerCase() : undefined;
+  return entry.voices.find(({ id }) => id.toLowerCase() === normalized);
+}
+
+/**
+ * @param {string | null | undefined} model
+ * @param {string | null | undefined} voice
+ */
+export function resolveOpenRouterTtsSelection(model, voice) {
+  const entry = getOpenRouterTtsModel(model);
+  const resolvedVoice = voice == null || voice === '' ? entry.voices[0] : findOpenRouterTtsVoice(entry, voice);
+  if (!resolvedVoice) {
+    throw Object.assign(new Error('Select a supported voice in OpenRouter speech settings.'), {
+      translationKey: 'selectNarratorVoice', translationParams: {}
+    });
+  }
+  return { model: entry.id, voice: resolvedVoice.id };
+}
 
 /** @param {string | null | undefined} model */
 export function resolveGoogleTtsModel(model) {
@@ -108,9 +205,11 @@ export const ELEVENLABS_TTS_VOICES = [
 ];
 
 export function getDefaultTtsVoice(provider, qwenModel = DEFAULT_QWEN_TTS_MODEL) {
+  if (provider === 'supertonic') return SUPERTONIC_DEFAULT_VOICE;
   if (provider === 'qwen') return isQwenAudioModel(qwenModel) ? DEFAULT_QWEN_TTS_VOICE : 'Elias';
   if (provider === 'elevenlabs') return DEFAULT_ELEVENLABS_TTS_VOICE;
   if (provider === 'google') return DEFAULT_GOOGLE_TTS_VOICE;
+  if (provider === 'openrouter') return DEFAULT_OPENROUTER_TTS_VOICE;
   if (provider === 'respeecher') return 'samantha';
   if (provider === 'offline') return 'en_US-lessac-medium';
   return DEFAULT_OPENAI_TTS_VOICE;

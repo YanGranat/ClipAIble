@@ -25,11 +25,15 @@ Select PDF, EPUB, or FB2. In **Settings**, choose a **Target Language** other th
 
 For **Google Gemini**, choose an **Image model** and save your **Google AI API Key** from [Google AI Studio](https://aistudio.google.com/docs/api-key). To detect text, choose an article model that accepts images and add its provider's API key. The Gemini image model edits images after detection.
 
-With **OpenAI**, OpenAI detects and edits the text using your OpenAI API key. Save that key before switching to a different article AI provider.
+With **OpenAI**, OpenAI detects and edits the text. Enter your **OpenAI API Key** in the image translation settings and click **Save**. If you already saved an OpenAI key, ClipAIble uses it here too. Your article AI provider stays unchanged.
+
+With **OpenRouter**, choose a Gemini or GPT Image editor in **Image model** and save an **OpenRouter API Key** next to it. The editor is independent of the article AI provider.
 
 ### Other options
 
-Settings include text translation, document styles, and a table of contents. The popup can generate a summary or key claims. Audio can use a configured TTS service or local Piper synthesis after downloading a voice model.
+Settings include text translation, document styles, and a table of contents. The popup can generate a summary or key claims. For local narration, select **Audio**, open **Settings**, and choose **Piper TTS** or **Supertonic 3** under **TTS Provider**. Supertonic downloads one 401 MB model for all its voices. Its model can be removed from the same settings. For OpenRouter speech, choose **OpenRouter**, then select a model and voice. Text, image translation, and speech have separate OpenRouter API key fields.
+
+Open **Settings → Advanced settings** to review and edit AI prompts. Changes apply to new jobs.
 
 Add the API keys required by the AI and TTS features you select. Settings export excludes API keys and can optionally include statistics and selector cache.
 

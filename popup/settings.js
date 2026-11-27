@@ -3,7 +3,8 @@
 // Facade module that imports and combines all settings submodules
 // Handles settings loading, saving, API keys, models, UI updates, etc.
 
-import { decryptApiKey, maskApiKey } from '../scripts/utils/encryption.js';
+import { decryptApiKey, maskApiKey, readIsolatedOpenRouterKeys } from '../scripts/utils/encryption.js';
+import { OPENROUTER_KEY_STORAGE_FIELDS, OPENROUTER_KEYS_SEPARATED } from '../scripts/utils/storage/openrouter-key-slots.js';
 import { t, tSync, getUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { log, logError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
@@ -18,6 +19,9 @@ import { initModels } from './settings/models.js';
 import { initStyles } from './settings/styles.js';
 import { initAudio, restoreGoogleTtsPreferences, restoreTtsSelect } from './settings/audio.js';
 import { initUIVisibility } from './settings/ui-visibility.js';
+import { initOpenRouterMedia } from './settings/openrouter-media.js';
+import { initSharedApiKeys } from './settings/shared-api-keys.js';
+import { OPENROUTER_SPEECH_SETTINGS_KEY } from '../scripts/api/openrouter-speech-options.js';
 
 /**
  * Initialize settings module with dependencies
@@ -98,6 +102,9 @@ export function initSettings(deps) {
     getUILanguage // Add getUILanguage for tSync
   });
 
+  const openRouterMedia = initOpenRouterMedia(elements, debouncedSaveSettings);
+  const sharedApiKeys = initSharedApiKeys(elements);
+
   // Step 6: Initialize UI visibility module (needs audio functions)
   const uiVisibilityModule = initUIVisibility({
     elements,
@@ -121,7 +128,7 @@ export function initSettings(deps) {
         STORAGE_KEYS.CLAUDE_API_KEY,
         STORAGE_KEYS.GEMINI_API_KEY,
         STORAGE_KEYS.GROK_API_KEY,
-        STORAGE_KEYS.OPENROUTER_API_KEY,
+        ...OPENROUTER_KEY_STORAGE_FIELDS,
         STORAGE_KEYS.DEEPSEEK_API_KEY,
         STORAGE_KEYS.GOOGLE_API_KEY,
         STORAGE_KEYS.MODEL,
@@ -140,6 +147,7 @@ export function initSettings(deps) {
         STORAGE_KEYS.STORAGE_TRANSLATE_IMAGES,
         STORAGE_KEYS.IMAGE_TRANSLATION_PROVIDER,
         STORAGE_KEYS.GEMINI_IMAGE_MODEL,
+        STORAGE_KEYS.OPENROUTER_IMAGE_MODEL,
         STORAGE_KEYS.STYLE_PRESET,
         STORAGE_KEYS.FONT_FAMILY,
         STORAGE_KEYS.FONT_SIZE,
@@ -171,6 +179,9 @@ export function initSettings(deps) {
         STORAGE_KEYS.RESPEECHER_TOP_P,
         STORAGE_KEYS.STORAGE_GOOGLE_TTS_API_KEY,
         STORAGE_KEYS.GOOGLE_TTS_MODEL,
+        STORAGE_KEYS.OPENROUTER_TTS_MODEL,
+        STORAGE_KEYS.OPENROUTER_TTS_VOICE,
+        OPENROUTER_SPEECH_SETTINGS_KEY,
         STORAGE_KEYS.GOOGLE_TTS_VOICE,
         STORAGE_KEYS.GOOGLE_TTS_PROMPT,
         STORAGE_KEYS.OPENAI_INSTRUCTIONS,
@@ -178,6 +189,14 @@ export function initSettings(deps) {
         STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP,
         STORAGE_KEYS.AUDIO_SPEED,
       ]);
+
+      if (result[STORAGE_KEYS.OPENROUTER_API_KEY] && result[OPENROUTER_KEYS_SEPARATED] !== true) {
+        try {
+          Object.assign(result, await readIsolatedOpenRouterKeys());
+        } catch (error) {
+          logError('Could not initialize OpenRouter media credentials', error);
+        }
+      }
       
       log('loadSettings: settings retrieved from storage', { 
         hasResult: !!result,
@@ -843,6 +862,8 @@ export function initSettings(deps) {
       }
       
       restoreGoogleTtsPreferences(elements, result[STORAGE_KEYS.GOOGLE_TTS_MODEL], result[STORAGE_KEYS.GOOGLE_TTS_VOICE]);
+      openRouterMedia.restore(result);
+      sharedApiKeys.restore(result);
       
       if (result[STORAGE_KEYS.OPENAI_INSTRUCTIONS] !== undefined) {
         elements.openaiInstructions.value = String(result[STORAGE_KEYS.OPENAI_INSTRUCTIONS]);
@@ -989,6 +1010,7 @@ export function initSettings(deps) {
     
     // From UI visibility module
     updateModeHint: uiVisibilityModule.updateModeHint,
+    updateAbstractVisibility: uiVisibilityModule.updateAbstractVisibility,
     updateCacheVisibility: uiVisibilityModule.updateCacheVisibility,
     updateTranslationVisibility: uiVisibilityModule.updateTranslationVisibility,
     updateOutputFormatUI: uiVisibilityModule.updateOutputFormatUI,

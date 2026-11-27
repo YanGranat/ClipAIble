@@ -104,12 +104,12 @@ export function setupFormatHandlers(deps) {
     debouncedSaveSettings(STORAGE_KEYS.IMAGE_TRANSLATION_PROVIDER, elements.imageTranslationProvider.value);
     settingsModule?.updateTranslationVisibility();
   });
+  elements.openrouterImageModel?.addEventListener('change', () => {
+    debouncedSaveSettings(STORAGE_KEYS.OPENROUTER_IMAGE_MODEL, elements.openrouterImageModel.value);
+  });
   elements.geminiImageModel?.addEventListener('change', () => {
     debouncedSaveSettings(STORAGE_KEYS.GEMINI_IMAGE_MODEL, elements.geminiImageModel.value);
   });
-  for (const input of [elements.apiKey, elements.googleApiKey]) {
-    input?.addEventListener('input', () => { void settingsModule?.updateTranslationVisibility(); });
-  }
-  elements.apiProviderSelect?.addEventListener('change', () => { void settingsModule?.updateTranslationVisibility(); });
+  elements.googleApiKey?.addEventListener('input', () => { void settingsModule?.updateTranslationVisibility(); });
 }
 

@@ -322,6 +322,11 @@ async function init() {
   try {
     // Initialize DOM elements
     initializeDOMElements(elements);
+    document.getElementById('openAdvancedSettings')?.addEventListener('click', () => {
+      void chrome.runtime.openOptionsPage().catch(() => {
+        void t('promptOpenFailed').then(message => showToast(message, 'error', { key: 'promptOpenFailed', params: {} }));
+      });
+    });
     
     // Group dependencies for cleaner module initialization
     const groupedDeps = groupDependencies({
@@ -489,6 +494,9 @@ function initAllCustomSelects() {
     'languageSelect',
     'imageTranslationProvider',
     'geminiImageModel',
+    'openrouterImageModel',
+    'openrouterTtsModel',
+    'openrouterTtsVoice',
     'stylePreset',
     'uiLanguageSelect',
     'themeSelect'

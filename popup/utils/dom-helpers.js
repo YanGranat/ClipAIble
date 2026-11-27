@@ -86,25 +86,46 @@ export function setDisplayForIds(ids, displayValue) {
   });
 }
 
-/** Keep keyboard focus inside a visible modal until its existing close action runs. */
+const modalStacks = new WeakMap();
+
+function syncModalStack(doc, stack) {
+  const top = stack.entries.at(-1);
+  if (!top) {
+    for (const [element, inert] of stack.inertStates) element.inert = inert;
+    return;
+  }
+  for (const element of /** @type {HTMLElement[]} */ (Array.from(doc.body.children))) {
+    if (!stack.inertStates.has(element)) stack.inertStates.set(element, element.inert);
+    element.inert = element !== top.modal && !element.contains(top.modal);
+  }
+  for (const entry of stack.entries) {
+    if (entry === top) entry.dialog.setAttribute('aria-modal', 'true');
+    else entry.dialog.removeAttribute('aria-modal');
+  }
+}
+
+/** Keep focus in the topmost popup modal and restore the view below it on close. */
 export function activateModalDialog(modal, onCancel, initialFocus) {
+  const doc = modal.ownerDocument;
   const dialog = modal.querySelector('.modal-dialog') || modal;
-  const previousFocus = /** @type {HTMLElement | SVGElement | null} */ (document.activeElement);
+  const previousFocus = /** @type {HTMLElement | SVGElement | null} */ (doc.activeElement);
   const title = dialog.querySelector('h1[id], h2[id], h3[id]');
   dialog.setAttribute('role', 'dialog');
-  dialog.setAttribute('aria-modal', 'true');
   if (title) dialog.setAttribute('aria-labelledby', title.id);
   dialog.tabIndex = -1;
-  const siblings = (/** @type {Array<Element & {inert: boolean}>} */ (Array.from(document.body.children)))
-    .filter(element => element !== modal && !element.contains(modal));
-  /** @type {Array<[Element & {inert: boolean}, boolean]>} */
-  const inertStates = siblings.map(element => [element, element.inert]);
-  siblings.forEach(element => { element.inert = true; });
+  let stack = modalStacks.get(doc);
+  if (!stack) {
+    stack = { entries: [], inertStates: new Map(), returnFocus: previousFocus };
+    modalStacks.set(doc, stack);
+  }
   const focusable = () => Array.from(dialog.querySelectorAll('button, input:not([type="hidden"]), select, textarea, a[href], [tabindex]'))
     .filter(element => element.tabIndex >= 0 && !element.disabled && !element.closest('[hidden], .hidden') &&
-      window.getComputedStyle(element).display !== 'none' && window.getComputedStyle(element).visibility !== 'hidden');
+      doc.defaultView.getComputedStyle(element).display !== 'none' && doc.defaultView.getComputedStyle(element).visibility !== 'hidden');
   const focusInside = () => (initialFocus && !initialFocus.disabled ? initialFocus : focusable()[0] || dialog).focus();
+  const entry = { modal, dialog, focusInside };
+  const isTop = () => stack.entries.at(-1) === entry;
   const onKeyDown = event => {
+    if (!isTop()) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -113,21 +134,35 @@ export function activateModalDialog(modal, onCancel, initialFocus) {
       const controls = focusable();
       const first = controls[0] || dialog;
       const last = controls.at(-1) || dialog;
-      if (!dialog.contains(document.activeElement) || (event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+      if (!dialog.contains(doc.activeElement) || (event.shiftKey && doc.activeElement === first) || (!event.shiftKey && doc.activeElement === last)) {
         event.preventDefault();
         (event.shiftKey ? last : first).focus();
       }
     }
   };
-  const onFocus = event => { if (!dialog.contains(event.target)) focusInside(); };
-  document.addEventListener('keydown', onKeyDown, true);
-  document.addEventListener('focusin', onFocus, true);
+  const onFocus = event => { if (isTop() && !dialog.contains(event.target)) focusInside(); };
+  stack.entries.push(entry);
+  syncModalStack(doc, stack);
+  doc.addEventListener('keydown', onKeyDown, true);
+  doc.addEventListener('focusin', onFocus, true);
   focusInside();
   return () => {
-    document.removeEventListener('keydown', onKeyDown, true);
-    document.removeEventListener('focusin', onFocus, true);
-    inertStates.forEach(([element, inert]) => { element.inert = inert; });
-    if (previousFocus?.isConnected) previousFocus.focus();
+    const index = stack.entries.indexOf(entry);
+    if (index < 0) return;
+    const wasTop = isTop();
+    stack.entries.splice(index, 1);
+    doc.removeEventListener('keydown', onKeyDown, true);
+    doc.removeEventListener('focusin', onFocus, true);
+    dialog.removeAttribute('aria-modal');
+    syncModalStack(doc, stack);
+    const current = stack.entries.at(-1);
+    if (!current) {
+      modalStacks.delete(doc);
+      if (stack.returnFocus?.isConnected) stack.returnFocus.focus();
+    } else if (wasTop) {
+      if (previousFocus?.isConnected && current.dialog.contains(previousFocus)) previousFocus.focus();
+      else current.focusInside();
+    }
   };
 }
 

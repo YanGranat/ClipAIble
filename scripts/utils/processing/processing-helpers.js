@@ -5,7 +5,7 @@
 
 import { log, logError, logWarn } from '../logging.js';
 import { updateState, setError, startProcessing, isCancelled, ERROR_CODES } from '../../state/processing.js';
-import { tSync } from '../../locales.js';
+import { getExportFormatLabelKey, tSync } from '../../locales.js';
 import { getUILanguageCached } from './pipeline-helpers.js';
 import { removeLargeData } from '../storage/storage.js';
 import { validateAudioApiKeys, validateImageTranslation } from '../validation/validation.js';
@@ -315,24 +315,19 @@ function inspectSourcePage(expectedUrl) {
 export async function showQuickSaveNotification(outputFormat, createNotification) {
   try {
     const uiLang = await getUILanguageCached();
-    const formatNames = {
-      'pdf': tSync('saveAsPdf', uiLang),
-      'epub': tSync('saveAsEpub', uiLang),
-      'fb2': tSync('saveAsFb2', uiLang),
-      'markdown': tSync('saveAsMarkdown', uiLang),
-      'audio': tSync('saveAsAudio', uiLang),
-      'docx': tSync('saveAsDocx', uiLang),
-      'html': tSync('saveAsHtml', uiLang),
-      'txt': tSync('saveAsTxt', uiLang)
-    };
-    const formatName = formatNames[outputFormat] || outputFormat.toUpperCase();
-    const notificationMsg = tSync('quickSaveStarted', uiLang).replace('{format}', formatName);
+    const key = getExportFormatLabelKey(outputFormat);
+    const format = outputFormat === 'markdown' ? 'Markdown' : key ? tSync(key, uiLang) : outputFormat.toUpperCase();
+    const notificationMsg = outputFormat === 'audio' ? tSync('quickSaveStartedAudio', uiLang) : tSync('quickSaveStarted', uiLang, { format });
     
     log('Showing quick save notification', { format: outputFormat, message: notificationMsg });
     await createNotification(notificationMsg);
   } catch (error) {
     logError('Failed to show quick save notification', error);
   }
+}
+
+function quickSaveError(key, language) {
+  return Object.assign(new Error(tSync(key, language)), { translationKey: key });
 }
 
 /**
@@ -350,7 +345,7 @@ export async function extractPageContent(tabId = null) {
       tab = await chrome.tabs.get(tabId);
     } catch (error) {
       logError('Failed to get tab by ID', { tabId, error });
-      throw new Error(tSync('errorNoActiveTab', uiLang));
+      throw quickSaveError('errorNoActiveTab', uiLang);
     }
   } else {
     // Fallback: use active tab (for popup usage)
@@ -359,7 +354,7 @@ export async function extractPageContent(tabId = null) {
   }
   
   if (!tab || !tab.id) {
-    throw new Error(tSync('errorNoActiveTab', uiLang));
+    throw quickSaveError('errorNoActiveTab', uiLang);
   }
   
   // CRITICAL: Validate URL - block browser internal pages
@@ -369,7 +364,7 @@ export async function extractPageContent(tabId = null) {
       tabUrl.startsWith('edge://') || 
       tabUrl.startsWith('about:') ||
       tabUrl.startsWith('moz-extension://')) {
-    throw new Error(tSync('errorPageNotReady', uiLang) + ': Cannot extract content from browser internal pages');
+    throw quickSaveError('pageNotAccessible', uiLang);
   }
   
   // Check if this is a PDF page (Chrome PDF viewer)
@@ -403,7 +398,7 @@ export async function extractPageContent(tabId = null) {
     await chrome.tabs.get(tab.id);
   } catch (tabError) {
     logError('Tab was closed before script execution', { tabId: tab.id, error: tabError });
-    throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
+    throw quickSaveError('errorTabClosedDuringProcessing', uiLang);
   }
   
   let htmlResult;
@@ -417,22 +412,17 @@ export async function extractPageContent(tabId = null) {
       })
     });
   } catch (scriptError) {
-    // Check if error is due to tab being closed or invalid URL
-    if (chrome.runtime.lastError) {
-      const lastError = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
-      if (lastError.includes('No tab with id') || 
-          lastError.includes('tab was closed') || 
-          lastError.includes('Invalid tab ID') ||
-          lastError.includes('Cannot access')) {
-        throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
-      }
-    }
     logError('Script execution failed in extractPageContent', { tabId: tab.id, error: scriptError });
-    throw new Error(tSync('errorExtractPageContentFailed', uiLang) + ': ' + (scriptError.message || 'Unknown error'));
+    const details = chrome.runtime.lastError?.message || scriptError?.message || '';
+    if (/no tab with id|tab was closed|invalid tab id/i.test(details)) {
+      throw quickSaveError('errorTabClosedDuringProcessing', uiLang);
+    }
+    if (/cannot access/i.test(details)) throw quickSaveError('pageNotAccessible', uiLang);
+    throw quickSaveError('errorExtractPageContentFailed', uiLang);
   }
   
   if (!htmlResult || !htmlResult[0]?.result) {
-    throw new Error(tSync('errorExtractPageContentFailed', uiLang));
+    throw quickSaveError('errorExtractPageContentFailed', uiLang);
   }
   
   return { ...htmlResult[0].result, tabId: tab.id };
@@ -455,7 +445,7 @@ export async function prepareQuickSaveProcessingData(outputFormat, pageData) {
   } catch (storageError) {
     logError('Failed to load settings from storage for quick save', storageError);
     const uiLang = await getUILanguageCached();
-    throw new Error(tSync('errorValidation', uiLang) + ': Failed to access storage. Please try again.');
+    throw quickSaveError('errorValidation', uiLang);
   }
   
   // Validate that we got settings object
@@ -509,7 +499,7 @@ export async function handleQuickSaveError(error, createNotification) {
     } else if (error.message && error.message.includes('No API key')) {
       errorMsg = tSync('errorQuickSaveNoKey', uiLang);
     } else {
-      errorMsg = error.message || tSync('errorValidation', uiLang);
+      errorMsg = tSync('errorUnknown', uiLang);
     }
     await createNotification(errorMsg);
   } catch (notifError) {

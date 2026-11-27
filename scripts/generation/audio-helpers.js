@@ -2,27 +2,15 @@
 // Helper functions for audio generation module
 // Extracted to reduce complexity and improve maintainability
 
+import { renderPrompt } from '../settings/prompt-catalog.js';
+import { LANGUAGE_NAMES } from '../utils/config.js';
 import { log, logDebug } from '../utils/logging.js';
 import { AUDIO_CONFIG } from './audio-prep.js';
+import { isLocalSpeechProvider } from '../api/supertonic-config.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
-import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint, resolveGoogleTtsSelection } from '../api/tts-catalog.js';
+import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint, resolveGoogleTtsSelection, resolveOpenRouterTtsSelection } from '../api/tts-catalog.js';
 import { validateOpenAiVoice } from '../api/openai-tts.js';
-
-// Language to TTS instruction mapping
-const LANGUAGE_TTS_INSTRUCTIONS = {
-  'en': 'Read in clear English with natural pronunciation.',
-  'ru': 'Читай на русском языке с естественным произношением.',
-  'ua': 'Читай українською мовою з природною вимовою.',
-  'de': 'Lies auf Deutsch mit natürlicher Aussprache vor.',
-  'fr': 'Lis en français avec une prononciation naturelle.',
-  'es': 'Lee en español con pronunciación natural.',
-  'it': 'Leggi in italiano con pronuncia naturale.',
-  'pt': 'Leia em português com pronúncia natural.',
-  'zh': '用自然的中文发音朗读。',
-  'ja': '自然な日本語の発音で読んでください。',
-  'ko': '자연스러운 한국어 발음으로 읽어주세요.'
-};
 
 /**
  * Build settings object for logging
@@ -116,22 +104,17 @@ export function buildAudioSettings(params) {
  * @param {Partial<import('../types.js').AudioGenerationData>} params - Generation parameters
  * @param {string} provider - TTS provider
  * @throws {Error} If content is empty
- * @throws {Error} If API key is missing
  * @throws {Error} If TTS API key is missing for non-offline provider
  */
 export async function validateAudioParams(params, provider) {
-  const { content, apiKey, ttsApiKey } = params;
+  const { content, ttsApiKey } = params;
   const uiLang = await getUILanguageCached();
 
   if (!content || content.length === 0) {
     throw new Error(tSync('errorNoContentToConvert', uiLang));
   }
 
-  if (!apiKey && provider !== 'offline') {
-    throw new Error(tSync('errorNoApiKeyForTextPrep', uiLang));
-  }
-
-  if (!ttsApiKey && provider !== 'offline') {
+  if (!ttsApiKey && !isLocalSpeechProvider(provider)) {
     const providerName = getProviderName(provider);
     throw new Error(tSync('errorNoTtsApiKey', uiLang).replace('{provider}', providerName));
   }
@@ -140,6 +123,7 @@ export async function validateAudioParams(params, provider) {
   }
   if (provider === 'openai') validateOpenAiVoice(params.voice, uiLang);
   if (provider === 'google') resolveGoogleTtsSelection(params.googleTtsModel, params.googleTtsVoice);
+  if (provider === 'openrouter') resolveOpenRouterTtsSelection(params.openrouterTtsModel, params.openrouterTtsVoice);
 }
 
 /**
@@ -147,8 +131,9 @@ export async function validateAudioParams(params, provider) {
  * @param {string} language - Language code
  * @returns {string|null} TTS instructions or null
  */
-export function getTTSInstructions(language) {
-  return language !== 'auto' ? LANGUAGE_TTS_INSTRUCTIONS[language] : null;
+export function getTTSInstructions(language, options = {}) {
+  const targetLanguage = Object.hasOwn(LANGUAGE_NAMES, language) ? LANGUAGE_NAMES[language] : null;
+  return targetLanguage ? renderPrompt('narrationLanguage', options, { targetLanguage }) : null;
 }
 
 /**
@@ -157,12 +142,13 @@ export function getTTSInstructions(language) {
  * @param {string} voice - Default voice
  * @param {string} format - Default format
  * @param {string} googleTtsVoice - Google TTS voice (if applicable)
+ * @param {string} [openrouterTtsVoice] - OpenRouter speech voice
  * @returns {{ttsVoice: string, ttsFormat: string}} TTS voice and format
  */
-export function getTTSVoiceAndFormat(provider, voice, format, googleTtsVoice) {
-  const ttsVoice = provider === 'google' ? googleTtsVoice : voice;
+export function getTTSVoiceAndFormat(provider, voice, format, googleTtsVoice, openrouterTtsVoice) {
+  const ttsVoice = provider === 'google' ? googleTtsVoice : provider === 'openrouter' ? openrouterTtsVoice : voice;
   // PCM providers return a WAVE container.
-  const ttsFormat = ['openai', 'google', 'offline'].includes(provider) ? 'wav' : format;
+  const ttsFormat = (isLocalSpeechProvider(provider) || ['openai', 'google', 'openrouter'].includes(provider)) ? 'wav' : format;
   return { ttsVoice, ttsFormat };
 }
 
@@ -174,9 +160,11 @@ export function getTTSVoiceAndFormat(provider, voice, format, googleTtsVoice) {
 export function getProviderName(provider) {
   const names = {
     'offline': 'Piper TTS (offline)',
+    'supertonic': 'Supertonic 3',
     'elevenlabs': 'ElevenLabs',
     'qwen': 'Qwen',
     'google': 'Google Gemini TTS',
+    'openrouter': 'OpenRouter',
     'respeecher': 'Respeecher',
     'openai': 'OpenAI'
   };
@@ -204,6 +192,9 @@ export function buildTTSOptions(params, ttsVoice, ttsFormat, ttsPrompt, instruct
     elevenlabsStyle,
     elevenlabsSpeakerBoost,
     googleTtsModel,
+    openrouterTtsModel,
+    openrouterTtsVoice,
+    openrouterTtsOptions,
     qwenModel,
     qwenWorkspaceId,
     qwenRegion,
@@ -217,6 +208,7 @@ export function buildTTSOptions(params, ttsVoice, ttsFormat, ttsPrompt, instruct
   return {
     provider,
     ...(params.processingRunId === undefined ? {} : { processingRunId: params.processingRunId }),
+    ...(provider === 'openai' && params.aiRequestOptions?.promptOverrides ? { promptOverrides: params.aiRequestOptions.promptOverrides } : {}),
     voice: ttsVoice,
     speed,
     format: ttsFormat,
@@ -231,6 +223,9 @@ export function buildTTSOptions(params, ttsVoice, ttsFormat, ttsPrompt, instruct
     elevenlabsStyle,
     elevenlabsSpeakerBoost,
     googleTtsModel,
+    openrouterTtsModel,
+    openrouterTtsVoice,
+    openrouterTtsOptions,
     qwenModel,
     qwenWorkspaceId,
     qwenRegion,
@@ -263,7 +258,7 @@ export function logAudioGenerationStart(entryTime, params, allSettings) {
 
   log('[ClipAIble Audio Generation] Parameters extracted with all settings', allSettings);
 
-  const instructions = getTTSInstructions(params.language || 'auto');
+  const instructions = getTTSInstructions(params.language || 'auto', params.aiRequestOptions);
   log('[ClipAIble Audio Generation] Starting audio generation', {
     timestamp: Date.now(),
     title: params.title,

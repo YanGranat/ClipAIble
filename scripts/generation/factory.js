@@ -14,7 +14,7 @@ import { log, logError, logDebug } from '../utils/logging.js';
 import { TTSApiKeyManager } from '../utils/api-key-manager.js';
 import { VoiceValidator } from '../utils/voice-validator.js';
 import { CONFIG } from '../utils/config.js';
-import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_QWEN_TTS_MODEL, getDefaultTtsVoice } from '../api/tts-catalog.js';
+import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_QWEN_TTS_MODEL, getDefaultTtsVoice, resolveOpenRouterTtsSelection } from '../api/tts-catalog.js';
 
 /**
  * @typedef {import('../types.js').GenerationData} GenerationData
@@ -235,6 +235,8 @@ export class DocumentGeneratorFactory {
       willBePassedToGenerateAudio: true
     });
     
+    const openRouterSpeech = ttsProvider === 'openrouter'
+      ? resolveOpenRouterTtsSelection(data.openrouterTtsModel, data.openrouterTtsVoice) : null;
     /** @type {AudioGenerationData} */
     const audioParams = {
       aiRequestOptions: getAIRequestOptions(data),
@@ -250,7 +252,8 @@ export class DocumentGeneratorFactory {
         ttsProvider,
         data.audioVoice,
         data.googleTtsVoice,
-        getDefaultTtsVoice(ttsProvider, data.qwenModel)
+        getDefaultTtsVoice(ttsProvider, data.qwenModel),
+        openRouterSpeech?.voice
       ),
       speed: data.audioSpeed || CONFIG.DEFAULT_AUDIO_SPEED,
       format: data.audioFormat || CONFIG.DEFAULT_AUDIO_FORMAT,
@@ -264,6 +267,9 @@ export class DocumentGeneratorFactory {
       elevenlabsSpeakerBoost: data.elevenlabsSpeakerBoost !== undefined ? data.elevenlabsSpeakerBoost : true,
       openaiInstructions: data.openaiInstructions || null,
       googleTtsModel: data.googleTtsModel || DEFAULT_GOOGLE_TTS_MODEL,
+      openrouterTtsModel: openRouterSpeech?.model,
+      openrouterTtsVoice: openRouterSpeech?.voice,
+      openrouterTtsOptions: openRouterSpeech ? data.openrouterTtsOptions : undefined,
       qwenModel: data.qwenModel || DEFAULT_QWEN_TTS_MODEL,
       qwenWorkspaceId: data.qwenWorkspaceId || '',
       qwenRegion: data.qwenRegion || 'singapore',

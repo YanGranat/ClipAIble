@@ -3,11 +3,11 @@ import { isValidProcessingRunId, getProcessingPhase } from '../../scripts/state/
 // Processing module
 // Handles PDF saving, cancellation, and content extraction
 
-import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_ELEVENLABS_TTS_MODEL, DEFAULT_QWEN_TTS_MODEL, getDefaultTtsVoice } from '../../scripts/api/tts-catalog.js';
+import { DEFAULT_ELEVENLABS_TTS_MODEL } from '../../scripts/api/tts-catalog.js';
 import { getUILanguage, t, tSync } from '../../scripts/locales.js';
 import { getUserFriendlyError, getUserFriendlyErrorDescriptor, createUserFriendlyError } from '../../scripts/utils/error-messages.js';
-import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, readGeminiImageModel, supportsImageTranslation } from '../../scripts/api/image-translation-catalog.js';
-import { isProviderModelReady, resolveProviderApiKey, readApiKeyDraft } from '../utils/settings-helpers.js';
+import { getExportPageIssue, getExportSelectionIssue, inspectExportRequirements, readExportOptions } from './export-readiness.js';
+import { readOpenRouterSpeechControls } from '../settings/openrouter-speech.js';
 
 /**
  * Initialize processing module
@@ -27,6 +27,8 @@ import { isProviderModelReady, resolveProviderApiKey, readApiKeyDraft } from '..
  * @param {() => Promise<import('../../scripts/state/processing-messages.js').ProcessingSnapshot|void>} deps.checkProcessingState - Read the current worker state
  * @param {() => string|null} [deps.getPresentedProcessingRunId] - Running task currently displayed
  * @param {(runId: string) => void} [deps.noteProcessingAdmission] - Discard popup observations made before admission
+ * @param {() => void} [deps.notePreparation] - Own popup status until worker admission
+ * @param {(failed: boolean) => void} [deps.finishPreparation] - Return status ownership after a local attempt
  * @param {Object} deps.stateRefs - State references object
  * @param {import('../../scripts/types.js').SettingsModule} [deps.settingsModule] - Settings module (optional, for getVoiceIdByIndex)
  * @returns {Object} Processing functions (handleSavePdf, handleCancel, handleGenerateSummary, etc.)
@@ -49,19 +51,11 @@ export function initProcessing(deps) {
     checkProcessingState,
     getPresentedProcessingRunId = () => null,
     noteProcessingAdmission,
+    notePreparation,
+    finishPreparation,
     stateRefs,
     settingsModule
   } = deps;
-
-  async function readStoredApiKey(storageKey) {
-    try {
-      const saved = await chrome.storage.local.get([storageKey]);
-      return typeof saved[storageKey] === 'string' ? saved[storageKey] : '';
-    } catch (error) {
-      logError('Failed to read a saved API key', error);
-      throw Object.assign(new Error(await t('errorApiKeyRead')), { translationKey: 'errorApiKeyRead', translationParams: {} });
-    }
-  }
 
   let cancellingRunId = null;
 
@@ -268,7 +262,7 @@ export function initProcessing(deps) {
 
   function sourcePageChanged() {
     return Object.assign(new Error('The page changed before its content could be captured.'), {
-      translationKey: 'errorPageNotReady', translationParams: {}
+      translationKey: 'errorSourcePageChanged', translationParams: {}
     });
   }
 
@@ -284,87 +278,42 @@ export function initProcessing(deps) {
           textContent: option.textContent, dataset: { ...option.dataset }, disabled: option.disabled ||
             (option.parentElement?.tagName === 'OPTGROUP' && /** @type {HTMLOptGroupElement} */ (option.parentElement).disabled) })) : [] }];
     }));
-    const voiceIdByIndex = settings.audioVoice && /^\d+$/.test(settings.audioVoice.value)
-      ? settingsModule?.getVoiceIdByIndex?.(settings.audioProvider?.value || 'openai', settings.audioVoice.selectedIndex) : null;
+    const options = readExportOptions(settings, getProviderFromModel, settingsModule?.getVoiceIdByIndex);
+    const { provider, model, mode, outputFormat, language, generateAbstract, translateImages,
+      imageTranslationProvider, geminiImageModel, audioProvider, audioVoice } = options;
+    const openrouterTtsOptions = outputFormat === 'audio' && audioProvider === 'openrouter'
+      ? readOpenRouterSpeechControls(elements, options.openrouterTtsModel, options.openrouterTtsVoice) : undefined;
     let preparing = false;
     let admitted = false;
     let observingExistingRun = false;
-    let failed = false;
-    log('=== handleSavePdf: ENTRY ===', {
-      timestamp: Date.now()
-    });
-    
-    const visibleModel = elements.modelSelect ? /** @type {HTMLSelectElement} */ (elements.modelSelect).value : '';
-    // Use selected provider from dropdown, fallback to model-based detection for backward compatibility
-    const provider = elements.apiProviderSelect ? /** @type {HTMLSelectElement} */ (elements.apiProviderSelect).value : getProviderFromModel(visibleModel);
-    const mode = elements.modeSelect?.value || '';
-    const outputFormat = elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf';
-    const language = elements.languageSelect?.value || 'auto';
-    const generateAbstract = Boolean(elements.generateAbstract?.checked);
-    const audioProvider = elements.audioProvider?.value || 'openai';
-    const selectedVoice = settings.audioVoice?.options[settings.audioVoice.selectedIndex];
-    if (outputFormat === 'audio' && settings.audioVoice &&
-        ((settings.audioVoice.dataset.provider && settings.audioVoice.dataset.provider !== audioProvider) || selectedVoice?.disabled)) {
-      showToast(await t('selectNarratorVoice'), 'error', { key: 'selectNarratorVoice' });
-      return;
-    }
-    const modelReady = isProviderModelReady(elements.modelSelect, provider);
-    const modelRequired = mode !== 'automatic' || language !== 'auto' ||
-      (outputFormat === 'audio' ? audioProvider !== 'offline' : generateAbstract);
-    if (!modelReady && modelRequired) {
-      showToast(await t('errorProviderModelsLoading'), 'error', { key: 'errorProviderModelsLoading' });
-      return;
-    }
-    const model = modelReady ? visibleModel : '';
-    const apiKeyOwner = elements.apiKey?.dataset.provider;
-    const imageTranslationProvider = elements.imageTranslationProvider?.value || DEFAULT_IMAGE_TRANSLATION_PROVIDER;
-    const geminiImageModel = readGeminiImageModel(elements.geminiImageModel?.value);
-    
-    log('=== handleSavePdf: Got model and provider ===', {
-      model: model,
-      provider: provider,
-      timestamp: Date.now()
-    });
-    
+    let failureShown = false;
+    notePreparation?.();
+    setStatus('pending', tSync('stageStarting', 'en'), undefined, { key: 'stageStarting' });
+    if (elements.savePdfBtn) /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = true;
+
     try {
       const currentProvider = () => attempt === latestSaveAttempt && (!elements.apiProviderSelect || elements.apiProviderSelect.value === provider);
+      const failIf = async issue => {
+        if (issue) throw Object.assign(new Error(await t(issue.key, undefined, issue.params)), {
+          translationKey: issue.key, translationParams: issue.params || {}
+        });
+      };
+      const selectionIssue = getExportSelectionIssue(options);
+      if (selectionIssue) await failIf(selectionIssue);
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!currentProvider()) return;
-      const apiKey = modelReady ? await resolveProviderApiKey(settings.apiKey, provider, decryptApiKey, t) : '';
+      const pageIssue = getExportPageIssue(tab);
+      if (pageIssue) await failIf(pageIssue);
+      const { issue, apiKey, imageApiKey, openrouterTtsApiKey, audioPreparationPrompt } =
+        await inspectExportRequirements(options, settings, decryptApiKey, t, tab.url);
       if (!currentProvider()) return;
-      // Check API key only if not using automatic mode
-      if (mode !== 'automatic' && !apiKey) {
-        const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
-        showToast(await t(`pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey`, undefined), 'error', { key: `pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey` });
-        return;
-      }
+      if (issue) await failIf(issue);
 
-      if (!tab) {
-        // Use user-friendly error message directly
-        const friendly = await createUserFriendlyError('tabNotFound', {});
-        throw Object.assign(new Error(friendly.message), friendly);
-      }
-      
       log('=== handleSavePdf: Tab found (at button click moment) ===', {
         tabId: tab.id,
         url: tab.url,
         status: tab.status,
         title: tab.title,
-        timestamp: Date.now()
-      });
-      
-      // Check if we can inject scripts on this page
-      // Use tab.url for initial check, but we'll verify with actual pageData.url later
-      if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) {
-        log('handleSavePdf: pageNotReady - tab URL is restricted', { tabUrl: tab.url });
-        const friendly = await createUserFriendlyError('pageNotReady', {
-          blockedPage: true,
-          error: { message: 'Cannot extract content from browser internal pages' }
-        });
-        throw Object.assign(new Error(friendly.message), friendly);
-      }
-
-      log('=== handleSavePdf: Setting status and disabling button ===', {
         timestamp: Date.now()
       });
       
@@ -570,28 +519,6 @@ export function initProcessing(deps) {
         throw sourcePageChanged();
       }
 
-      // Get Google API key if needed
-      let googleApiKey = settings.googleApiKey?.value.trim() || '';
-      // If masked, decrypt the encrypted version from dataset
-      if (googleApiKey.startsWith('****') && settings.googleApiKey?.dataset.encrypted) {
-        try {
-          googleApiKey = await decryptApiKey(settings.googleApiKey.dataset.encrypted, 'google');
-        } catch (error) {
-          logError('Failed to decrypt Google API key', error);
-          // Continue without Google API key if decryption fails
-          googleApiKey = '';
-        }
-      }
-      const translateImages = Boolean(settings.translateImages?.checked && language !== 'auto' && supportsImageTranslation(outputFormat));
-      let imageApiKey = translateImages ? googleApiKey : '';
-      if (translateImages && imageTranslationProvider === 'openai') {
-        const ownsOpenAiDraft = provider === 'openai' && apiKeyOwner === 'openai';
-        if (ownsOpenAiDraft) imageApiKey = apiKey;
-        else {
-          imageApiKey = await readStoredApiKey('openai_api_key');
-        }
-      }
-
       log('=== handleSavePdf: About to send processArticle message ===', {
         mode,
         outputFormat,
@@ -610,9 +537,10 @@ export function initProcessing(deps) {
           title: pageData.title || tab.title,
           apiKey: apiKey,
           provider: provider,
-          googleApiKey: googleApiKey,
+          googleApiKey: imageTranslationProvider === 'gemini' ? imageApiKey : '',
           imageTranslationProvider,
           ...(translateImages && imageTranslationProvider === 'gemini' ? { geminiImageModel } : {}),
+          ...(translateImages && imageTranslationProvider === 'openrouter' ? { openrouterImageModel: options.openrouterImageModel } : {}),
           imageApiKey,
           model: model,
           mode,
@@ -634,117 +562,11 @@ export function initProcessing(deps) {
           // Narration settings are used only for audio exports.
           ...(outputFormat === 'audio' ? {
           audioProvider,
-          // CRITICAL: Get actual voice ID, not index
-          // If audioVoice.value is a number (index), get the actual value from options
-          audioVoice: (() => {
-            const provider = audioProvider;
-            if (!settings.audioVoice) {
-              logWarn('[ClipAIble Processing] ===== NO AUDIO VOICE ELEMENT =====', {
-                timestamp: Date.now(),
-                provider,
-                willUseDefault: getDefaultTtsVoice('openai')
-              });
-              return getDefaultTtsVoice('openai');
-            }
-            const audioVoiceEl = settings.audioVoice;
-            const voiceValue = audioVoiceEl.value;
-            const selectedIndex = audioVoiceEl.selectedIndex;
-            const selectedOption = audioVoiceEl.options[selectedIndex];
-            
-            // DETAILED LOGGING: Voice value before processing
-            log('[ClipAIble Processing] ===== EXTRACTING VOICE FROM UI =====', {
-              timestamp: Date.now(),
-              provider,
-              voiceValue,
-              voiceValueType: typeof voiceValue,
-              selectedIndex,
-              selectedOptionValue: selectedOption?.value,
-              selectedOptionText: selectedOption?.textContent,
-              datasetVoiceId: selectedOption?.dataset?.voiceId,
-              isNumericIndex: /^\d+$/.test(String(voiceValue)),
-              optionsCount: audioVoiceEl.options.length
-            });
-            
-            // CRITICAL: Get voice ID from dataset.voiceId first (most reliable), then option.value
-            // This ensures we always get the actual voice ID, not an index
-            let finalVoice = null;
-            
-            if (selectedOption) {
-              // Priority 1: dataset.voiceId (most reliable - always contains actual voice ID)
-              if (selectedOption.dataset && selectedOption.dataset.voiceId) {
-                finalVoice = selectedOption.dataset.voiceId;
-                log('[ClipAIble Processing] ===== USING dataset.voiceId =====', {
-                  timestamp: Date.now(),
-                  provider,
-                  datasetVoiceId: finalVoice,
-                  VOICE_STRING: `VOICE="${finalVoice}"`,
-                  isValidFormat: finalVoice.includes('_') || finalVoice.includes('-') || provider !== 'offline'
-                });
-              }
-              // Priority 2: option.value (if not an index)
-              else if (selectedOption.value && !/^\d+$/.test(String(selectedOption.value))) {
-                finalVoice = selectedOption.value;
-                log('[ClipAIble Processing] ===== USING option.value =====', {
-                  timestamp: Date.now(),
-                  provider,
-                  optionValue: finalVoice,
-                  VOICE_STRING: `VOICE="${finalVoice}"`,
-                  isValidFormat: finalVoice.includes('_') || finalVoice.includes('-') || provider !== 'offline'
-                });
-              }
-              // Priority 3: Use getVoiceIdByIndex if value is an index
-              else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && settingsModule && settingsModule.getVoiceIdByIndex) {
-                const voiceIdFromCache = voiceIdByIndex;
-                if (voiceIdFromCache && (voiceIdFromCache.includes('_') || voiceIdFromCache.includes('-') || provider !== 'offline')) {
-                  finalVoice = voiceIdFromCache;
-                  log('[ClipAIble Processing] ===== USING getVoiceIdByIndex =====', {
-                    timestamp: Date.now(),
-                    provider,
-                    selectedIndex,
-                    voiceIdFromCache: finalVoice,
-                    VOICE_STRING: `VOICE="${finalVoice}"`,
-                    isValidFormat: true
-                  });
-                }
-              }
-            }
-            
-            // Fallback: if still no valid voice, use voiceValue if it's valid
-            if (!finalVoice && voiceValue && !/^\d+$/.test(String(voiceValue))) {
-              finalVoice = voiceValue;
-              log('[ClipAIble Processing] ===== USING voiceValue as fallback =====', {
-                timestamp: Date.now(),
-                provider,
-                voiceValue: finalVoice,
-                VOICE_STRING: `VOICE="${finalVoice}"`
-              });
-            }
-            
-            // Final fallback: use default
-            if (!finalVoice) {
-              finalVoice = getDefaultTtsVoice(provider, settings.qwenModel?.value);
-              logWarn('[ClipAIble Processing] ===== USING DEFAULT VOICE =====', {
-                timestamp: Date.now(),
-                provider,
-                defaultVoice: finalVoice,
-                VOICE_STRING: `VOICE="${finalVoice}"`,
-                reason: 'No valid voice found in UI'
-              });
-            }
-            
-            log('[ClipAIble Processing] ===== VOICE EXTRACTED FROM UI =====', {
-              timestamp: Date.now(),
-              provider,
-              finalVoice,
-              VOICE_STRING: `VOICE="${finalVoice}"`, // Explicit string for visibility
-              isValidFormat: finalVoice.includes('_') || finalVoice.includes('-') || provider !== 'offline',
-              willSendToBackground: true
-            });
-            return finalVoice;
-          })(),
+          audioPreparationPrompt,
+          audioVoice,
           audioSpeed: parseFloat(settings.audioSpeed ? settings.audioSpeed.value : '1.0'),
           audioFormat: 'mp3',
-          elevenlabsApiKey: readApiKeyDraft(settings.elevenlabsApiKey),
+          elevenlabsApiKey: options.elevenlabsApiKey,
           elevenlabsModel: settings.elevenlabsModel ? settings.elevenlabsModel.value : DEFAULT_ELEVENLABS_TTS_MODEL,
           elevenlabsFormat: settings.elevenlabsFormat ? settings.elevenlabsFormat.value : 'mp3_44100_192',
           elevenlabsStability: settings.elevenlabsStability ? parseFloat(settings.elevenlabsStability.value) : 0.5,
@@ -752,18 +574,24 @@ export function initProcessing(deps) {
           elevenlabsStyle: settings.elevenlabsStyle ? parseFloat(settings.elevenlabsStyle.value) : 0.0,
           elevenlabsSpeakerBoost: settings.elevenlabsSpeakerBoost ? settings.elevenlabsSpeakerBoost.checked : true,
           openaiInstructions: settings.openaiInstructions ? settings.openaiInstructions.value.trim() : null,
-          googleTtsModel: settings.googleTtsModel ? settings.googleTtsModel.value : DEFAULT_GOOGLE_TTS_MODEL,
-          googleTtsVoice: settings.googleTtsVoice ? settings.googleTtsVoice.value : 'Callirrhoe',
+          ...(audioProvider === 'openrouter' ? {
+            openrouterTtsApiKey,
+            openrouterTtsModel: options.openrouterTtsModel,
+            openrouterTtsVoice: options.openrouterTtsVoice,
+            openrouterTtsOptions
+          } : {}),
+          googleTtsModel: options.googleTtsModel,
+          googleTtsVoice: options.googleTtsVoice,
           googleTtsPrompt: settings.googleTtsPrompt ? settings.googleTtsPrompt.value.trim() : null,
           respeecherTemperature: settings.respeecherTemperature ? parseFloat(settings.respeecherTemperature.value) : 1.0,
           respeecherRepetitionPenalty: settings.respeecherRepetitionPenalty ? parseFloat(settings.respeecherRepetitionPenalty.value) : 1.0,
           respeecherTopP: settings.respeecherTopP ? parseFloat(settings.respeecherTopP.value) : 1.0,
-          googleTtsApiKey: readApiKeyDraft(settings.googleTtsApiKey),
-          qwenApiKey: readApiKeyDraft(settings.qwenApiKey),
-          qwenModel: settings.qwenModel?.value || DEFAULT_QWEN_TTS_MODEL,
-          qwenWorkspaceId: settings.qwenWorkspaceId?.value.trim() || '',
-          qwenRegion: settings.qwenRegion?.value || 'singapore',
-          respeecherApiKey: readApiKeyDraft(settings.respeecherApiKey)
+          googleTtsApiKey: options.googleTtsApiKey,
+          qwenApiKey: options.qwenApiKey,
+          qwenModel: options.qwenModel,
+          qwenWorkspaceId: options.qwenWorkspaceId,
+          qwenRegion: options.qwenRegion,
+          respeecherApiKey: options.respeecherApiKey
           } : {})
         }
       });
@@ -859,7 +687,6 @@ export function initProcessing(deps) {
       }
 
     } catch (error) {
-      failed = true;
       if (attempt !== latestSaveAttempt || (elements.apiProviderSelect && elements.apiProviderSelect.value !== provider)) return;
       if (observingExistingRun || admitted) {
         logWarn('Failed to read an active processing operation', { error: error?.message });
@@ -889,6 +716,7 @@ export function initProcessing(deps) {
         if (attempt !== latestSaveAttempt) return;
         
         const translation = getUserFriendlyErrorDescriptor(errorType, { error });
+        failureShown = true;
         setStatus('error', userFriendlyMessage, undefined, translation);
         showToast(userFriendlyMessage, 'error', translation);
       } catch (errorHandlingError) {
@@ -896,14 +724,16 @@ export function initProcessing(deps) {
         logError('Failed to generate user-friendly error message', errorHandlingError);
         const fallbackMessage = error?.message || await t('errorUnknown', undefined);
         if (attempt !== latestSaveAttempt) return;
+        failureShown = true;
         setStatus('error', fallbackMessage, undefined);
         showToast(fallbackMessage, 'error');
       }
       
     } finally {
+      if (attempt === latestSaveAttempt && !admitted) finishPreparation?.(failureShown);
       if (!admitted && !observingExistingRun && attempt === latestSaveAttempt) {
         if (elements.savePdfBtn) /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = false;
-        if (preparing && !failed) {
+        if (preparing && !failureShown && !finishPreparation) {
           const readyText = await t('ready');
           if (attempt === latestSaveAttempt) {
             setStatus('ready', readyText, undefined, { key: 'ready' });

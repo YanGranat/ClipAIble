@@ -4,6 +4,16 @@
 // @ts-check
 
 /**
+ * @param {HTMLInputElement} input
+ * @param {HTMLElement | null | undefined} toggleButton
+ * @param {boolean} visible
+ */
+export function setApiKeyVisibility(input, toggleButton, visible) {
+  input.type = visible ? 'text' : 'password';
+  toggleButton?.setAttribute('aria-pressed', String(visible));
+}
+
+/**
  * Setup toggle handler for API key input
  * @param {HTMLElement} toggleButton - Toggle button element
  * @param {HTMLInputElement} input - Input element
@@ -70,7 +80,7 @@ export function setupApiKeyToggle(toggleButton, input, decryptApiKey, maskApiKey
         // Key is already visible or not masked
         input.dataset.decrypted = input.value;
       }
-      input.type = 'text';
+      setApiKeyVisibility(input, toggleButton, true);
       if (eyeIcon) {
         eyeIcon.textContent = '🔒';
       }
@@ -87,7 +97,7 @@ export function setupApiKeyToggle(toggleButton, input, decryptApiKey, maskApiKey
         // Fallback: mask current value if no decrypted value available
         input.value = maskApiKey(input.value);
       }
-      input.type = 'password';
+      setApiKeyVisibility(input, toggleButton, false);
       if (eyeIcon) {
         eyeIcon.textContent = '👁';
       }

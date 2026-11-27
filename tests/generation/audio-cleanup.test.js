@@ -12,7 +12,7 @@ vi.mock('../../scripts/utils/pipeline-helpers.js', async importOriginal => ({
 }));
 
 const original = 'Version 3.14 has 27 components. Every component retains its original purpose. Don’t remove these facts.';
-const narration = "Version 3.14 has 27 components. Every component retains its original purpose. Don't remove these facts.";
+const narration = original;
 const prepare = options => prepareChunkForAudio(original, 0, 1, 'synthetic-key', 'synthetic-model', 'en', options);
 beforeEach(() => vi.clearAllMocks());
 describe('Narration preparation', () => {
@@ -21,6 +21,11 @@ describe('Narration preparation', () => {
     expect(await prepare()).toBe(narration);
     expect(callAI).toHaveBeenCalledOnce();
   });
+  it('keeps paragraphs and line breaks in the text sent to the narrator', async () => {
+    callAI.mockResolvedValue('Opening  paragraph.\r\n \r\nPart one.\r\n  Part two.\n\n  Closing paragraph.');
+    expect(await prepare()).toBe('Opening  paragraph.\r\n \r\nPart one.\r\n  Part two.\n\n  Closing paragraph.');
+  });
+
   it('retains facts and version numbers when optional cleanup is unavailable', async () => {
     callAI.mockRejectedValue(new TypeError('Network unavailable'));
     expect(await prepare()).toBe(narration);
@@ -28,7 +33,8 @@ describe('Narration preparation', () => {
   it.each([400, 401, 403, 429])('does not continue admission after a terminal HTTP %s error', async status => {
     const failure = Object.assign(new Error('Request rejected'), { status, retryable: false });
     callAI.mockRejectedValue(failure);
-    await expect(prepareContentForAudio([{ type: 'paragraph', format: 'text', text: original.repeat(100) }], '', 'synthetic-key', 'synthetic-model', 'en', undefined, 'openai'))
+    const options = { promptOverrides: { audioPreparation: 'Keep the source text. {{languageInstruction}}' } };
+    await expect(prepareContentForAudio([{ type: 'paragraph', format: 'text', text: original.repeat(100) }], '', 'synthetic-key', 'synthetic-model', 'en', undefined, 'openai', undefined, options))
       .rejects.toBe(failure);
     expect(callAI).toHaveBeenCalledOnce();
   });
@@ -36,5 +42,24 @@ describe('Narration preparation', () => {
     const cancelled = new DOMException('Cancelled', 'AbortError');
     callAI.mockRejectedValue(cancelled);
     await expect(prepare()).rejects.toBe(cancelled);
+  });
+  it.each(['openai', 'google', 'openrouter', 'elevenlabs', 'qwen', 'respeecher', 'offline'])('does not ask a separate model to rewrite narration by default for %s', async provider => {
+    const text = 'Observed (possibly erroneous) readings rose from 0.05% to 0.5%.\nKeep the sign: −2.5 °C.';
+    const chunks = await prepareContentForAudio([{ type: 'paragraph', format: 'text', text }], '', 'synthetic-key', 'synthetic-model', 'en', undefined, provider);
+    expect(chunks).toEqual([{ index: 0, text }]);
+    expect(callAI).not.toHaveBeenCalled();
+  });
+  it('applies a saved custom preparation only for a cloud voice with its own text credentials', async () => {
+    const content = [{ type: 'paragraph', format: 'text', text: original }];
+    const options = { promptOverrides: { audioPreparation: 'Expand the abbreviation only. {{languageInstruction}}' } };
+    callAI.mockResolvedValue('Custom narration.');
+    await expect(prepareContentForAudio(content, '', 'synthetic-key', 'synthetic-model', 'en', undefined, 'offline', undefined, options))
+      .resolves.toEqual([{ index: 0, text: original }]);
+    expect(callAI).not.toHaveBeenCalled();
+    await expect(prepareContentForAudio(content, '', '', 'synthetic-model', 'en', undefined, 'google', undefined, options))
+      .rejects.toMatchObject({ translationKey: 'errorNoApiKey' });
+    await expect(prepareContentForAudio(content, '', 'synthetic-key', 'synthetic-model', 'en', undefined, 'google', undefined, options))
+      .resolves.toEqual([{ index: 0, text: 'Custom narration.' }]);
+    expect(callAI).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('Expand the abbreviation only.'), expect.stringContaining(original), 'synthetic-key', 'synthetic-model', false, options);
   });
 });

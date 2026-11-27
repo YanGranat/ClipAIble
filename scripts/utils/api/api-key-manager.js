@@ -6,6 +6,7 @@
 import { decryptApiKey } from '../security/encryption.js';
 import { getUILanguage, tSync } from '../../locales.js';
 import { log, logError } from '../logging.js';
+import { isLocalSpeechProvider } from '../../api/supertonic-config.js';
 
 /**
  * TTS API key manager
@@ -22,6 +23,7 @@ export class TTSApiKeyManager {
    * @throws {Error} If API key is required but missing or invalid
    */
   static async getDecryptedKey(provider, data) {
+    if (isLocalSpeechProvider(provider)) return null;
     // For OpenAI TTS, get OpenAI key from settings, not from data.apiKey (which may be from another AI provider)
     let openaiKey = null;
     if (provider === 'openai') {
@@ -38,18 +40,13 @@ export class TTSApiKeyManager {
       'qwen': { key: data.qwenApiKey, name: 'Qwen', required: 'errorQwenKeyRequired', invalid: 'errorQwenKeyInvalid' },
       'respeecher': { key: data.respeecherApiKey, name: 'Respeecher', required: 'errorRespeecherKeyRequired', invalid: 'errorRespeecherKeyInvalid' },
       'google': { key: data.googleTtsApiKey, name: 'GoogleTTS' },
-      'openai': { key: openaiKey, name: 'OpenAI' }, // Always use OpenAI key from settings, not data.apiKey
-      'offline': { key: null, name: 'Offline' }
+      'openrouter': { key: data.openrouterTtsApiKey, name: 'OpenRouter' },
+      'openai': { key: openaiKey, name: 'OpenAI' } // Always use OpenAI key from settings, not data.apiKey
     };
     
     const providerConfig = config[provider];
     if (!providerConfig) {
       throw new Error(`Unknown TTS provider: ${provider}`);
-    }
-    
-    // Offline provider doesn't need API key
-    if (provider === 'offline') {
-      return null;
     }
     
     // Check if API key is provided

@@ -5,6 +5,7 @@ import { STORAGE_KEYS } from '../../popup/constants.js';
 import { UI_LOCALES, tSync } from '../../scripts/locales.js';
 import { formatModelLabel, getModelCatalog } from '../../scripts/utils/model-catalog.js';
 import { getOpenAIRequestConfig } from '../../scripts/api/openai.js';
+import { getDeepSeekRequestConfig } from '../../scripts/api/deepseek.js';
 import { getOpenRouterRequestConfig } from '../../scripts/api/openrouter.js';
 
 let dom, elements, models;
@@ -146,7 +147,7 @@ describe('provider reasoning notation in model selection', () => {
     elements.apiProviderSelect.value = 'deepseek';
     await chrome.storage.local.set({ api_provider: 'deepseek' });
     await models.updateModelList();
-    const preset = getModelCatalog('deepseek').find(entry => entry.reasoningEnabled === false);
+    const preset = getModelCatalog('deepseek').find(entry => entry.reasoningEnabled === true);
     expect(preset).toBeTruthy();
     await models.hideDefaultModel(preset.id);
     prompt.mockReturnValue(formatModelLabel('deepseek', preset.id, (key, params) => tSync(key, 'ru', params)));
@@ -156,6 +157,19 @@ describe('provider reasoning notation in model selection', () => {
     expect(saved.custom_models?.deepseek || []).toEqual([]);
     expect(saved.hidden_models.deepseek).not.toContain(preset.id);
     expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('keeps explicitly entered DeepSeek reasoning settings separate from the built-in menu', async () => {
+    elements.apiProviderSelect.value = 'deepseek';
+    await chrome.storage.local.set({ api_provider: 'deepseek' });
+    await models.updateModelList();
+    expect([...elements.modelSelect.options].map(option => option.value)).toEqual(['deepseek-flash']);
+    const custom = 'deepseek-flash (reasoning: none)';
+    prompt.mockReturnValue(custom);
+    await models.showAddModelDialog();
+    expect(elements.modelSelect.value).toBe(custom);
+    expect((await chrome.storage.local.get(null)).custom_models.deepseek).toEqual([custom]);
+    expect(getDeepSeekRequestConfig(custom)).toMatchObject({ model: 'deepseek-flash', thinking: { type: 'disabled' } });
   });
 
   it('rejects a known unsupported level instead of silently changing it', async () => {

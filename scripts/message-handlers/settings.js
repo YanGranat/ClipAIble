@@ -11,7 +11,7 @@ import { withErrorHandling } from './utils.js';
 export function handleExportSettings(request, sender, sendResponse) {
   return withErrorHandling(
     exportSettings(request.includeStats, request.includeCache)
-      .then(jsonData => ({ success: true, data: jsonData })),
+      .then(backup => ({ success: true, ...backup })),
     'settingsExportFailed',
     sendResponse
   );

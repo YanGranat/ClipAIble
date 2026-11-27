@@ -9,6 +9,7 @@
 import { log, logDebug, logError, logWarn } from '../logging.js';
 import { getProcessingState } from '../../state/processing.js';
 import { getInstallationKey } from './key-store.js';
+import { OPENROUTER_KEY_SLOTS, OPENROUTER_KEY_STORAGE_FIELDS, planOpenRouterKeySeparation } from '../storage/openrouter-key-slots.js';
 
 // Cache for encryption key to avoid regenerating
 let cachedEncryptionKey = null;
@@ -29,10 +30,28 @@ export function withApiKeyStorageLock(operation) {
   return navigator.locks.request('clipaible-api-key-storage', operation);
 }
 
+async function readOpenRouterStoragePlan() {
+  const stored = await chrome.storage.local.get(OPENROUTER_KEY_STORAGE_FIELDS);
+  const patch = await planOpenRouterKeySeparation(stored, encryptApiKey);
+  return { stored, patch };
+}
+
+/** Resolve an older profile before displaying media key state. */
+export function readIsolatedOpenRouterKeys() {
+  return withApiKeyStorageLock(async () => {
+    const { stored, patch } = await readOpenRouterStoragePlan();
+    if (Object.keys(patch).length) await chrome.storage.local.set(patch);
+    return { ...stored, ...patch };
+  });
+}
+
 /** Persist validated API key settings without racing startup migration. */
 export function saveApiKeySettings(values, keysToRemove = []) {
   return withApiKeyStorageLock(async () => {
-    if (Object.keys(values).length) await chrome.storage.local.set(values);
+    const touchesOpenRouter = Object.values(OPENROUTER_KEY_SLOTS).some(key => Object.hasOwn(values, key) || keysToRemove.includes(key));
+    const patch = touchesOpenRouter ? (await readOpenRouterStoragePlan()).patch : {};
+    const updates = { ...patch, ...values };
+    if (Object.keys(updates).length) await chrome.storage.local.set(updates);
     if (keysToRemove.length) await chrome.storage.local.remove(keysToRemove);
   });
 }

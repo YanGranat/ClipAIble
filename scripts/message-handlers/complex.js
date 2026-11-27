@@ -1,4 +1,5 @@
 // @ts-check
+import { loadPromptOverrides } from '../settings/prompt-catalog.js';
 // Independent extraction, summary, and key-theses message handlers.
 
 import { log, logError, logWarn } from '../utils/logging.js';
@@ -57,12 +58,16 @@ export function handleExtractContentOnly(request, sender, sendResponse, processW
     throw error;
   };
   let extraction;
+  let prompts;
+  const getPromptOverrides = () => prompts ??= loadPromptOverrides();
   const getContent = () => {
     if (!extraction) extraction = (async () => {
       checkExtraction();
+      const promptOverrides = await getPromptOverrides();
+      checkExtraction();
       /** @type {import('../types.js').ProcessingData} */
       const processingData = {
-        extractionOnly: true, checkCancelled: checkExtraction,
+        extractionOnly: true, checkCancelled: checkExtraction, promptOverrides,
         autoGenerateKeyTheses: Boolean(autoGenerateKeyTheses),
         html: html || '', url, title, apiKey, provider: data.provider ?? getProviderFromModel(model), model,
         mode, useCache, tabId, outputFormat: 'markdown', generateAbstract: false, generateToc: false
@@ -85,7 +90,7 @@ export function handleExtractContentOnly(request, sender, sendResponse, processW
 
   if (autoGenerateSummary || autoGenerateKeyTheses) {
     const generationData = {
-      apiKey, model, provider: data.provider, url, language: language || 'auto', title, getContent,
+      apiKey, model, provider: data.provider, url, language: language || 'auto', title, getContent, getPromptOverrides,
       onAdmitted: (check) => checks.push(check)
     };
     const acknowledge = (response) => respond(response.started

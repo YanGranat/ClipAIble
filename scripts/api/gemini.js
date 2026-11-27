@@ -6,7 +6,7 @@ import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { fetchBufferedResponse } from './fetch-buffered-response.js';
 import { assertCompleteAIResponse } from './response-validation.js';
-import { parseBase64Image } from './image-data.js';
+import { createImageTranslationPrompt, parseBase64Image } from './image-data.js';
 import { callWithRetry } from '../utils/retry.js';
 import { decryptApiKey } from '../utils/encryption.js';
 import { tSync } from '../locales.js';
@@ -237,11 +237,7 @@ export async function translateImageWithGemini(imageBase64, targetLang, googleAp
   const mimeType = matches[1];
   const base64Data = matches[2];
   
-  const prompt = `Translate ALL text visible in this image to ${targetLang}.
-Keep the exact same visual style, fonts, colors, and layout.
-Only change the text content - do not modify anything else in the image.
-Translate text from ANY language to ${targetLang}.
-If there are diagrams, charts, infographics, or labels - translate those too.`;
+  const prompt = createImageTranslationPrompt(targetLang, requestOptions);
 
   try {
     // Wrap fetch with retry mechanism for reliability (429/5xx errors)

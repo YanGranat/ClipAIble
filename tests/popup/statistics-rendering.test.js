@@ -1,16 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { getSafeHistoryUrl, initStats } from '../../popup/stats.js';
-import { loadStats } from '../../scripts/stats/index.js';
+import { loadStats, recordSave } from '../../scripts/stats/index.js';
+import { getUILanguage } from '../../scripts/locales.js';
 import { handleDeleteHistoryItem } from '../../scripts/message-handlers/stats.js';
 
-vi.mock('../../scripts/locales.js', async importOriginal => ({ ...(await importOriginal()), getUILanguage: async () => 'en' }));
+vi.mock('../../scripts/locales.js', async importOriginal => ({ ...(await importOriginal()), getUILanguage: vi.fn(async () => 'en') }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 
 describe('statistics rendering', () => {
   let dom;
 
   beforeEach(() => {
+    getUILanguage.mockResolvedValue('en');
     dom = new JSDOM('<section id="statsPanel"><div id="statTotal">—</div><section><h3 class="stats-section-title">Recent history</h3><div id="statsHistory"></div></section><div id="cacheDomainsList"></div></section>');
     vi.stubGlobal('window', dom.window);
     vi.stubGlobal('document', dom.window.document);
@@ -37,6 +39,20 @@ describe('statistics rendering', () => {
     expect(history.textContent).toContain('<img');
     expect(history.querySelector('a').getAttribute('href')).toBe('#');
     expect(history.querySelector('button').dataset.index).toBe('1');
+  });
+
+  it('localizes a missing title and format without rewriting user content', async () => {
+    getUILanguage.mockResolvedValue('ua');
+    await chrome.storage.local.set({ extension_stats: { history: [], totalSaved: 0 } });
+    await recordSave({ title: '   ', url: 'https://example.org/survey', format: 'audio' });
+    const saved = await loadStats();
+    expect(saved.history[0].title).toBe('');
+    const stats = initStats({ showToast: vi.fn() });
+    await stats.displayStats({ history: [...saved.history, {
+      title: 'Untitled', format: 'markdown', url: 'https://example.org/article', date: Date.now()
+    }] });
+    expect([...document.querySelectorAll('.history-title')].map(node => node.textContent)).toEqual(['Без назви', 'Untitled']);
+    expect([...document.querySelectorAll('.history-format')].map(node => node.textContent)).toEqual(['Аудіо', 'MD']);
   });
 
   it('escapes attribute quotes and derives cache age from its timestamp', async () => {

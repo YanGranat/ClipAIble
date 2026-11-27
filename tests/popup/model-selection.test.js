@@ -186,10 +186,10 @@ describe('model selection persistence', () => {
     }
   });
 
-  it('preserves fast and non-thinking roles when refreshing saved selections', () => {
+  it('preserves compatible presets and migrates a removed DeepSeek default', () => {
     expect(resolveSavedModel('openai', 'gpt-5.1')).toBe('gpt-6.1-terra-none');
     expect(getModelMetadata('openai', 'gpt-6.1-terra-none')).toMatchObject({ apiModel: 'gpt-6.1-terra', reasoningEffort: 'none' });
-    expect(resolveSavedModel('deepseek', 'deepseek-chat')).toBe('deepseek-flash-no-thinking');
+    expect(resolveSavedModel('deepseek', 'deepseek-chat')).toBe('deepseek-flash');
     expect(getModelMetadata('deepseek', 'deepseek-flash-no-thinking')).toMatchObject({ apiModel: 'deepseek-flash', reasoningEnabled: false });
     expect(resolveSavedModel('deepseek', 'deepseek-chat', ['deepseek-chat'])).toBe('deepseek-chat');
     expect(getModelMetadata('deepseek', 'deepseek-chat')).toBeNull();

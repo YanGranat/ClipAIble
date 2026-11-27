@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { getFormattedStats, loadStats, recordSave } from '../../scripts/stats/index.js';
+import { deleteHistoryItem, getFormattedStats, loadStats, recordSave } from '../../scripts/stats/index.js';
 import { importSettings } from '../../scripts/settings/import-export.js';
 import { routeMessage } from '../../scripts/message-handlers/index.js';
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
@@ -32,12 +32,78 @@ it('preserves valid legacy format counters and history entries', async () => {
 });
 
 const article = title => ({ title, url: 'https://example.com/', format: 'pdf', processingTime: 50, date: 100 });
-const importHistory = () => new Promise(resolve => {
+const importHistory = (dataMode = 'replace') => new Promise(resolve => {
   routeMessage({
     action: 'importSettings',
     jsonData: JSON.stringify({ settings: {}, statistics: { totalSaved: 1, history: [article('Imported')] } }),
-    options: { importStats: true }
+    options: { importStats: true, dataMode }
   }, { id: chrome.runtime.id, url: chrome.runtime.getURL('popup/popup.html') }, resolve, {});
+});
+
+const historyRow = (id, date, format = 'pdf') => ({
+  id, title: `Document ${id}`, url: 'https://example.net/', format, date, processingTime: 300
+});
+const addSnapshot = statistics => importSettings(JSON.stringify({ settings: {}, statistics }), { importStats: true, dataMode: 'add' });
+
+it('adds unique recent saves without adding overlapping snapshot totals', async () => {
+  const original = historyRow('original', new Date(2025, 2, 10).getTime());
+  const added = historyRow('another', new Date(2025, 3, 10).getTime(), 'markdown');
+  stored.extension_stats = { totalSaved: 1, byFormat: { pdf: 1 }, byMonth: { '2025-03': 1 },
+    topSites: { 'example.net': 1 }, totalProcessingTime: 300, lastSaved: original.date, history: [original] };
+  const backup = { totalSaved: 81, history: [added, original, added] };
+  await expect(addSnapshot(backup)).resolves.toMatchObject({ statsImported: true });
+  expect(stored.extension_stats).toMatchObject({ totalSaved: 2, byFormat: { pdf: 1, markdown: 1 },
+    byMonth: { '2025-03': 1, '2025-04': 1 }, topSites: { 'example.net': 2 }, totalProcessingTime: 600,
+    lastSaved: added.date, history: [added, original] });
+  const snapshot = structuredClone(stored.extension_stats);
+  await addSnapshot(backup);
+  expect(stored.extension_stats).toEqual(snapshot);
+});
+
+it('keeps independent saves of the same URL and deduplicates repeat legacy records with no ID', async () => {
+  const { id, ...legacy } = historyRow('legacy', 20);
+  const first = historyRow('first', 40);
+  const second = { ...first, id: 'second' };
+  stored.extension_stats = { totalSaved: 1, history: [legacy] };
+  await addSnapshot({ totalSaved: 3, history: [first, second, legacy] });
+  expect(stored.extension_stats.history).toEqual([first, second, legacy]);
+  expect(stored.extension_stats.totalSaved).toBe(3);
+});
+
+it('opens a full snapshot on a clean profile and avoids inflating previously counted history', async () => {
+  const recent = historyRow('recent', 80);
+  const older = historyRow('older', 55);
+  await addSnapshot({ totalSaved: 90, history: [recent], lastSaved: recent.date });
+  expect(stored.extension_stats.totalSaved).toBe(90);
+  await addSnapshot({ totalSaved: 91, history: [recent, older] });
+  expect(stored.extension_stats.history).toEqual([recent, older]);
+  expect(stored.extension_stats.totalSaved).toBe(90);
+  await deleteHistoryItem(recent);
+  await addSnapshot({ totalSaved: 91, history: [recent, older] });
+  expect(stored.extension_stats.history).toEqual([recent, older]);
+  expect(stored.extension_stats.totalSaved).toBe(90);
+});
+
+it('preserves the recent history window without counting discarded rows', async () => {
+  const history = Array.from({ length: 50 }, (_, i) => historyRow(`row-${i}`, 200 - i));
+  stored.extension_stats = { totalSaved: 50, history, historyCountedThrough: null };
+  const fresh = historyRow('fresh', 300);
+  const discarded = historyRow('discarded', 100);
+  await addSnapshot({ totalSaved: 2, history: [fresh, discarded] });
+  expect(stored.extension_stats.history).toEqual([fresh, ...history.slice(0, 49)]);
+  expect(stored.extension_stats.totalSaved).toBe(51);
+  await deleteHistoryItem(fresh);
+  await addSnapshot({ totalSaved: 2, history: [fresh, discarded] });
+  expect(stored.extension_stats.totalSaved).toBe(51);
+});
+
+it('preserves existing data if a malformed statistics section was selected for replacement', async () => {
+  stored.extension_stats = { totalSaved: 1, history: [historyRow('saved', 30)] };
+  const snapshot = structuredClone(stored.extension_stats);
+  const result = await importSettings(JSON.stringify({ settings: {}, statistics: ['invalid'] }), { importStats: true, dataMode: 'replace' });
+  expect(result).toMatchObject({ statsImported: false });
+  expect(result.errors).toHaveLength(1);
+  expect(stored.extension_stats).toEqual(snapshot);
 });
 
 it.each([false, true])('orders history import and an overlapping save with import first=%s', async importFirst => {

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { initProcessing } from '../../popup/core/processing.js';
 import { initializeDOMElements } from '../../popup/utils/init-helpers.js';
+import { tSync } from '../../scripts/locales.js';
 
 const page = { html: '<article><p>Independent survey observations.</p></article>', url: 'https://example.test/survey', title: 'Survey' };
 const runId = 'df1b9f52-8b6b-4dc0-80b4-0fefb7b69265';
@@ -26,7 +27,7 @@ beforeEach(() => {
   elements.audioSpeed.value = '1.25';
   elements.openaiInstructions.value = 'Read calmly.';
   elements.useCache.checked = true;
-  chrome.storage.local.get.mockResolvedValue({});
+  chrome.storage.local.get.mockResolvedValue({ openai_api_key: 'synthetic-saved-speech-key' });
   chrome.tabs.query = vi.fn(async () => [{ id: 8, url: page.url, title: page.title }]);
   chrome.tabs.sendMessage = vi.fn(() => new Promise(resolve => { releasePage = resolve; }));
   chrome.runtime.sendMessage.mockResolvedValue({ started: true, processingRunId: runId });
@@ -61,16 +62,17 @@ it('captures one audio configuration before page acquisition yields', async () =
 
 it('keeps model, workspace, region and voice from the same Qwen configuration', async () => {
   elements.audioProvider.value = 'qwen';
-  elements.qwenModel.replaceChildren(new Option('First model', 'qwen-example-a'));
+  elements.qwenApiKey.value = 'synthetic-qwen-key';
+  elements.qwenModel.replaceChildren(new Option('First model', 'qwen-audio-3.1-tts-flash'));
   elements.qwenWorkspaceId.value = 'workspace-a'; elements.qwenRegion.value = 'singapore';
   elements.audioVoice.replaceChildren(new Option('First narrator', 'narrator-a'));
   elements.audioVoice.dataset.provider = 'qwen';
   const { operation, finish } = await beginCapture();
-  elements.qwenModel.replaceChildren(new Option('Second model', 'qwen-example-b'));
+  elements.qwenModel.replaceChildren(new Option('Second model', 'qwen-audio-3.1-tts-plus'));
   elements.qwenWorkspaceId.value = 'workspace-b'; elements.qwenRegion.value = 'beijing';
   elements.audioVoice.replaceChildren(new Option('Second narrator', 'narrator-b'));
   finish(); await operation;
-  expect(packet()).toMatchObject({ audioProvider: 'qwen', audioVoice: 'narrator-a', qwenModel: 'qwen-example-a',
+  expect(packet()).toMatchObject({ audioProvider: 'qwen', audioVoice: 'narrator-a', qwenModel: 'qwen-audio-3.1-tts-flash',
     qwenWorkspaceId: 'workspace-a', qwenRegion: 'singapore' });
 });
 
@@ -112,6 +114,7 @@ it('preserves the clicked document settings and keys during page acquisition', a
 });
 
 it('selects the source tab before asynchronous credential work', async () => {
+  elements.modeSelect.value = 'selector';
   elements.apiKey.value = '****stored';
   elements.apiKey.dataset.encrypted = 'synthetic-ciphertext';
   let releaseKey;
@@ -135,6 +138,15 @@ it('does not export a replacement document that arrives during the initial captu
   releasePage({ ...page, url: 'https://example.test/other', title: 'Other survey' });
   await operation;
   expect(packet()).toBeUndefined();
-  expect(showToast).toHaveBeenCalledWith(expect.any(String), 'error', { key: 'errorPageNotReady', params: {} });
+  expect(showToast).toHaveBeenCalledWith(tSync('errorSourcePageChanged', 'en'), 'error', { key: 'errorSourcePageChanged', params: {} });
   expect(elements.savePdfBtn.disabled).toBe(false);
+});
+
+it('reports navigation away from a local PDF before starting the export', async () => {
+  elements.mainFormatSelect.value = 'markdown';
+  chrome.tabs.query.mockResolvedValue([{ id: 8, url: 'file:///library/report.pdf' }]);
+  chrome.tabs.get.mockResolvedValue({ id: 8, url: 'file:///library/another.pdf' });
+  await processing.handleSavePdf();
+  expect(packet()).toBeUndefined();
+  expect(showToast).toHaveBeenCalledWith(tSync('errorSourcePageChanged', 'en'), 'error', { key: 'errorSourcePageChanged', params: {} });
 });

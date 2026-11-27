@@ -54,6 +54,13 @@ it('does not repaint an old generating label when its translation arrives after 
   expect(elements.generateKeyThesesBtn.textContent).toBe('generateKeyTheses');
 });
 
+it('localizes a browser transport error while cancelling Key Theses', async () => {
+  await module.checkKeyThesesStatus();
+  chrome.runtime.sendMessage.mockRejectedValueOnce(new Error('Receiving end does not exist.'));
+  await module.handleGenerateKeyTheses({ target: elements.generateKeyThesesBtn.querySelector('.key-theses-cancel') });
+  expect(deps.showToast).toHaveBeenCalledWith('errorCommunicationFailed', 'error', { key: 'errorCommunicationFailed', params: {} });
+});
+
 it('keeps the latest completed result when an older generating status read arrives last', async () => {
   let release;
   const previous = { ...store };

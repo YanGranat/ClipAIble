@@ -2,7 +2,7 @@
 // Event handlers for popup
 // This module contains all event listeners setup
 
-import { setupAllApiKeyToggles } from './handlers/api-keys.js';
+import { setApiKeyVisibility, setupAllApiKeyToggles } from './handlers/api-keys.js';
 import { setupPanelHandlers } from './handlers/panels.js';
 import { setupFormatHandlers } from './handlers/format.js';
 import { setupStyleHandlers } from './handlers/style.js';
@@ -420,7 +420,7 @@ export function initHandlers(deps) {
                 delete elements.apiKey.dataset.encrypted;
               }
               // Reset to password type when switching
-              elements.apiKey.type = 'password';
+              setApiKeyVisibility(elements.apiKey, elements.toggleApiKey, false);
               if (elements.toggleApiKey) {
                 const eyeIcon = elements.toggleApiKey.querySelector('.eye-icon');
                 if (eyeIcon) {
@@ -450,6 +450,7 @@ export function initHandlers(deps) {
 
     // Mode, cache, and stats handlers
     if (elements.modeSelect) {
+      elements.modeSelect.addEventListener('change', () => settingsModule?.updateAbstractVisibility?.());
       elements.modeSelect.addEventListener('change', createSettingChangeHandler(
         STORAGE_KEYS.MODE,
         () => elements.modeSelect.value,

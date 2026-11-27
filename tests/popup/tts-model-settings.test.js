@@ -48,8 +48,10 @@ it.each(['gemini-3.1-flash-tts-preview', 'gemini-2.5-pro-preview-tts'])(
   }
 );
 
-it('shows only current models when restoring a saved 2.5 Flash Preview', () => {
-  const model = 'gemini-2.5-flash-preview-tts';
+it.each([
+  'gemini-2.5-flash-preview-tts',
+  'gemini-2.5-flash-lite-preview-tts'
+])('shows only current models when restoring saved %s', model => {
   expect([...elements.googleTtsModel.options].some(option => option.value === model)).toBe(false);
   restoreGoogleTtsPreferences(elements, model, 'Charon');
   expect(elements.googleTtsModel.value).toBe('gemini-3.8-flash-lite-tts');

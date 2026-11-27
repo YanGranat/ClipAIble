@@ -7,6 +7,10 @@ import { initializeDOMElements } from '../../popup/utils/init-helpers.js';
 import { STORAGE_KEYS } from '../../popup/constants.js';
 import { formatModelLabel, getModelCatalog } from '../../scripts/utils/model-catalog.js';
 
+const primaryProvider = 'claude';
+const alternateProvider = 'gemini';
+const [firstModel, secondModel, thirdModel, ...otherModels] = getModelCatalog(primaryProvider).map(({ id }) => id);
+
 let dom, elements, stored, models;
 const clone = value => structuredClone(value);
 const storageRead = keys => Object.fromEntries(keys.map(key => [key, clone(stored[key])]));
@@ -41,12 +45,13 @@ beforeEach(async () => {
   dom = new JSDOM(readFileSync(new URL('../../popup/popup.html', import.meta.url), 'utf8'), { pretendToBeVisual: true });
   for (const name of ['document', 'window', 'Element', 'Node', 'Event', 'FocusEvent', 'KeyboardEvent', 'MouseEvent', 'MutationObserver', 'HTMLElement', 'HTMLSelectElement', 'HTMLButtonElement']) vi.stubGlobal(name, dom.window[name]);
   vi.stubGlobal('requestAnimationFrame', dom.window.requestAnimationFrame.bind(dom.window));
-  stored = { ui_language: 'en', api_provider: 'deepseek', openai_model: 'deepseek-flash', model_by_provider: { deepseek: 'deepseek-flash' } };
+  stored = { ui_language: 'en', api_provider: primaryProvider, openai_model: firstModel,
+    model_by_provider: { [primaryProvider]: firstModel }, hidden_models: { [primaryProvider]: otherModels } };
   chrome.storage.local.get.mockImplementation(async keys => storageRead(keys));
   chrome.storage.local.set.mockImplementation(async values => Object.assign(stored, clone(values)));
   elements = {};
   initializeDOMElements(elements);
-  elements.apiProviderSelect.value = 'deepseek';
+  elements.apiProviderSelect.value = primaryProvider;
   models = initModels({ elements, STORAGE_KEYS, formatModelLabel: id => formatModelLabel(elements.apiProviderSelect.value, id) });
   await models.updateModelList();
   setupModelHandlers({ elements, settingsModule: models });
@@ -61,7 +66,7 @@ describe('model menu interaction owner', () => {
     expect(document.querySelector('label[for=modelSelect]')).toBeNull();
     expect(elements.modelSelectTrigger.type).toBe('button');
     expect(elements.modelSelectTrigger.getAttribute('aria-haspopup')).toBe('grid');
-    expect(elements.modelSelectValue.textContent).toBe('DeepSeek V4.1 Flash');
+    expect(elements.modelSelectValue.textContent).toBe(formatModelLabel(primaryProvider, firstModel));
     await open();
     const row = elements.customModelOptions.firstElementChild;
     expect(row.getAttribute('role')).toBe('row');
@@ -73,24 +78,24 @@ describe('model menu interaction owner', () => {
     elements.modelSelectTrigger.focus();
     expect(key(name).defaultPrevented).toBe(true);
     await vi.waitFor(() => expect(expanded()).toBe('true'));
-    expect(elements.modelSelect.value).toBe('deepseek-flash');
+    expect(elements.modelSelect.value).toBe(firstModel);
   });
 
   it('queues rapid navigation and commit while the menu data is pending', async () => {
     const gate = parkRender();
     key('ArrowDown'); key('ArrowDown'); key('ArrowDown'); key('Enter');
     expect(gate.waiting()).toBe(true);
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(stored.openai_model).toBe(firstModel);
     gate.release();
-    await vi.waitFor(() => expect(stored.openai_model).toBe('deepseek-v4-pro'));
-    expect(stored.model_by_provider.deepseek).toBe('deepseek-v4-pro');
+    await vi.waitFor(() => expect(stored.openai_model).toBe(thirdModel));
+    expect(stored.model_by_provider[primaryProvider]).toBe(thirdModel);
     expect(expanded()).toBe('false');
-    expect(elements.modelSelectValue.textContent).toBe('DeepSeek V4 Pro (text only)');
+    expect(elements.modelSelectValue.textContent).toBe(formatModelLabel(primaryProvider, thirdModel));
   });
 
   it('retains the full typeahead sequence while rendering is pending', async () => {
-    stored.custom_models = { deepseek: ['zebra-synthetic-model', 'zen-synthetic-model'] };
-    await models.updateModelList('deepseek-flash');
+    stored.custom_models = { [primaryProvider]: ['zebra-synthetic-model', 'zen-synthetic-model'] };
+    await models.updateModelList(firstModel);
     const gate = parkRender();
     key('z'); key('e'); key('b'); key('Enter');
     gate.release();
@@ -109,20 +114,20 @@ describe('model menu interaction owner', () => {
     gate.release();
     await vi.waitFor(() => expect(elements.customModelOptions.getAttribute('aria-busy')).toBe('false'));
     expect(expanded()).toBe('false');
-    expect(elements.modelSelect.value).toBe('deepseek-flash');
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(elements.modelSelect.value).toBe(firstModel);
+    expect(stored.openai_model).toBe(firstModel);
   });
 
   it('admits a new provider menu while an earlier provider render is still pending', async () => {
     const gate = parkRender();
     key('End'); key('Enter');
-    elements.apiProviderSelect.value = 'claude';
+    elements.apiProviderSelect.value = alternateProvider;
     elements.apiProviderSelect.dispatchEvent(new Event('change'));
     expect(expanded()).toBe('false');
     expect(elements.customModelDropdown.classList.contains('hidden')).toBe(true);
     await models.updateModelList();
     key('End'); key('Enter');
-    const last = getModelCatalog('claude').at(-1).id;
+    const last = getModelCatalog(alternateProvider).at(-1).id;
     await vi.waitFor(() => expect(stored.openai_model).toBe(last));
     gate.release();
     await Promise.resolve(); await Promise.resolve();
@@ -147,23 +152,23 @@ describe('model menu interaction owner', () => {
     key('Escape'); release();
     await vi.waitFor(() => expect(elements.customModelOptions.getAttribute('aria-busy')).toBe('false'));
     expect(expanded()).toBe('false');
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(stored.openai_model).toBe(firstModel);
   });
 
   it('keeps the active model by ID when rows are reordered', async () => {
     await open();
     key('End');
-    await vi.waitFor(() => expect(activeId()).toBe('deepseek-v4-pro'));
+    await vi.waitFor(() => expect(activeId()).toBe(thirdModel));
     elements.customModelOptions.prepend(elements.customModelOptions.lastElementChild);
     await Promise.resolve();
-    expect(activeId()).toBe('deepseek-v4-pro');
+    expect(activeId()).toBe(thirdModel);
     key('Enter');
-    await vi.waitFor(() => expect(stored.openai_model).toBe('deepseek-v4-pro'));
+    await vi.waitFor(() => expect(stored.openai_model).toBe(thirdModel));
   });
 
   it('keeps row and label IDs distinct for model IDs with a label suffix', async () => {
-    stored.custom_models = { deepseek: ['synthetic-item-label', 'synthetic-item'] };
-    await models.updateModelList('deepseek-flash');
+    stored.custom_models = { [primaryProvider]: ['synthetic-item-label', 'synthetic-item'] };
+    await models.updateModelList(firstModel);
     await open(); key('End');
     await vi.waitFor(() => {
       const cell = document.getElementById(elements.modelSelectTrigger.getAttribute('aria-activedescendant'));
@@ -186,7 +191,7 @@ describe('model menu interaction owner', () => {
     expect(buttonDown.defaultPrevented).toBe(false);
     button.focus();
     expect(expanded()).toBe('true');
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(stored.openai_model).toBe(firstModel);
   });
 
   it.each([false, true])('deletes an action row without committing its keyboard highlight (selected=%s)', async selected => {
@@ -197,10 +202,10 @@ describe('model menu interaction owner', () => {
     const removed = document.activeElement.closest('.custom-model-option').dataset.modelValue;
     expect(key('Enter', document.activeElement).defaultPrevented).toBe(false);
     document.activeElement.click();
-    await vi.waitFor(() => expect(stored.hidden_models?.deepseek).toContain(removed));
+    await vi.waitFor(() => expect(stored.hidden_models?.[primaryProvider]).toContain(removed));
     await vi.waitFor(() => expect(elements.customModelOptions.querySelector(`[data-model-value="${removed}"]`)).toBeNull());
     await vi.waitFor(() => expect(document.activeElement?.id).toBe(elements.modelSelectTrigger.id));
-    expect(elements.modelSelect.value).toBe(selected ? 'deepseek-flash-no-thinking' : 'deepseek-flash');
+    expect(elements.modelSelect.value).toBe(selected ? secondModel : firstModel);
     expect(stored.openai_model).toBe(elements.modelSelect.value);
     expect(expanded()).toBe('true');
   });
@@ -212,7 +217,7 @@ describe('model menu interaction owner', () => {
     expect(document.activeElement?.id).toBe(elements.modelSelectTrigger.id);
     key('Escape');
     expect(expanded()).toBe('false');
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(stored.openai_model).toBe(firstModel);
   });
 
   it.each([false, true])('returns to the combobox tab stop before leaving an action (shift=%s)', async shiftKey => {
@@ -221,7 +226,7 @@ describe('model menu interaction owner', () => {
     key('Tab', document.activeElement, { shiftKey });
     expect(document.activeElement?.id).toBe(elements.modelSelectTrigger.id);
     expect(expanded()).toBe('false');
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(stored.openai_model).toBe(firstModel);
   });
 
   it('distinguishes a removal focusout from focus leaving the popup', async () => {
@@ -236,10 +241,10 @@ describe('model menu interaction owner', () => {
       replace(...children);
     };
     document.activeElement.click();
-    await vi.waitFor(() => expect(stored.hidden_models?.deepseek).toContain('deepseek-flash-no-thinking'));
+    await vi.waitFor(() => expect(stored.hidden_models?.[primaryProvider]).toContain(secondModel));
     await vi.waitFor(() => expect(document.activeElement?.id).toBe(elements.modelSelectTrigger.id));
     expect(expanded()).toBe('true');
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(stored.openai_model).toBe(firstModel);
   });
 
   it('preserves outside focus when an action button remains connected', async () => {
@@ -248,14 +253,14 @@ describe('model menu interaction owner', () => {
     elements.apiKey.focus();
     await vi.waitFor(() => expect(expanded()).toBe('false'));
     expect(document.activeElement?.id).toBe(elements.apiKey.id);
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(stored.openai_model).toBe(firstModel);
   });
 
   it('does not restore old action focus after the provider changes', async () => {
     await open(); key('ArrowRight');
     await vi.waitFor(() => expect(document.activeElement.classList.contains('custom-model-delete')).toBe(true));
     document.activeElement.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
-    elements.apiProviderSelect.value = 'claude';
+    elements.apiProviderSelect.value = alternateProvider;
     elements.apiProviderSelect.dispatchEvent(new Event('change'));
     elements.customModelOptions.replaceChildren();
     elements.apiKey.focus();
@@ -266,9 +271,9 @@ describe('model menu interaction owner', () => {
 
   it.each(['Tab', 'blur'])('commits a ready keyboard selection on %s', async action => {
     await open(); key('End');
-    await vi.waitFor(() => expect(activeId()).toBe('deepseek-v4-pro'));
+    await vi.waitFor(() => expect(activeId()).toBe(thirdModel));
     if (action === 'Tab') key('Tab'); else elements.apiKey.focus();
-    await vi.waitFor(() => expect(stored.openai_model).toBe('deepseek-v4-pro'));
+    await vi.waitFor(() => expect(stored.openai_model).toBe(thirdModel));
     expect(expanded()).toBe('false');
     if (action === 'blur') expect(document.activeElement?.id).toBe(elements.apiKey.id);
   });
@@ -284,17 +289,17 @@ describe('model menu interaction owner', () => {
 
   it.each(['disabled', 'empty'])('closes the menu when its backing control becomes %s', async mode => {
     await open(); key('End');
-    await vi.waitFor(() => expect(activeId()).toBe('deepseek-v4-pro'));
+    await vi.waitFor(() => expect(activeId()).toBe(thirdModel));
     if (mode === 'disabled') elements.modelSelect.disabled = true;
     else elements.modelSelect.replaceChildren();
     await vi.waitFor(() => expect(expanded()).toBe('false'));
     expect(elements.modelSelectTrigger.disabled).toBe(true);
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(stored.openai_model).toBe(firstModel);
   });
 
   it('cancels pending input on disable even if reenabled before rendering returns', async () => {
-    stored.custom_models = { deepseek: ['zeta-synthetic-model'] };
-    await models.updateModelList('deepseek-flash');
+    stored.custom_models = { [primaryProvider]: ['zeta-synthetic-model'] };
+    await models.updateModelList(firstModel);
     const gate = parkRender();
     key('z'); key('Enter');
     elements.modelSelect.disabled = true;
@@ -302,24 +307,24 @@ describe('model menu interaction owner', () => {
     elements.modelSelect.disabled = false;
     gate.release();
     await vi.waitFor(() => expect(elements.customModelOptions.getAttribute('aria-busy')).toBe('false'));
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(stored.openai_model).toBe(firstModel);
     expect(expanded()).toBe('false');
   });
 
   it('does not commit when disable and external focus happen in the same task', async () => {
     await open(); key('End');
-    await vi.waitFor(() => expect(activeId()).toBe('deepseek-v4-pro'));
+    await vi.waitFor(() => expect(activeId()).toBe(thirdModel));
     elements.modelSelect.disabled = true;
     elements.apiKey.focus();
     await Promise.resolve(); await Promise.resolve();
-    expect(stored.openai_model).toBe('deepseek-flash');
+    expect(stored.openai_model).toBe(firstModel);
     expect(document.activeElement?.id).toBe('apiKey');
     expect(expanded()).toBe('false');
   });
 
   it('returns owned action focus to Add Model when the final model is hidden', async () => {
-    stored.hidden_models = { deepseek: ['deepseek-flash-no-thinking', 'deepseek-v4-pro'] };
-    await models.updateModelList('deepseek-flash');
+    stored.hidden_models = { [primaryProvider]: [secondModel, thirdModel, ...otherModels] };
+    await models.updateModelList(firstModel);
     await open(); key('ArrowRight');
     await vi.waitFor(() => expect(document.activeElement.classList.contains('custom-model-delete')).toBe(true));
     document.activeElement.click();

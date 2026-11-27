@@ -2,17 +2,21 @@
 // Settings import/export module
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { exportStats, replaceStats } from '../stats/index.js';
-import { normalizeCachedSelectors, replaceSelectorCache } from '../cache/selectors.js';
+import { addToStats, exportStats, replaceStats } from '../stats/index.js';
+import { addToSelectorCache, normalizeCachedSelectors, replaceSelectorCache } from '../cache/selectors.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { getExtensionVersion } from '../utils/config.js';
 import { DOCUMENT_FONT_FAMILIES, isDocumentColor } from '../utils/styles-validation.js';
-import { GEMINI_IMAGE_MODELS, IMAGE_TRANSLATION_PROVIDERS } from '../api/image-translation-catalog.js';
-import { resolveGoogleTtsModel } from '../api/tts-catalog.js';
+import { GEMINI_IMAGE_MODELS, IMAGE_TRANSLATION_PROVIDERS, OPENROUTER_IMAGE_MODELS } from '../api/image-translation-catalog.js';
+import { PROMPT_IDS, PROMPT_STORAGE_KEYS, PROMPT_STORAGE_PREFIX, validatePrompt } from './prompt-catalog.js';
+import { OPENROUTER_TTS_MODELS, getOpenRouterTtsModel, findOpenRouterTtsVoice, resolveGoogleTtsModel } from '../api/tts-catalog.js';
+import { OPENROUTER_SPEECH_SETTINGS_KEY, readOpenRouterSpeechProfiles } from '../api/openrouter-speech-options.js';
+import { OPENROUTER_KEY_SLOTS } from '../utils/storage/openrouter-key-slots.js';
 
 /** Keep missing and empty settings unchanged when transferring a backup. */
 function transferSetting(key, value) {
+  if (key === OPENROUTER_SPEECH_SETTINGS_KEY && value != null) return readOpenRouterSpeechProfiles(value);
   return key === 'google_tts_model' && typeof value === 'string' && value ? resolveGoogleTtsModel(value) : value;
 }
 
@@ -23,9 +27,12 @@ function importError(key, language, params = {}) {
 const isRecord = value => !!value && typeof value === 'object' && !Array.isArray(value);
 const safeMapKey = (value, maxLength = 100) => !['__proto__', 'constructor', 'prototype'].includes(value) && value.length <= maxLength;
 const shortString = value => typeof value === 'string' && value.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(value);
+const MAX_BACKUP_CACHE_LENGTH = 10 * 1024 * 1024;
+const MAX_BACKUP_CACHE_DOMAINS = 10000;
 
 function validComplexSetting(key, value) {
   if (!isRecord(value) || Object.keys(value).length > 100) return false;
+  if (key === OPENROUTER_SPEECH_SETTINGS_KEY) return Object.values(value).every(item => isRecord(item) && Object.keys(item).length <= 10);
   if (key === 'audio_voice_map') {
     const voices = Object.hasOwn(value, 'current') ? value.current : value;
     return isRecord(voices) && Object.keys(voices).length <= 100 && Object.entries(voices).every(([provider, voice]) => safeMapKey(provider) && shortString(voice));
@@ -37,7 +44,7 @@ function validComplexSetting(key, value) {
 }
 
 function normalizeImportedCache(value) {
-  if (!isRecord(value) || Object.keys(value).length > 10000) return null;
+  if (!isRecord(value) || Object.keys(value).length > MAX_BACKUP_CACHE_DOMAINS) return null;
   const cache = {};
   for (const [domain, entry] of Object.entries(value)) {
     if (!safeMapKey(domain, 253) || !isRecord(entry)) return null;
@@ -63,6 +70,7 @@ function normalizeImportedCache(value) {
 // Settings that can be exported/imported
 // NOTE: API keys are NEVER included for security reasons
 const STORAGE_KEYS_TO_EXPORT = [
+  ...PROMPT_STORAGE_KEYS,
   // AI settings
   'api_provider',
   'openai_model',
@@ -76,7 +84,6 @@ const STORAGE_KEYS_TO_EXPORT = [
   'openai_instructions',
   
   // Output settings
-  'output_format',
   'generate_toc',
   'generate_abstract',
   'page_mode',
@@ -84,6 +91,7 @@ const STORAGE_KEYS_TO_EXPORT = [
   'translate_images',
   'image_translation_provider',
   'gemini_image_model',
+  'openrouter_image_model',
   
   // Audio settings
   'audio_provider',
@@ -97,6 +105,9 @@ const STORAGE_KEYS_TO_EXPORT = [
   'elevenlabs_style',
   'elevenlabs_speaker_boost',
   'google_tts_model',
+  'openrouter_tts_model',
+  'openrouter_tts_voice',
+  OPENROUTER_SPEECH_SETTINGS_KEY,
   'google_tts_voice',
   'google_tts_prompt',
   'respeecher_temperature',
@@ -130,7 +141,7 @@ const API_KEY_NAMES = [
   'claude_api_key', 
   'gemini_api_key',
   'grok_api_key',
-  'openrouter_api_key',
+  ...Object.values(OPENROUTER_KEY_SLOTS),
   'deepseek_api_key',
   'google_api_key',
   'elevenlabs_api_key',
@@ -144,7 +155,7 @@ const API_KEY_NAMES = [
  * API keys are NEVER exported for security reasons
  * @param {boolean} includeStats - Include statistics
  * @param {boolean} includeCache - Include selector cache
- * @returns {Promise<string>} JSON string
+ * @returns {Promise<{data: string, includesStatistics: boolean, includesCache: boolean, warnings: import('../types.js').LocalizedMessage[]}>}
  */
 export async function exportSettings(includeStats = false, includeCache = false) {
   try {
@@ -158,6 +169,7 @@ export async function exportSettings(includeStats = false, includeCache = false)
       exportDate: new Date().toISOString(),
       settings: {}
     };
+    const warnings = [];
     
     // Copy settings (exclude only undefined and null, but allow empty strings and 0/false)
     // Note: API keys are NOT in STORAGE_KEYS_TO_EXPORT, so they're never exported
@@ -170,43 +182,40 @@ export async function exportSettings(includeStats = false, includeCache = false)
     // Add statistics if requested
     if (includeStats) {
       try {
-        const statsJson = await exportStats();
-        exportData.statistics = JSON.parse(statsJson);
+        exportData.statistics = await exportStats();
         log('Statistics included in export');
       } catch (error) {
         logError('Failed to export statistics', error);
-        // Note: Error is logged but export continues without statistics
-        // This allows partial export to succeed even if stats fail
+        warnings.push({ key: 'backupExportStatisticsUnreadable' });
       }
     }
     
     // Add cache if requested
     if (includeCache) {
       try {
-        // Get full cache data
-        const cacheResult = await chrome.storage.local.get(['selector_cache']);
-        if (cacheResult.selector_cache) {
-          // Validate cache size to prevent extremely large exports
-          const cacheSize = JSON.stringify(cacheResult.selector_cache).length;
-          const maxCacheSize = 10 * 1024 * 1024; // 10MB limit
-          if (cacheSize > maxCacheSize) {
-            logWarn('Cache too large to export', { size: cacheSize, max: maxCacheSize });
-            // Skip cache export if too large
-          } else {
-            exportData.selectorCache = cacheResult.selector_cache;
-            log('Selector cache included in export', { 
-              domains: Object.keys(cacheResult.selector_cache).length 
-            });
-          }
+        const saved = await chrome.storage.local.get(['selector_cache']);
+        const cache = saved.selector_cache ?? {};
+        if (!isRecord(cache)) throw new TypeError('Invalid selector cache');
+        const domains = Object.keys(cache).length;
+        if (domains > MAX_BACKUP_CACHE_DOMAINS || JSON.stringify(cache).length > MAX_BACKUP_CACHE_LENGTH) {
+          logWarn('Selector cache exceeds backup limit', { domains });
+          warnings.push({ key: 'backupExportCacheLimit' });
+        } else {
+          exportData.selectorCache = cache;
+          log('Selector cache included in export', { domains });
         }
       } catch (error) {
         logError('Failed to export cache', error);
-        // Note: Error is logged but export continues without cache
-        // This allows partial export to succeed even if cache fails
+        warnings.push({ key: 'backupExportCacheUnreadable' });
       }
     }
     
-    return JSON.stringify(exportData, null, 2);
+    return {
+      data: JSON.stringify(exportData, null, 2),
+      includesStatistics: Object.hasOwn(exportData, 'statistics'),
+      includesCache: Object.hasOwn(exportData, 'selectorCache'),
+      warnings
+    };
   } catch (error) {
     logError('Export failed', error);
     throw error;
@@ -216,7 +225,7 @@ export async function exportSettings(includeStats = false, includeCache = false)
 /**
  * Import settings from JSON
  * @param {string} jsonData - JSON string
- * @param {{importStats?: boolean, importCache?: boolean, overwriteExisting?: boolean}} [options={}] - Import options
+ * @param {{importStats?: boolean, importCache?: boolean, overwriteExisting?: boolean, dataMode?: 'add' | 'replace'}} [options={}] - Import options
  * @returns {Promise<{settingsCount: number, statsImported: boolean, cacheImported: boolean}>} Import result
  * @throws {Error} If JSON parsing fails
  * @throws {Error} If validation fails
@@ -229,7 +238,8 @@ export async function importSettings(jsonData, options = {}) {
   const {
     importStats = false,
     importCache = false,
-    overwriteExisting = false
+    overwriteExisting = false,
+    dataMode = 'add'
   } = options;
   
   try {
@@ -246,7 +256,7 @@ export async function importSettings(jsonData, options = {}) {
     }
     
     const uiLang = await getUILanguageCached();
-    if (!data || typeof data !== 'object') {
+    if (!data || typeof data !== 'object' || (dataMode !== 'add' && dataMode !== 'replace')) {
       throw importError('errorImportDataNotObject', uiLang);
     }
     
@@ -307,9 +317,9 @@ export async function importSettings(jsonData, options = {}) {
       }
     }
     
-    // Check for unknown keys in import file
+    // Older backups may contain a local format selection. Ignore it without a warning.
     const unknownKeys = Object.keys(data.settings).filter(key => 
-      !STORAGE_KEYS_TO_EXPORT.includes(key) && !API_KEY_NAMES.includes(key)
+      key !== 'output_format' && !STORAGE_KEYS_TO_EXPORT.includes(key) && !API_KEY_NAMES.includes(key)
     );
     if (unknownKeys.length > 0) {
       logWarn('Unknown keys found in import file', { keys: unknownKeys });
@@ -336,8 +346,10 @@ export async function importSettings(jsonData, options = {}) {
       api_provider: ['openai', 'claude', 'gemini', 'grok', 'openrouter', 'deepseek'],
       image_translation_provider: IMAGE_TRANSLATION_PROVIDERS,
       gemini_image_model: Object.keys(GEMINI_IMAGE_MODELS),
-      audio_provider: ['offline', 'openai', 'elevenlabs', 'google', 'qwen', 'respeecher'],
-      output_format: ['pdf', 'epub', 'fb2', 'markdown', 'audio'],
+      openrouter_image_model: Object.keys(OPENROUTER_IMAGE_MODELS),
+      openrouter_tts_model: OPENROUTER_TTS_MODELS.map(entry => entry.id),
+      openrouter_tts_voice: [...new Set(OPENROUTER_TTS_MODELS.flatMap(entry => entry.voices.map(voice => voice.id)))],
+      audio_provider: ['offline', 'supertonic', 'openai', 'elevenlabs', 'google', 'openrouter', 'qwen', 'respeecher'],
       extraction_mode: ['automatic', 'selector', 'extract'],
       page_mode: ['single', 'multi'],
       pdf_style_preset: ['light', 'dark', 'sepia', 'contrast', 'custom'],
@@ -373,10 +385,20 @@ export async function importSettings(jsonData, options = {}) {
       custom_models: 'object',
       hidden_models: 'object',
       model_by_provider: 'object',
-      audio_voice_map: 'object'
+      audio_voice_map: 'object',
+      [OPENROUTER_SPEECH_SETTINGS_KEY]: 'object'
     };
     
     for (const key of STORAGE_KEYS_TO_EXPORT) {
+      if (key.startsWith(PROMPT_STORAGE_PREFIX)) {
+        const id = PROMPT_IDS.find(id => PROMPT_STORAGE_PREFIX + id === key);
+        const value = data.settings[key];
+        if (value !== undefined && value !== null && validatePrompt(id, value)) {
+          notice('warnings', 'warningImportValue', { setting: key });
+          result.settingsSkipped++;
+          continue;
+        }
+      }
       // Security: Skip any API keys that might be in the import file
       if (API_KEY_NAMES.includes(key)) {
         log('Skipping API key import for security', { key });
@@ -480,6 +502,27 @@ export async function importSettings(jsonData, options = {}) {
       }
     }
     
+    // A partial import must not leave the saved speech model and voice incompatible.
+    const speechModelKey = 'openrouter_tts_model';
+    const speechVoiceKey = 'openrouter_tts_voice';
+    if (Object.hasOwn(settingsToImport, speechModelKey) || Object.hasOwn(settingsToImport, speechVoiceKey)) {
+      const effective = { ...currentSettings, ...settingsToImport };
+      const selected = OPENROUTER_TTS_MODELS.find(entry => entry.id === effective[speechModelKey]) ?? getOpenRouterTtsModel();
+      const voice = effective[speechVoiceKey];
+      if (voice && !findOpenRouterTtsVoice(selected, voice)) {
+        if (Object.hasOwn(settingsToImport, speechVoiceKey)) {
+          notice('warnings', 'warningImportValue', { setting: speechVoiceKey });
+          result.settingsImported--;
+          result.settingsSkipped++;
+        }
+        if (findOpenRouterTtsVoice(selected, currentSettings[speechVoiceKey])) {
+          delete settingsToImport[speechVoiceKey];
+        } else {
+          settingsToImport[speechVoiceKey] = undefined;
+        }
+      }
+    }
+
     // Security: Double-check that no API keys are being imported
     // Check both in settingsToImport AND in data.settings (in case someone tries to bypass)
     for (const apiKey of API_KEY_NAMES) {
@@ -536,7 +579,9 @@ export async function importSettings(jsonData, options = {}) {
     // Import statistics
     if (importStats && data.statistics) {
       try {
-        await replaceStats(data.statistics);
+        if (!isRecord(data.statistics)) throw new TypeError('Invalid statistics');
+        if (dataMode === 'add') await addToStats(data.statistics);
+        else await replaceStats(data.statistics);
         result.statsImported = true;
         log('Statistics imported');
       } catch (error) {
@@ -555,16 +600,24 @@ export async function importSettings(jsonData, options = {}) {
         
         // Validate cache size
         const cacheSize = JSON.stringify(data.selectorCache).length;
-        const maxCacheSize = 10 * 1024 * 1024; // 10MB limit
-        if (cacheSize > maxCacheSize) {
+        if (cacheSize > MAX_BACKUP_CACHE_LENGTH) {
           const sizeMB = Math.round(cacheSize / 1024 / 1024);
-          const maxMB = Math.round(maxCacheSize / 1024 / 1024);
+          const maxMB = Math.round(MAX_BACKUP_CACHE_LENGTH / 1024 / 1024);
           throw importError('errorImportCacheTooLarge', uiLang, { size: sizeMB, max: maxMB });
         }
         
         const cache = normalizeImportedCache(data.selectorCache);
         if (!cache) throw importError('errorImportCacheNotObject', uiLang);
-        await replaceSelectorCache(cache);
+        if (dataMode === 'add') {
+          const oversized = await addToSelectorCache(cache, MAX_BACKUP_CACHE_LENGTH);
+          if (oversized !== null) {
+            throw importError('errorImportCacheTooLarge', uiLang, {
+              sizeMB: Math.ceil(oversized / 1024 / 1024), maxMB: MAX_BACKUP_CACHE_LENGTH / 1024 / 1024
+            });
+          }
+        } else {
+          await replaceSelectorCache(cache);
+        }
         result.cacheImported = true;
         const domainCount = Object.keys(data.selectorCache).length;
         log('Selector cache imported', { domains: domainCount });

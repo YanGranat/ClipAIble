@@ -1,6 +1,7 @@
+import { renderPrompt } from '../settings/prompt-catalog.js';
 import { assertCompleteAIResponse } from '../api/response-validation.js';
 import { fetchBufferedResponse } from '../api/fetch-buffered-response.js';
-import { parseBase64Image } from '../api/image-data.js';
+import { parseBase64Image, readRasterDataUrl } from '../api/image-data.js';
 // Image translation module for ClipAIble extension
 // Handles translation of text in images using OCR
 
@@ -23,7 +24,12 @@ import { handleError } from '../utils/error-handler.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
 import { getUILanguage, formatStatusUpdate } from '../locales.js';
 import { translateImageWithOpenAI } from '../api/openai-images.js';
-import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS, OPENAI_IMAGE_DETECTION_MODEL, getImageTranslationApiKey, supportsImageTranslation } from '../api/image-translation-catalog.js';
+import { translateImageWithOpenRouter } from '../api/openrouter-images.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS, OPENAI_IMAGE_DETECTION_MODEL, OPENROUTER_IMAGE_DETECTION_MODEL, getImageTranslationApiKey, supportsImageTranslation } from '../api/image-translation-catalog.js';
+
+const IMAGE_EDITORS = Object.freeze({
+  gemini: translateImageWithGemini, openai: translateImageWithOpenAI, openrouter: translateImageWithOpenRouter
+});
 
 async function checkImageOwner(options) {
   if (options.signal?.aborted) throw options.signal.reason;
@@ -49,14 +55,7 @@ export async function detectImageText(imageBase64, targetLang, apiKey, model, op
   await checkImageOwner(options);
   log('detectImageText', { targetLang, model });
   
-  const prompt = `Analyze this image. Does it contain meaningful text that is NOT in ${targetLang}?
-
-Consider:
-1. Does it contain readable text (not just logos, brand names, or decorative elements)?
-2. Is the text meaningful content (captions, labels, diagrams, infographics)?
-3. Is the text in a language OTHER than ${targetLang}?
-
-Respond with ONLY "yes" or "no".`;
+  const prompt = renderPrompt('detectImageText', options, { targetLanguage: targetLang });
 
   try {
     const provider = resolveAIProvider(model, options.provider);
@@ -99,11 +98,12 @@ Respond with ONLY "yes" or "no".`;
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://github.com/clipaiable',
+          'HTTP-Referer': 'https://github.com/YanGranat/ClipAIble',
           'X-Title': 'ClipAIble'
         },
         body: JSON.stringify({
           ...getOpenRouterRequestConfig(model, { shortResponse: true, imageInput: true }),
+          ...(model === OPENROUTER_IMAGE_DETECTION_MODEL ? { max_tokens: 32, reasoning: { enabled: false } } : {}),
           messages: [
             { 
               role: 'user', 
@@ -256,18 +256,19 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
   let editKey = getImageTranslationApiKey({ ...options, googleApiKey });
   let detectionModel = model;
   let detectionOptions = options;
-  if (provider === 'openai') {
+  if (provider === 'openai' || provider === 'openrouter') {
+    const providerLabel = provider === 'openai' ? 'OpenAI' : 'OpenRouter';
     if (typeof editKey !== 'string' || !editKey.trim() || editKey.startsWith('****')) throw Object.assign(new Error('Image translation API key required'), {
-      translationKey: 'errorImageKeyRequired', translationParams: { provider: 'OpenAI' }
+      translationKey: 'errorImageKeyRequired', translationParams: { provider: providerLabel }
     });
     if (editKey.startsWith('ENC:')) editKey = await decryptApiKey(editKey);
     await check();
     if (!editKey || editKey.startsWith('ENC:') || editKey.startsWith('****')) throw Object.assign(new Error('Image translation API key required'), {
-      translationKey: 'errorImageKeyRequired', translationParams: { provider: 'OpenAI' }
+      translationKey: 'errorImageKeyRequired', translationParams: { provider: providerLabel }
     });
     decryptedApiKey = editKey;
-    detectionModel = OPENAI_IMAGE_DETECTION_MODEL;
-    detectionOptions = { ...options, provider: 'openai', imageDetail: 'high' };
+    detectionModel = provider === 'openai' ? OPENAI_IMAGE_DETECTION_MODEL : OPENROUTER_IMAGE_DETECTION_MODEL;
+    detectionOptions = { ...options, provider, imageDetail: 'high' };
   } else {
     try {
       decryptedApiKey = await decryptApiKey(apiKey);
@@ -329,6 +330,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
         }
       }
       
+      if (provider === 'openrouter') imageBase64 = readRasterDataUrl(imageBase64).dataUrl;
       const needsTranslation = await detectImageText(imageBase64, langName, decryptedApiKey, detectionModel, detectionOptions);
       await check();
       
@@ -349,9 +351,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
         });
       }
       
-      const translatedImage = provider === 'openai'
-        ? await translateImageWithOpenAI(imageBase64, langName, editKey, options)
-        : await translateImageWithGemini(imageBase64, langName, editKey, options);
+      const translatedImage = await IMAGE_EDITORS[provider](imageBase64, langName, editKey, options);
       
       await check();
       if (translatedImage) {
@@ -363,7 +363,6 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
         logWarn(`Image ${i + 1} translation failed, keeping original`, {
           imageIndex: i + 1,
           totalImages: imageIndices.length,
-          imageSrc: img?.src?.substring(0, 100) || 'unknown',
           reason: 'Image editor returned no image'
         });
         failed++;
@@ -379,8 +378,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
         context: {
           operation: 'translateImages',
           imageIndex: i + 1,
-          totalImages: imageIndices.length,
-          imageSrc: img?.src?.substring(0, 100) || 'unknown'
+          totalImages: imageIndices.length
         }
       });
       failed++;

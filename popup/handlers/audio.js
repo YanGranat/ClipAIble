@@ -28,6 +28,7 @@ export function setupAudioHandlers(deps) {
     elements.audioProvider.addEventListener('change', () => {
       debouncedSaveSettings(STORAGE_KEYS.AUDIO_PROVIDER, elements.audioProvider.value);
       settingsModule?.updateAudioProviderUI();
+      settingsModule?.updateTranslationVisibility?.();
     });
   }
 

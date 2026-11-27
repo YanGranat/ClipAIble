@@ -1,6 +1,7 @@
 // Tests for processing modes module
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PROMPTS } from '../../scripts/settings/prompt-catalog.js';
 import { 
   getSelectorsFromAI, 
   processWithSelectorMode,
@@ -54,8 +55,6 @@ vi.mock('../../scripts/utils/retry.js', () => ({
 }));
 
 vi.mock('../../scripts/extraction/prompts.js', () => ({
-  SELECTOR_SYSTEM_PROMPT: 'System prompt for selectors',
-  EXTRACT_SYSTEM_PROMPT: 'System prompt for extract',
   buildSelectorUserPrompt: vi.fn((html, url, title) => `User prompt: ${url}`),
   buildChunkSystemPrompt: vi.fn((index, total) => `Chunk system prompt ${index}/${total}`),
   buildChunkUserPrompt: vi.fn((chunk, url, title, index, total) => `Chunk user prompt ${index}/${total}`)
@@ -133,7 +132,7 @@ vi.mock('../../scripts/locales.js', () => ({
 }));
 
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
-  getAIRequestOptions: data => ({ provider: data.provider, checkCancelled: data.checkCancelled }),
+  getAIRequestOptions: data => ({ provider: data.provider, checkCancelled: data.checkCancelled, promptOverrides: data.promptOverrides }),
   checkCancellation: vi.fn(async () => {}),
   getUILanguageCached: vi.fn(async () => 'en'),
   updateProgress: vi.fn(async () => {}),
@@ -205,7 +204,7 @@ describe('processing/modes', () => {
 
       expect(result).toEqual(mockSelectors);
       expect(callAI).toHaveBeenCalledWith(
-        'System prompt for selectors',
+        PROMPTS.selector.template,
         expect.stringContaining('https://example.com'),
         'test-api-key',
         'gpt-4',
@@ -336,6 +335,26 @@ describe('processing/modes', () => {
       expect(result.title).toBe('Test Title');
       expect(callAI).toHaveBeenCalled();
       expect(getCachedSelectors).not.toHaveBeenCalled();
+    });
+
+    it('uses a custom selector even with cache enabled and does not update the default cache', async () => {
+      const { getCachedSelectors, cacheSelectors } = await import('../../scripts/cache/selectors.js');
+      const { callAI } = await import('../../scripts/api/index.js');
+      callAI.mockResolvedValueOnce({ articleContainer: '.article', content: '.article-body', title: 'h1' });
+      chrome.scripting.executeScript.mockResolvedValueOnce([{ result: {
+        title: 'An article', content: [{ type: 'paragraph', text: 'Article body.' }]
+      } }]);
+      chrome.tabs.get.mockResolvedValueOnce({ url: 'https://example.test/article', id: 1 });
+
+      await processWithSelectorMode({
+        html: '<html>Article body.</html>', url: 'https://example.test/article', title: 'An article',
+        apiKey: 'synthetic-key', model: 'gpt-4', tabId: 1, useCache: true,
+        promptOverrides: { selector: 'Find the publication scope.' }
+      }, vi.fn());
+
+      expect(callAI.mock.calls[0][0]).toBe('Find the publication scope.');
+      expect(getCachedSelectors).not.toHaveBeenCalled();
+      expect(cacheSelectors).not.toHaveBeenCalled();
     });
 
     it('should throw error if HTML is missing', async () => {

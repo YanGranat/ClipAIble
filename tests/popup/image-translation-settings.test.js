@@ -59,13 +59,15 @@ it('persists only the image-provider preference without changing article credent
   setupFormatHandlers({ elements, STORAGE_KEYS, debouncedSaveSettings: saves, deferAsyncWork: fn => fn(), settingsModule: visibility });
   elements.imageTranslationProvider.value = 'openai';
   elements.imageTranslationProvider.dispatchEvent(new Event('change'));
-  await vi.waitFor(() => expect(elements.translateImagesHint.dataset.i18n).toBe('translateImagesRequiresOpenAiKey'));
+  await vi.waitFor(() => expect(elements.translateImagesHint.dataset.i18n).toBe('translateImagesOpenAiHint'));
   expect(saves).toHaveBeenCalledExactlyOnceWith('image_translation_provider', 'openai');
   expect(elements.apiProviderSelect.value).toBe('claude');
   expect(elements.modelSelect.value).toBe('sample-article-model');
   expect(elements.apiKey.value).toBe('sample-article-key');
   expect(document.getElementById('googleApiGroup').style.display).toBe('none');
   expect(document.getElementById('geminiImageModelGroup').style.display).toBe('none');
+  expect(elements.openaiImageKeyGroup.style.display).toBe('block');
+  expect(document.querySelector('label[for="openaiImageKey"]').textContent).toBe('OpenAI API Key');
   expect(document.getElementById('imageTranslationModelHint').textContent).toContain(getImageTranslationModel('openai'));
 });
 
@@ -87,22 +89,26 @@ it('keeps Google model names in English and persists the selection from the visi
   expect(control.querySelector('.custom-select-value').textContent).toBe('Gemini 3.1 Flash Lite Image');
 });
 
-it('requires the OpenAI key slot or a currently bound OpenAI draft instead of another provider key', async () => {
+it.each(['pdf', 'epub', 'fb2', 'markdown', 'audio'])('shows an OpenAI password field only for supported %s image settings', async format => {
   elements.imageTranslationProvider.value = 'openai';
-  elements.apiKey.value = 'synthetic-article-key';
-  elements.apiKey.dataset.provider = 'claude';
+  elements.mainFormatSelect.value = format;
+  const available = ['pdf', 'epub', 'fb2'].includes(format);
+  const group = elements.openaiImageKeyGroup;
   await visibility.updateTranslationVisibility();
-  expect(elements.translateImagesHint.dataset.i18n).toBe('translateImagesRequiresOpenAiKey');
-  elements.apiProviderSelect.value = 'openai';
+  expect(group.classList.contains('hidden')).toBe(!available);
+  expect(elements.openaiImageKey.type).toBe('password');
+  expect(elements.translateImagesHint.style.color).toBe('');
+  elements.translateImages.checked = false;
   await visibility.updateTranslationVisibility();
-  expect(elements.translateImagesHint.dataset.i18n).toBe('translateImagesRequiresOpenAiKey');
-  elements.apiKey.dataset.provider = 'openai';
+  expect(group.classList.contains('hidden')).toBe(true);
+  elements.translateImages.checked = true;
+  elements.languageSelect.value = 'auto';
   await visibility.updateTranslationVisibility();
-  expect(elements.translateImagesHint.dataset.i18n).toBe('translateImagesOpenAiHint');
-  elements.apiProviderSelect.value = 'claude';
-  stored.openai_api_key = 'synthetic-saved-openai-key';
+  expect(group.classList.contains('hidden')).toBe(true);
+  elements.languageSelect.value = 'fr';
+  elements.imageTranslationProvider.value = 'openrouter';
   await visibility.updateTranslationVisibility();
-  expect(elements.translateImagesHint.dataset.i18n).toBe('translateImagesOpenAiHint');
+  expect(group.classList.contains('hidden')).toBe(true);
 });
 
 it('ignores an earlier missing-key response after the image provider changes', async () => {
@@ -122,12 +128,12 @@ it('ignores an earlier missing-key response after the image provider changes', a
   expect(elements.translateImagesHint.textContent).toBe(tSync('translateImagesOpenAiHint', 'en'));
 });
 
-it('keeps a visible missing-key hint translatable while its earlier storage read finishes', async () => {
-  elements.imageTranslationProvider.value = 'openai';
+it('keeps the Google missing-key hint translatable while its earlier storage read finishes', async () => {
+  elements.imageTranslationProvider.value = 'gemini';
   let waiting = false, release;
   const original = chrome.storage.local.get.getMockImplementation();
   chrome.storage.local.get.mockImplementation(async keys => {
-    if (keys.includes('openai_api_key')) { waiting = true; await new Promise(resolve => { release = resolve; }); return {}; }
+    if (keys.includes('google_api_key')) { waiting = true; await new Promise(resolve => { release = resolve; }); return {}; }
     return original(keys);
   });
   const pending = visibility.updateTranslationVisibility();
@@ -137,11 +143,11 @@ it('keeps a visible missing-key hint translatable while its earlier storage read
   const ui = initUI({ elements, formatTime: () => '', startTimerDisplay: vi.fn(), currentStartTime: { current: null }, timerInterval: { current: null } });
   await ui.applyLocalization();
   release(); await pending;
-  expect(elements.translateImagesHint.textContent).toBe(tSync('translateImagesRequiresOpenAiKey', 'ru'));
+  expect(elements.translateImagesHint.textContent).toBe(tSync('translateImagesRequiresGoogleKey', 'ru'));
   stored.ui_language = 'de'; elements.uiLanguageSelect.value = 'de';
   await ui.applyLocalization();
-  expect(elements.translateImagesHint.textContent).toBe(tSync('translateImagesRequiresOpenAiKey', 'de'));
-  expect(elements.imageTranslationProvider.value).toBe('openai');
+  expect(elements.translateImagesHint.textContent).toBe(tSync('translateImagesRequiresGoogleKey', 'de'));
+  expect(elements.imageTranslationProvider.value).toBe('gemini');
 });
 
 it('restores the provider choice with the real settings facade and keeps Gemini as the unwritten default', async () => {
@@ -173,7 +179,7 @@ it('round-trips the provider enum while excluding keys and rejecting an unsuppor
   stored.image_translation_provider = 'openai';
   stored.gemini_image_model = 'gemini-nano-banana-2.1';
   stored.openai_api_key = 'synthetic-openai-key'; stored.google_api_key = 'synthetic-google-key';
-  const exported = JSON.parse(await exportSettings());
+  const exported = JSON.parse((await exportSettings()).data);
   expect(exported.settings.image_translation_provider).toBe('openai');
   expect(exported.settings.gemini_image_model).toBe('gemini-nano-banana-2.1');
   expect(exported.settings).not.toHaveProperty('openai_api_key');

@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { exportSettings, importSettings } from '../../scripts/settings/import-export.js';
-import { cacheSelectors, clearSelectorCache, getCachedSelectors, invalidateCache, markCacheSuccess } from '../../scripts/cache/selectors.js';
+import { addToSelectorCache, cacheSelectors, clearSelectorCache, getCachedSelectors, invalidateCache, markCacheSuccess } from '../../scripts/cache/selectors.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
-vi.mock('../../scripts/stats/index.js', async importOriginal => ({ ...await importOriginal(), exportStats: vi.fn() }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ getUILanguageCached: async () => 'en' }));
 vi.mock('../../scripts/locales.js', () => ({ tSync: (key) => key }));
 
@@ -17,6 +16,72 @@ beforeEach(() => {
   chrome.storage.local.set.mockImplementation(async (values) => { Object.assign(stored, structuredClone(values)); });
   chrome.storage.local.remove.mockImplementation(async (keys) => {
     for (const key of keys) delete stored[key];
+  });
+});
+
+it('round-trips OpenRouter preferences while excluding all three credentials', async () => {
+  const media = {
+    image_translation_provider: 'openrouter', openrouter_image_model: 'openai/gpt-image-2.6-sunburst',
+    audio_provider: 'openrouter', openrouter_tts_model: 'google/gemini-3.8-flash-lite-tts', openrouter_tts_voice: 'Kore'
+  };
+  const existing = { openrouter_api_key: 'ENC:synthetic-text-key', openrouter_image_api_key: 'ENC:synthetic-image-key',
+    openrouter_tts_api_key: 'ENC:synthetic-speech-key' };
+  stored = { ...media, ...existing };
+  const payload = JSON.parse((await exportSettings()).data);
+  expect(payload.settings).toMatchObject(media);
+  for (const key of Object.keys(existing)) expect(payload.settings).not.toHaveProperty(key);
+  stored = { ...existing };
+  const incoming = Object.fromEntries(Object.keys(existing).map(key => [key, 'ENC:synthetic-untrusted-key']));
+  await importSettings(JSON.stringify({ ...payload, settings: { ...payload.settings, ...incoming } }), { overwriteExisting: true });
+  expect(stored).toMatchObject({ ...media, ...existing });
+});
+
+it('round trips a localized OpenRouter voice without borrowing a different model voice', async () => {
+  stored = { openrouter_tts_model: 'microsoft/mai-voice-2.1', openrouter_tts_voice: 'ru-RU-Masha:MAI-Voice-2.1' };
+  const backup = await exportSettings();
+  stored = {};
+  await importSettings(backup.data, { overwriteExisting: true });
+  expect(stored).toMatchObject({ openrouter_tts_model: 'microsoft/mai-voice-2.1', openrouter_tts_voice: 'ru-RU-Masha:MAI-Voice-2.1' });
+});
+
+it('round trips per-model speech options and discards unrelated or invalid values from the backup', async () => {
+  stored = { openrouter_tts_options: {
+    'google/gemini-3.8-flash-tts': { instructions: 'Read with clear pauses.', speed: 1.2 },
+    'x-ai/grok-voice-tts-1.0': { speed: 1.4 },
+    'microsoft/mai-voice-2.1': { speed: 3, style: 'narrator' }
+  } };
+  const backup = await exportSettings();
+  const expected = { 'google/gemini-3.8-flash-tts': { instructions: 'Read with clear pauses.' },
+    'x-ai/grok-voice-tts-1.0': { speed: 1.4 }, 'microsoft/mai-voice-2.1': { style: 'narrator' } };
+  expect(JSON.parse(backup.data).settings.openrouter_tts_options).toEqual(expected);
+  stored = {};
+  await importSettings(backup.data, { overwriteExisting: true });
+  expect(stored.openrouter_tts_options).toEqual(expected);
+});
+
+it('rejects a conflicting imported voice without keeping it for the newly imported model', async () => {
+  stored = { openrouter_tts_model: 'x-ai/grok-voice-tts-1.0', openrouter_tts_voice: 'ara' };
+  const result = await importSettings(JSON.stringify({ settings: {
+    openrouter_tts_model: 'mistralai/voxtral-mini-tts-3-0', openrouter_tts_voice: 'Kore'
+  } }), { overwriteExisting: true });
+  expect(result.warningTranslations).toContainEqual({ key: 'warningImportValue', params: { setting: 'openrouter_tts_voice' } });
+  expect(result.settingsImported).toBe(1);
+  expect(stored.openrouter_tts_model).toBe('mistralai/voxtral-mini-tts-3-0');
+  expect(stored).not.toHaveProperty('openrouter_tts_voice');
+});
+
+it('round trips custom prompts and rejects an import that would drop required variables', async () => {
+  stored = { prompt_override_summary: 'Write clearly in {{targetLanguage}}.' };
+  const backup = (await exportSettings()).data;
+  stored = {};
+  await importSettings(backup);
+  expect(stored.prompt_override_summary).toBe('Write clearly in {{targetLanguage}}.');
+  const result = await importSettings(JSON.stringify({ settings: {
+    prompt_override_summary: 'Write clearly.'
+  } }), { overwriteExisting: true });
+  expect(stored.prompt_override_summary).toBe('Write clearly in {{targetLanguage}}.');
+  expect(result.warningTranslations).toContainEqual({
+    key: 'warningImportValue', params: { setting: 'prompt_override_summary' }
   });
 });
 
@@ -37,6 +102,46 @@ async function holdCacheLookupWrite() {
 }
 
 describe('selector cache storage transactions', () => {
+  it('adds missing sites and keeps the current rules even when their domain is in the backup', async () => {
+    const url = 'https://source.example/article';
+    await cacheSelectors(url, { content: 'main' });
+    const current = await getCachedSelectors(url);
+    const imported = JSON.stringify({ settings: { output_format: 'markdown' }, selectorCache: {
+      'source.example': { selectors: { content: '.previous' }, invalidated: true },
+      'archive.example': { selectors: { content: '.entry' } }
+    } });
+    stored.output_format = 'pdf';
+    const options = { importCache: true };
+    await importSettings(imported, options);
+    await markCacheSuccess(url, current);
+    expect(stored).toMatchObject({ output_format: 'pdf', selector_cache: {
+      'source.example': { selectors: { content: 'main' }, invalidated: false, successCount: current.successCount + 1 },
+      'archive.example': { selectors: { content: '.entry' } }
+    } });
+    const snapshot = structuredClone(stored.selector_cache);
+    await importSettings(imported, options);
+    expect(stored.selector_cache).toEqual(snapshot);
+  });
+
+  it('rejects an oversized combined cache without pruning or replacing current sites', async () => {
+    stored.selector_cache = { 'current.example': { selectors: { content: 'main' } } };
+    const incoming = { 'archive.example': { selectors: { content: 'article' } } };
+    const maxLength = JSON.stringify(stored.selector_cache).length;
+    await expect(addToSelectorCache(incoming, maxLength)).resolves.toBeGreaterThan(maxLength);
+    expect(stored.selector_cache).toEqual({ 'current.example': { selectors: { content: 'main' } } });
+  });
+
+  it('replaces only selected sections after explicit replacement confirmation', async () => {
+    stored.selector_cache = { 'current.example': { selectors: { content: 'main' } } };
+    stored.extension_stats = { totalSaved: 4 };
+    const result = await importSettings(JSON.stringify({ settings: {}, statistics: { totalSaved: 2 }, selectorCache: {
+      'archive.example': { selectors: { content: 'article' } }
+    } }), { importCache: true, importStats: false, dataMode: 'replace' });
+    expect(result).toMatchObject({ statsImported: false, cacheImported: true });
+    expect(stored.extension_stats).toEqual({ totalSaved: 4 });
+    expect(Object.keys(stored.selector_cache)).toEqual(['archive.example']);
+  });
+
   it('retains both domains when two extractions cache their selectors together', async () => {
     await Promise.all([
       cacheSelectors('https://source.example/article', { content: 'main' }),
@@ -63,7 +168,7 @@ describe('selector cache storage transactions', () => {
     const { lookup, release } = await holdCacheLookupWrite();
     const imported = importSettings(JSON.stringify({ settings: {}, selectorCache: {
       'archive.example': { selectors: { content: '.entry' } }
-    } }), { importCache: true });
+    } }), { importCache: true, dataMode: 'replace' });
     try {
       await new Promise(resolve => setImmediate(resolve));
     } finally {
@@ -96,7 +201,7 @@ describe('selector cache storage transactions', () => {
     if (replacement === 'settings import') {
       const imported = await importSettings(JSON.stringify({ settings: {}, selectorCache: {
         'source.example': { selectors, successCount: 1 }
-      } }), { importCache: true });
+      } }), { importCache: true, dataMode: 'replace' });
       expect(imported.cacheImported).toBe(true);
     } else {
       if (replacement === 'cache clearing') await clearSelectorCache();
@@ -114,12 +219,15 @@ describe('selector cache storage transactions', () => {
 });
 
 describe('settings import and export', () => {
-  it('exports and imports the current Google TTS model for a saved preview', async () => {
-    const oldSettings = { google_tts_model: 'gemini-2.5-flash-preview-tts', google_tts_voice: 'Charon',
+  it.each([
+    'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-flash-lite-preview-tts'
+  ])('exports and imports the current Google TTS model for saved %s', async model => {
+    const oldSettings = { google_tts_model: model, google_tts_voice: 'Charon',
       google_tts_prompt: 'Read calmly.' };
     const currentSettings = { ...oldSettings, google_tts_model: 'gemini-3.8-flash-lite-tts' };
     stored = { ...oldSettings };
-    expect(JSON.parse(await exportSettings()).settings).toMatchObject(currentSettings);
+    expect(JSON.parse((await exportSettings()).data).settings).toMatchObject(currentSettings);
     expect(stored).toEqual(oldSettings);
     stored = {};
     await importSettings(JSON.stringify({ settings: oldSettings }));
@@ -162,7 +270,7 @@ describe('settings import and export', () => {
   });
   it.each(['automatic', 'selector', 'extract'])('restores the %s extraction mode', async (mode) => {
     stored = { extraction_mode: mode, audio_provider: 'offline', pdf_style_preset: 'contrast', audio_speed: '1.5', pdf_font_size: '31', pdf_custom_bg_color: '#18202a', pdf_custom_text_color: '#e8e4dd', pdf_custom_heading_color: '#a9cad3', pdf_custom_link_color: '#b6d4ac' };
-    const exported = await exportSettings();
+    const { data: exported } = await exportSettings();
     stored = {};
     const result = await importSettings(exported, { overwriteExisting: true });
     expect(result.warnings).toEqual([]);
@@ -188,7 +296,7 @@ describe('settings import and export', () => {
 
   it('excludes API keys from exports and imports', async () => {
     stored = { openai_api_key: 'synthetic-key', generate_toc: false };
-    const exported = JSON.parse(await exportSettings());
+    const exported = JSON.parse((await exportSettings()).data);
     expect(exported.settings).toEqual({ generate_toc: false });
     await importSettings(JSON.stringify({ settings: { openai_api_key: 'synthetic-replacement' } }), { overwriteExisting: true });
     expect(stored.openai_api_key).toBe('synthetic-key');
@@ -212,5 +320,57 @@ describe('settings import and export', () => {
     const result = await importSettings(JSON.stringify({ settings: { pdf_font_family: '</style><div>Unexpected content</div>' } }), { overwriteExisting: true });
     expect(result.warnings).toHaveLength(1);
     expect(stored.pdf_font_family).toBe('Times New Roman');
+  });
+
+  it.each(['pdf', 'markdown', 'audio'])('does not export the current %s format but keeps format-specific settings', async output_format => {
+    stored = { output_format, audio_provider: 'offline', pdf_style_preset: 'sepia' };
+    const exported = JSON.parse((await exportSettings()).data);
+    expect(exported.settings).toEqual({ audio_provider: 'offline', pdf_style_preset: 'sepia' });
+    expect(stored.output_format).toBe(output_format);
+  });
+
+  it.each([[true, 'audio'], [true, null], [false, 'markdown']])('ignores a legacy format with overwrite=%s and value=%s', async (overwriteExisting, output_format) => {
+    stored = { output_format: 'pdf' };
+    const result = await importSettings(JSON.stringify({ settings: { output_format, pdf_style_preset: 'sepia' } }), { overwriteExisting });
+    expect(stored).toMatchObject({ output_format: 'pdf', pdf_style_preset: 'sepia' });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('does not create a local format when importing an older backup into a new profile', async () => {
+    await importSettings(JSON.stringify({ settings: { output_format: 'audio' } }));
+    expect(stored).not.toHaveProperty('output_format');
+  });
+
+  it.each([
+    ['selector_cache', 'selectorCache', 'backupExportCacheUnreadable', true, false],
+    ['extension_stats', 'statistics', 'backupExportStatisticsUnreadable', false, true]
+  ])('continues to export the readable sections when %s cannot be read', async (key, omitted, warning, includesStatistics, includesCache) => {
+    stored = { generate_toc: true, extension_stats: { totalSaved: 2 },
+      selector_cache: { 'example.net': { selectors: { content: 'main' } } } };
+    const get = chrome.storage.local.get.getMockImplementation();
+    chrome.storage.local.get.mockImplementation(async keys => {
+      if (keys.includes(key)) throw new Error('Synthetic storage failure');
+      return get(keys);
+    });
+    const backup = await exportSettings(true, true);
+    const json = JSON.parse(backup.data);
+    expect(json.settings).toEqual({ generate_toc: true });
+    expect(json).not.toHaveProperty(omitted);
+    if (includesStatistics) expect(json.statistics.totalSaved).toBe(2);
+    if (includesCache) expect(json.selectorCache).toEqual(stored.selector_cache);
+    expect(backup).toMatchObject({ includesStatistics, includesCache, warnings: [{ key: warning }] });
+  });
+
+  it('includes legitimately empty requested sections without a warning', async () => {
+    const backup = await exportSettings(true, true);
+    expect(backup).toMatchObject({ includesStatistics: true, includesCache: true, warnings: [] });
+    expect(JSON.parse(backup.data)).toMatchObject({ statistics: { totalSaved: 0, history: [] }, selectorCache: {} });
+  });
+
+  it('warns about the backup limit instead of pretending an oversized cache was included', async () => {
+    stored.selector_cache = Object.fromEntries(Array.from({ length: 10001 }, (_, i) => [`site-${i}.example`, { selectors: { content: 'main' } }]));
+    const backup = await exportSettings(false, true);
+    expect(JSON.parse(backup.data)).not.toHaveProperty('selectorCache');
+    expect(backup).toMatchObject({ includesCache: false, warnings: [{ key: 'backupExportCacheLimit' }] });
   });
 });

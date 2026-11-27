@@ -187,6 +187,12 @@ describe('utils/pipeline-helpers', () => {
       expect(recordSave).toHaveBeenCalled();
     });
 
+    it('preserves an absent title for localization by the history view', async () => {
+      const { recordSave } = await import('../../scripts/stats/index.js');
+      await finalizeProcessing({ title: '', url: 'https://example.test', outputFormat: 'pdf' }, vi.fn(), null);
+      expect(recordSave).toHaveBeenCalledWith(expect.objectContaining({ title: '' }));
+    });
+
     it.each([
       [2, false, 'Ready: PDF. Image translation failures: 2.'],
       [undefined, false, 'Ready: PDF'],
@@ -392,12 +398,20 @@ describe('utils/pipeline-helpers', () => {
       expect(resultObj.abstract).toBeUndefined();
     });
 
+    it('ignores a previously enabled abstract in automatic mode even with a valid key', async () => {
+      const generateAbstract = vi.fn();
+      const result = { content: [{ type: 'paragraph', text: 'Article text' }] };
+      await handleAbstractGeneration({ mode: 'automatic', generateAbstract: true, outputFormat: 'pdf', apiKey: 'key' },
+        result, generateAbstract, mocks.mockUpdateState);
+      expect(generateAbstract).not.toHaveBeenCalled();
+    });
+
     it('should skip abstract for audio format', async () => {
       const generateAbstract = vi.fn();
       
       const result = await handleAbstractGeneration(
-        { generateAbstract: true, outputFormat: 'audio' },
-        { content: [] },
+        { mode: 'selector', generateAbstract: true, outputFormat: 'audio', apiKey: 'key' },
+        { content: [{ type: 'paragraph', text: 'Article text' }] },
         generateAbstract,
         mocks.mockUpdateState
       );
@@ -410,7 +424,7 @@ describe('utils/pipeline-helpers', () => {
       const resultObj = { content: [{ type: 'paragraph', text: 'Text' }], title: 'Test' };
       
       await handleAbstractGeneration(
-        { generateAbstract: true, apiKey: 'key', model: 'gpt-4', outputFormat: 'pdf' },
+        { mode: 'selector', generateAbstract: true, apiKey: 'key', model: 'gpt-4', outputFormat: 'pdf' },
         resultObj,
         generateAbstract,
         mocks.mockUpdateState
@@ -425,7 +439,7 @@ describe('utils/pipeline-helpers', () => {
       const resultObj = { content: [{ type: 'paragraph', text: 'Text' }], title: 'Test' };
       
       await handleAbstractGeneration(
-        { generateAbstract: true, apiKey: 'key', model: 'gpt-4', outputFormat: 'pdf' },
+        { mode: 'extract', generateAbstract: true, apiKey: 'key', model: 'gpt-4', outputFormat: 'pdf' },
         resultObj,
         generateAbstract,
         mocks.mockUpdateState

@@ -5,6 +5,8 @@
 import { getUILanguage, UI_LOCALES, tSync } from '../../scripts/locales.js';
 import { ELEMENT_IDS } from '../constants.js';
 import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, getImageTranslationModel, supportsImageTranslation } from '../../scripts/api/image-translation-catalog.js';
+import { supportsDocumentAbstract } from '../../scripts/processing/export-requirements.js';
+import { isMaskedKey } from '../../scripts/utils/security/encryption.js';
 
 /**
  * Initialize UI visibility module
@@ -25,6 +27,7 @@ export function initUIVisibility(deps) {
   // Update mode hint text
   async function updateModeHint() {
     const mode = elements.modeSelect.value;
+    updateAbstractVisibility();
     const langCode = await getUILanguage();
     const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
     
@@ -35,6 +38,12 @@ export function initUIVisibility(deps) {
     } else {
       elements.modeHint.textContent = locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract;
     }
+  }
+
+  function updateAbstractVisibility() {
+    const format = elements.mainFormatSelect?.value || elements.outputFormat?.value;
+    const visible = supportsDocumentAbstract(elements.modeSelect?.value, format);
+    setDisplayForIds(['generateAbstract'], visible ? 'block' : 'none');
   }
 
   // Show/hide cache option based on mode
@@ -69,6 +78,10 @@ export function initUIVisibility(deps) {
     setElementGroupDisplay('translateImagesGroup', shouldShowTranslateImages ? 'block' : 'none');
     setElementGroupDisplay('imageTranslationProviderGroup', active ? 'block' : 'none');
     const showGoogleSettings = active && provider === 'gemini';
+    const showOpenRouterImages = active && provider === 'openrouter';
+    setElementGroupDisplay('openrouterImageModelGroup', showOpenRouterImages ? 'block' : 'none');
+    setElementGroupDisplay('openrouterImageKeyGroup', showOpenRouterImages ? 'block' : 'none');
+    setElementGroupDisplay('openaiImageKeyGroup', active && provider === 'openai' ? 'block' : 'none');
     setElementGroupDisplay(ELEMENT_IDS.GEMINI_IMAGE_MODEL, showGoogleSettings ? 'block' : 'none');
     setElementGroupDisplay('googleApiGroup', showGoogleSettings ? 'block' : 'none');
 
@@ -89,28 +102,24 @@ export function initUIVisibility(deps) {
       translateImagesHint.textContent = tSync(key, currentLanguage());
       translateImagesHint.style.color = warning ? 'var(--text-warning, #ffa500)' : '';
     };
-    const normalKey = provider === 'openai' ? 'translateImagesOpenAiHint' : 'translateImagesHint';
+    const normalKey = { openai: 'translateImagesOpenAiHint', openrouter: 'translateImagesOpenRouterHint' }[provider] || 'translateImagesHint';
     renderHint(normalKey);
-    if (!active) return;
+    if (!showGoogleSettings) return;
 
-    const keyInput = getElement(provider === 'openai' ? 'apiKey' : 'googleApiKey');
-    const draft = keyInput?.value?.trim() || '';
-    const ownsDraft = provider !== 'openai' ||
-      (getElement('apiProviderSelect')?.value === 'openai' && keyInput?.dataset.provider === 'openai');
-    let hasKey = ownsDraft && Boolean(draft) && !/^(?:\*{4}|•{4})/.test(draft);
+    const draft = getElement('googleApiKey')?.value?.trim() || '';
+    let hasKey = Boolean(draft) && !isMaskedKey(draft);
     if (!hasKey) {
       try {
-        const storageKey = provider === 'openai' ? 'openai_api_key' : 'google_api_key';
-        const stored = await chrome.storage.local.get([storageKey]);
+        const { google_api_key: saved } = await chrome.storage.local.get(['google_api_key']);
         if (!isCurrent()) return;
-        hasKey = typeof stored[storageKey] === 'string' && Boolean(stored[storageKey]) && !/^(?:\*{4}|•{4})/.test(stored[storageKey]);
+        hasKey = typeof saved === 'string' && Boolean(saved) && !isMaskedKey(saved);
       } catch { if (!isCurrent()) return; }
     }
-    if (!hasKey) renderHint(provider === 'openai' ? 'translateImagesRequiresOpenAiKey' : 'translateImagesRequiresGoogleKey', true);
+    if (!hasKey) renderHint('translateImagesRequiresGoogleKey', true);
   }
 
   chrome.storage.onChanged?.addListener((changes, area) => {
-    if (area === 'local' && (changes.openai_api_key || changes.google_api_key || changes.ui_language)) {
+    if (area === 'local' && (changes.google_api_key || changes.ui_language)) {
       void updateTranslationVisibility();
     }
   });
@@ -226,8 +235,8 @@ export function initUIVisibility(deps) {
     // TOC AND ABSTRACT VISIBILITY
     // ============================================
     // TOC and abstract are not applicable for audio format
-    const tocIds = ['generateToc', 'generateAbstract'];
-    setDisplayForIds(tocIds, isAudio ? 'none' : 'block');
+    setDisplayForIds(['generateToc'], isAudio ? 'none' : 'block');
+    updateAbstractVisibility();
     
     // ============================================
     // TRANSLATION SETTINGS VISIBILITY
@@ -252,6 +261,7 @@ export function initUIVisibility(deps) {
     updateModeHint,
     updateCacheVisibility,
     updateTranslationVisibility,
+    updateAbstractVisibility,
     updateOutputFormatUI
   };
 }

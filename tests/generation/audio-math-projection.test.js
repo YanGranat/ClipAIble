@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { serializeReadingHtml } from '../../scripts/extraction/extractor/inline-content.js';
-import { basicCleanup, contentToPlainText, prepareChunkForAudio, prepareContentForAudio } from '../../scripts/generation/audio-prep.js';
+import { contentToPlainText, prepareChunkForAudio, prepareContentForAudio } from '../../scripts/generation/audio-prep.js';
 import { callAI } from '../../scripts/api/index.js';
 
 vi.mock('../../scripts/api/index.js', () => ({ callAI: vi.fn() }));
@@ -44,7 +44,7 @@ describe('Semantic math narration projection', () => {
     const before = structuredClone(content), text = contentToPlainText(content);
     expect(text).toContain(`Outer ${expected}`);
     expect(text).toContain(`Inner ${expected}`);
-    expect(text).toContain(`Image: Caption ${expected}.`);
+    expect(text).toContain(`Caption ${expected}.`);
     expect(text.split(expected)).toHaveLength(4);
     expect(content).toEqual(before);
   });
@@ -78,13 +78,14 @@ describe('Semantic math narration projection', () => {
     expect(text).not.toContain('^{');
   });
 
-  it('keeps canonical indices while removing ordinary underscore emphasis', () => {
-    expect(basicCleanup(`The _measured_ values are ${expected}.`)).toBe(`The measured values are ${expected}.`);
+  it('removes rendered Markdown emphasis without reinterpreting literal mathematical notation', () => {
+    const text = contentToPlainText([{ type: 'paragraph', text: 'The _measured_ value is `a_{i} * b_{j}`.' }]);
+    expect(text).toBe('The measured value is a_{i} * b_{j}.');
   });
 
-  it('does not erase two indices returned by optional AI cleanup and requests spoken math semantics', async () => {
-    callAI.mockResolvedValue(`The _measured_ values are ${expected}.`);
-    expect(await prepareChunkForAudio(expected, 0, 1, 'synthetic-key', 'synthetic-model', 'en')).toBe(`The measured values are ${expected}.`);
-    expect(callAI.mock.calls[0][0]).toMatch(/mathematical operators[\s\S]*original language[\s\S]*meaning/i);
+  it('does not reinterpret literal notation after a custom preparation response', async () => {
+    const output = `The values are ${expected}, and x_y_z is unchanged.`;
+    callAI.mockResolvedValue(output);
+    expect(await prepareChunkForAudio(expected, 0, 1, 'synthetic-key', 'synthetic-model', 'en')).toBe(output);
   });
 });

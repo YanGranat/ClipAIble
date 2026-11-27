@@ -12,6 +12,7 @@ import { getUILanguage, tSync } from '../locales.js';
 import { stripHtml } from '../utils/html.js';
 
 const STORAGE_KEY = 'extension_stats';
+const HISTORY_LIMIT = 50;
 let mutations = Promise.resolve();
 function mutateStats(operation) {
   const result = mutations.then(operation);
@@ -40,7 +41,8 @@ function getDefaultStats() {
     topSites: {}, // { "medium.com": 12, "habr.com": 5 }
     totalProcessingTime: 0, // in milliseconds
     lastSaved: null, // timestamp
-    history: [] // last 50 items: { title, url, format, date, processingTime }
+    history: [],
+    historyCountedThrough: null
   };
 }
 
@@ -52,6 +54,15 @@ function normalizeStats(value) {
   const count = value => nonnegative(value) ? value : 0;
   const counts = value => value && typeof value === 'object' && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value).filter(([, number]) => nonnegative(number))) : {};
+  const history = Array.isArray(value.history) ? value.history.filter(item =>
+    item && typeof item === 'object' && typeof item.title === 'string' &&
+    typeof item.url === 'string' && typeof item.format === 'string' && nonnegative(item.date)
+  ).slice(0, HISTORY_LIMIT).map(item => ({ ...item, processingTime: count(item.processingTime) })) : [];
+  const lastSaved = nonnegative(value.lastSaved) ? value.lastSaved : null;
+  // Legacy totals can represent entries the backup no longer identifies.
+  const historyCountedThrough = nonnegative(value.historyCountedThrough) ? value.historyCountedThrough
+    : value.historyCountedThrough === null || count(value.totalSaved) <= history.length ? null
+      : Math.max(lastSaved ?? 0, ...history.map(item => item.date));
   return {
     ...defaults,
     totalSaved: count(value.totalSaved),
@@ -59,11 +70,9 @@ function normalizeStats(value) {
     byMonth: counts(value.byMonth),
     topSites: counts(value.topSites),
     totalProcessingTime: count(value.totalProcessingTime),
-    lastSaved: nonnegative(value.lastSaved) ? value.lastSaved : null,
-    history: Array.isArray(value.history) ? value.history.filter(item =>
-      item && typeof item === 'object' && typeof item.title === 'string' &&
-      typeof item.url === 'string' && typeof item.format === 'string' && nonnegative(item.date)
-    ).slice(0, 50).map(item => ({ ...item, processingTime: count(item.processingTime) })) : []
+    lastSaved,
+    history,
+    historyCountedThrough
   };
 }
 
@@ -93,13 +102,56 @@ async function saveStats(stats) {
   }
 }
 
-async function readStats() {
+async function readStats(forBackup = false) {
   const result = await chrome.storage.local.get([STORAGE_KEY]);
-  return normalizeStats(result[STORAGE_KEY]);
+  const value = result[STORAGE_KEY];
+  if (forBackup && value != null && (typeof value !== 'object' || Array.isArray(value))) {
+    throw new TypeError('Invalid stored statistics');
+  }
+  return normalizeStats(value);
 }
 
 export function replaceStats(value) {
   return mutateStats(() => saveStats(normalizeStats(value)));
+}
+
+function historyIdentity(item) {
+  return typeof item.id === 'string' && item.id ? `id:${item.id}`
+    : JSON.stringify([item.title, item.url, item.format, item.date, item.processingTime]);
+}
+
+export function addToStats(value) {
+  return mutateStats(async () => {
+    const current = await readStats();
+    const incoming = normalizeStats(value);
+    if (!current.totalSaved && !current.history.length && current.historyCountedThrough === null) {
+      await saveStats(incoming);
+      return;
+    }
+
+    const rows = current.history.map(item => ({ item, added: false }));
+    const seen = new Set(current.history.map(historyIdentity));
+    for (const item of incoming.history) {
+      const identity = historyIdentity(item);
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      rows.push({ item, added: true });
+    }
+    rows.sort((a, b) => b.item.date - a.item.date);
+    const latest = rows.slice(0, HISTORY_LIMIT);
+    if (!latest.some(row => row.added)) return;
+
+    for (const { item, added } of latest) {
+      if (added && (current.historyCountedThrough === null || item.date > current.historyCountedThrough)) {
+        countSave(current, item);
+      }
+    }
+    for (const { item, added } of rows.slice(HISTORY_LIMIT)) {
+      if (!added) markHistoryCountedThrough(current, item.date);
+    }
+    current.history = latest.map(row => row.item);
+    await saveStats(current);
+  });
 }
 
 /**
@@ -118,14 +170,29 @@ function extractDomain(url) {
 }
 
 /**
- * Get current month key (YYYY-MM)
+ * Get the local month key of a save (YYYY-MM).
  * @returns {string} Month key
  */
-function getCurrentMonthKey() {
-  const now = new Date();
+function getCurrentMonthKey(timestamp = Date.now()) {
+  const now = new Date(timestamp);
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   return `${year}-${month}`;
+}
+
+function markHistoryCountedThrough(stats, timestamp) {
+  stats.historyCountedThrough = Math.max(stats.historyCountedThrough ?? 0, timestamp);
+}
+
+function countSave(stats, item) {
+  stats.totalSaved++;
+  const month = getCurrentMonthKey(item.date);
+  const domain = extractDomain(item.url);
+  stats.byFormat[item.format] = (Object.hasOwn(stats.byFormat, item.format) ? stats.byFormat[item.format] : 0) + 1;
+  stats.byMonth[month] = (stats.byMonth[month] || 0) + 1;
+  stats.topSites[domain] = (Object.hasOwn(stats.topSites, domain) ? stats.topSites[domain] : 0) + 1;
+  stats.totalProcessingTime += item.processingTime;
+  stats.lastSaved = Math.max(stats.lastSaved ?? 0, item.date);
 }
 
 /**
@@ -162,45 +229,26 @@ async function recordSaveUnlocked(data) {
     
     const stats = await readStats();
     
-    // Update counters
-    stats.totalSaved++;
-    stats.byFormat[format] = (stats.byFormat[format] || 0) + 1;
-    
-    // Update monthly stats
-    const monthKey = getCurrentMonthKey();
-    stats.byMonth[monthKey] = (stats.byMonth[monthKey] || 0) + 1;
-    
-    // Update site stats
-    const domain = extractDomain(url);
-    stats.topSites[domain] = (stats.topSites[domain] || 0) + 1;
-    
-    // Update timing
-    if (processingTime && processingTime > 0) {
-      stats.totalProcessingTime += processingTime;
-    }
-    
-    stats.lastSaved = Date.now();
-    
-    // Add to history (keep last 50)
     // SECURITY: Sanitize title to remove any HTML before saving to storage
-    const sanitizedTitle = title ? stripHtml(title).substring(0, 100).trim() : 'Untitled';
-    stats.history.unshift({
+    const sanitizedTitle = title ? stripHtml(title).substring(0, 100).trim() : '';
+    const item = {
       id: crypto.randomUUID(),
-      title: sanitizedTitle || 'Untitled', // Note: This is for stats, not user-facing, so English is acceptable
+      title: sanitizedTitle,
       url,
-      domain,
+      domain: extractDomain(url),
       format,
       date: Date.now(),
-      processingTime: processingTime || 0
-    });
-    
-    if (stats.history.length > 50) {
-      stats.history = stats.history.slice(0, 50);
+      processingTime: Number.isFinite(processingTime) && processingTime > 0 ? processingTime : 0
+    };
+    countSave(stats, item);
+    stats.history.unshift(item);
+    for (const removed of stats.history.splice(HISTORY_LIMIT)) {
+      markHistoryCountedThrough(stats, removed.date);
     }
     
     await saveStats(stats);
     
-    log('Stats updated successfully', { totalSaved: stats.totalSaved, format, domain });
+    log('Stats updated successfully', { totalSaved: stats.totalSaved, format, domain: item.domain });
     
     return stats;
   } catch (error) {
@@ -288,17 +336,17 @@ export function deleteHistoryItem(item) {
       : !current.id && fields.every(field => (current[field] ?? null) === (item[field] ?? null)));
     if (index < 0) return;
     // Keep cumulative counters; only remove the selected history entry.
+    markHistoryCountedThrough(stats, stats.history[index].date);
     stats.history.splice(index, 1);
     await saveStats(stats);
   });
 }
 
 /**
- * Export stats as JSON
- * @returns {Promise<string>} JSON string
+ * Read statistics for backup without substituting empty data on read errors.
+ * @returns {Promise<StatsData>}
  */
-export async function exportStats() {
-  const stats = await loadStats();
-  return JSON.stringify(stats, null, 2);
+export function exportStats() {
+  return readStats(true);
 }
 

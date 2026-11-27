@@ -1,15 +1,16 @@
 // @ts-check
-// TTS API key save handlers (ElevenLabs, Qwen, Respeecher, Google TTS)
+// Supplemental API key save handlers for speech and images
 
 import { saveApiKeySettings } from '../../scripts/utils/encryption.js';
-import { isApiKeyToken } from '../utils/api-key-validation.js';
+import { isApiKeyToken, getOpenAiKeyValidationError } from '../utils/api-key-validation.js';
+import { setApiKeyVisibility } from './api-keys.js';
 
 const keySaves = new WeakMap();
 const getShortKeyError = key => key.length < 10 ? 'keyTooShort' : null;
 const getTokenError = key => isApiKeyToken(key) ? null : 'invalidKeyFormat';
 
 /**
- * Generic function to save TTS API key
+ * Save a provider key from a dedicated password field
  * @param {Object} config - Configuration
  * @param {HTMLInputElement} config.input - Input element
  * @param {HTMLElement} [config.toggleButton] - Toggle button element
@@ -21,8 +22,10 @@ const getTokenError = key => isApiKeyToken(key) ? null : 'invalidKeyFormat';
  * @param {Function} config.t - Translation function
  * @param {(key: string) => string | null} config.getValidationError - Key validation error translation key
  * @param {string} config.keyName - Key name for error messages
+ * @param {import('../../scripts/types.js').LocalizedMessage} [config.requiredMessage] - Override for the empty input message
+ * @param {string} [config.savedMessageKey] - Override for the success message
  */
-async function saveTtsApiKey(config) {
+async function saveSupplementalApiKey(config) {
   const {
     input,
     toggleButton,
@@ -33,7 +36,9 @@ async function saveTtsApiKey(config) {
     showToast,
     t,
     getValidationError,
-    keyName
+    keyName,
+    requiredMessage = null,
+    savedMessageKey = null
   } = config;
 
   const field = keySaves.get(input) || { requested: 0, accepted: 0 };
@@ -45,8 +50,9 @@ async function saveTtsApiKey(config) {
   const key = draft.trim();
   if (!key) {
     const inputKeyName = keyName === 'Respeecher' ? 'Respecher' : keyName;
-    const pleaseEnterKeyText = await t(`pleaseEnter${inputKeyName}ApiKey`);
-    if (revision === field.requested) showToast(pleaseEnterKeyText, 'error', { key: `pleaseEnter${inputKeyName}ApiKey` });
+    const message = requiredMessage || { key: `pleaseEnter${inputKeyName}ApiKey` };
+    const pleaseEnterKeyText = await t(message.key, message.params);
+    if (revision === field.requested) showToast(pleaseEnterKeyText, 'error', message);
     return;
   }
   
@@ -69,7 +75,7 @@ async function saveTtsApiKey(config) {
     if (revision !== field.accepted) return;
     if (input.value === draft && input.type === type && input.dataset.encrypted === previousCiphertext) {
       input.value = maskApiKey(key);
-      input.type = 'password';
+      setApiKeyVisibility(input, toggleButton, false);
       input.dataset.encrypted = encrypted;
       delete input.dataset.decrypted;
       if (toggleButton) {
@@ -78,8 +84,9 @@ async function saveTtsApiKey(config) {
       }
     }
     const savedKeyName = keyName === 'GoogleTts' ? 'googleTts' : keyName.toLowerCase();
-    const keySavedText = await t(`${savedKeyName}KeySaved`);
-    if (revision === field.requested) showToast(keySavedText, 'success', { key: `${savedKeyName}KeySaved` });
+    const messageKey = savedMessageKey || `${savedKeyName}KeySaved`;
+    const keySavedText = await t(messageKey);
+    if (revision === field.requested) showToast(keySavedText, 'success', { key: messageKey });
   } catch (error) {
     logError(`Failed to save ${keyName} API key`, error);
     const failedToSaveText = await t('failedToSave');
@@ -112,7 +119,7 @@ export function setupTtsKeyHandlers(deps) {
   // ElevenLabs API key
   if (elements.saveElevenlabsApiKey) {
     elements.saveElevenlabsApiKey.addEventListener('click', async () => {
-      await saveTtsApiKey({
+      await saveSupplementalApiKey({
         input: elements.elevenlabsApiKey,
         toggleButton: elements.toggleElevenlabsApiKey,
         storageKey: STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY,
@@ -130,7 +137,7 @@ export function setupTtsKeyHandlers(deps) {
   // Qwen API key
   if (elements.saveQwenApiKey) {
     elements.saveQwenApiKey.addEventListener('click', async () => {
-      await saveTtsApiKey({
+      await saveSupplementalApiKey({
         input: elements.qwenApiKey,
         toggleButton: elements.toggleQwenApiKey,
         storageKey: STORAGE_KEYS.STORAGE_QWEN_API_KEY,
@@ -148,7 +155,7 @@ export function setupTtsKeyHandlers(deps) {
   // Respeecher API key
   if (elements.saveRespeecherApiKey) {
     elements.saveRespeecherApiKey.addEventListener('click', async () => {
-      await saveTtsApiKey({
+      await saveSupplementalApiKey({
         input: elements.respeecherApiKey,
         toggleButton: elements.toggleRespeecherApiKey,
         storageKey: STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY,
@@ -163,10 +170,40 @@ export function setupTtsKeyHandlers(deps) {
     });
   }
 
+  elements.saveOpenaiImageKey?.addEventListener('click', async () => {
+    await saveSupplementalApiKey({
+      input: elements.openaiImageKey,
+      storageKey: STORAGE_KEYS.API_KEY,
+      encryptApiKey,
+      maskApiKey,
+      logError,
+      showToast,
+      t,
+      getValidationError: getOpenAiKeyValidationError,
+      keyName: 'OpenAI',
+      requiredMessage: { key: 'errorImageKeyRequired', params: { provider: 'OpenAI' } },
+      savedMessageKey: 'apiKeySaved'
+    });
+  });
+
+  const openRouterMedia = [
+    { button: elements.saveOpenrouterImageKey, input: elements.openrouterImageKey,
+      storageKey: STORAGE_KEYS.OPENROUTER_IMAGE_API_KEY, requiredKey: 'errorImageKeyRequired' },
+    { button: elements.saveOpenrouterTtsKey, input: elements.openrouterTtsKey,
+      storageKey: STORAGE_KEYS.OPENROUTER_TTS_API_KEY, requiredKey: 'errorAudioApiKeyRequired' }
+  ];
+  for (const { button, input, storageKey, requiredKey } of openRouterMedia) {
+    button?.addEventListener('click', () => saveSupplementalApiKey({
+      input, storageKey, encryptApiKey, maskApiKey, logError, showToast, t,
+      getValidationError: getTokenError, keyName: 'OpenRouter',
+      requiredMessage: { key: requiredKey, params: { provider: 'OpenRouter' } }, savedMessageKey: 'apiKeySaved'
+    }));
+  }
+
   // Google TTS API key
   if (elements.saveGoogleTtsApiKey) {
     elements.saveGoogleTtsApiKey.addEventListener('click', async () => {
-      await saveTtsApiKey({
+      await saveSupplementalApiKey({
         input: elements.googleTtsApiKey,
         toggleButton: elements.toggleGoogleTtsApiKey,
         storageKey: STORAGE_KEYS.STORAGE_GOOGLE_TTS_API_KEY,
@@ -184,7 +221,7 @@ export function setupTtsKeyHandlers(deps) {
   // Google API key for image translation (different from Google TTS)
   if (elements.saveGoogleApiKey) {
     elements.saveGoogleApiKey.addEventListener('click', async () => {
-      await saveTtsApiKey({
+      await saveSupplementalApiKey({
         input: elements.googleApiKey,
         toggleButton: elements.toggleGoogleApiKey,
         storageKey: STORAGE_KEYS.GOOGLE_API_KEY,
