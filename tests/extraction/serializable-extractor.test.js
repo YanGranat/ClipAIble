@@ -53,6 +53,33 @@ describe('Serializable article runtime', () => {
     expect(content).not.toMatch(/Related Blog Posts|Customize suggestions|Another report|recommendation summary|Archive item/);
   });
 
+  it.each([null, { content: '.report-copy' }])('recognizes a recommendation label across flow wrappers in mode %j', async selectors => {
+    const result = await extract(`
+      <article><h1>Field report</h1><div class="report-copy"><div>
+        ${report}<br><br>The closing observation is part of the report.<br><br>
+        <strong>Related:</strong><br><br>
+      </div></div><table role="presentation"><tr>
+        <td><a href="/archive/one">Archive note one</a></td><td><a href="/archive/two">Archive note two</a></td>
+      </tr></table></article>`, selectors);
+    const content = JSON.stringify(result.content);
+    expect(content).toContain('The closing observation is part of the report.');
+    expect(content).not.toMatch(/Related:|Archive note (one|two)/);
+  });
+
+  it.each([null, { content: 'article' }])('keeps a labeled list referenced by the article in mode %j', async selectors => {
+    const result = await extract(`
+      <article><h1>Field report</h1><p>${report}</p>
+        <p>See <a href="#related-observations">the two supporting surveys below</a>.</p>
+        <div><h2 id="related-observations">Related:</h2></div><ul>
+          <li><a href="/surveys/alpha">Upper ridge survey</a></li>
+          <li><a href="/surveys/beta">Lower valley survey</a></li>
+        </ul><p>The comparison ends with an independent check.</p>
+      </article>`, selectors);
+    const content = JSON.stringify(result.content);
+    expect(content).toContain('related-observations');
+    expect(content).toMatch(/Upper ridge survey.*Lower valley survey.*The comparison ends/s);
+  });
+
   it.each([null, { content: 'article' }])('keeps reading paragraphs and removes publisher controls in mode %j', async selectors => {
     const result = await extract(`
       <article><h1>Field report</h1><p>${report}</p>

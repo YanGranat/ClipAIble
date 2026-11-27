@@ -1,6 +1,7 @@
 // @ts-check
 import { renderPrompt } from '../settings/prompt-catalog.js';
 import { fetchBufferedResponse } from './fetch-buffered-response.js';
+import { isApiQuotaCode } from './http-errors.js';
 import { pcmToWav } from './audio-format.js';
 import { OPENAI_TTS_MODEL, OPENAI_TTS_VOICES, DEFAULT_OPENAI_TTS_VOICE, OPENAI_TTS_MIN_SPEED, OPENAI_TTS_MAX_SPEED, OPENAI_TTS_MAX_INPUT } from './tts-catalog.js';
 import { CONFIG } from '../utils/config.js';
@@ -211,6 +212,10 @@ export async function textToSpeech(text, apiKey, options = {}) {
             finish(null, pcmToWav(pcm.buffer, SAMPLE_RATE));
           } else if (data.type === 'error') {
             const code = data.error?.code;
+            if (isApiQuotaCode(code) || isApiQuotaCode(data.error?.type)) {
+              finish(Object.assign(localizedError('errorApiQuotaExceeded', language), { status: 429, retryable: false }));
+              return;
+            }
             const status = code === 'rate_limit_exceeded' ? 429 : code === 'server_error' ? 500 : 400;
             finish(Object.assign(localizedError('errorTtsApiError', language, { status }), { status }));
           }

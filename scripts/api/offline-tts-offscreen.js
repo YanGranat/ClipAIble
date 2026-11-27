@@ -845,6 +845,7 @@ export async function textToSpeech(text, options = {}) {
       response = await sendToOffscreen('PIPER_TTS', {
         text,
         processingRunId: options?.processingRunId,
+        piperProgress: options.piperProgress,
         options: {
           language,
           voice: voiceName,

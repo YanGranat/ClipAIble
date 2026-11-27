@@ -12,7 +12,7 @@ vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(
 vi.mock('../../scripts/locales.js', async importOriginal => ({ ...await importOriginal(), t: async key => key, tSync: key => key, getUILanguage: async () => 'en' }));
 vi.mock('../../popup/settings/api-keys.js', () => ({ initApiKeys: () => ({ setUpdateModelList() {}, updateApiProviderUI: async () => {} }) }));
 vi.mock('../../popup/settings/models.js', () => ({ initModels: () => ({}) }));
-vi.mock('../../popup/settings/audio.js', async importOriginal => ({ ...await importOriginal(), initAudio: () => ({ hideAllAudioFields() {}, saveAudioVoice() {}, updateAudioProviderUI: async () => {}, updateVoiceList: async () => {} }) }));
+vi.mock('../../popup/settings/audio.js', async importOriginal => ({ ...await importOriginal(), initAudio: () => ({ hideAllAudioFields() {}, saveAudioVoice() {}, restoreAudioSpeed() {}, updateAudioProviderUI: async () => {}, updateVoiceList: async () => {} }) }));
 vi.mock('../../popup/settings/ui-visibility.js', () => ({ initUIVisibility: () => ({ updateOutputFormatUI: async () => {}, updateModeHint() {}, updateCacheVisibility() {} }) }));
 
 let dom;

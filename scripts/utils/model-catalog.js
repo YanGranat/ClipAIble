@@ -212,13 +212,20 @@ export function resolveStoredModelSelection(settings) {
   const provider = savedProvider === undefined || savedProvider === null || savedProvider === ''
     ? getModelProvider(globalModel) : savedProvider;
   if (typeof provider !== 'string' || !Object.hasOwn(MODEL_CATALOG, provider)) throw new Error('Unsupported AI provider');
-  const byProvider = settings.model_by_provider;
-  const providerModel = byProvider && typeof byProvider === 'object' && !Array.isArray(byProvider)
-    ? byProvider[provider] : null;
-  const id = typeof providerModel === 'string' && providerModel ? providerModel : globalModel || getDefaultModel(provider);
+  const storedModels = settings.model_by_provider;
+  const byProvider = storedModels && typeof storedModels === 'object' && !Array.isArray(storedModels) ? storedModels : {};
+  const providerModel = byProvider[provider];
   const custom = settings.custom_models;
   const customIds = custom && typeof custom === 'object' && Array.isArray(custom[provider]) ? custom[provider] : [];
-  return { provider, model: resolveSavedModel(provider, id, customIds) };
+  if (typeof providerModel === 'string' && providerModel) {
+    return { provider, model: resolveSavedModel(provider, providerModel, customIds) };
+  }
+  const globalProvider = getModelProvider(globalModel);
+  const globalApiModel = getModelMetadata(globalProvider, globalModel)?.apiModel || globalModel;
+  const foreignPreset = globalProvider !== provider && getExactModelMetadata(globalProvider, resolveSavedModel(globalProvider, globalApiModel));
+  const foreignSelection = Object.entries(byProvider).some(([owner, id]) => owner !== provider && id === globalModel);
+  const legacyModel = (foreignPreset || foreignSelection) && !customIds.includes(globalModel) ? '' : globalModel;
+  return { provider, model: resolveSavedModel(provider, legacyModel, customIds) };
 }
 
 function modelAlias(table, provider, id) {

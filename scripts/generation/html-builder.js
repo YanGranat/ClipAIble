@@ -79,6 +79,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   
   // Clean title from soft hyphens and special characters
   const cleanedTitle = cleanTitle(title || '');
+  const normalizedTitle = cleanedTitle.trim().replace(/\s+/g, ' ').toLowerCase();
   
   // Extract subtitle from content to place it in header (after title, before meta)
   let subtitleHtml = '';
@@ -246,7 +247,8 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
             return isGenericAltText(caption);
           };
           
-          const captionText = item.caption || (item.alt && !isGenericAltText(item.alt) ? item.alt : '');
+          const altTitle = cleanTitle(item.alt || '').trim().replace(/\s+/g, ' ').toLowerCase();
+          const captionText = item.caption || (!item.isGraphic && item.alt && altTitle !== normalizedTitle && !isGenericAltText(item.alt) ? item.alt : '');
           // CRITICAL: If caption already contains HTML (from getFormattedHtml), use sanitizeHtml directly
           // Otherwise, convert markdown to HTML first
           let caption = '';

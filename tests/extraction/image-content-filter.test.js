@@ -40,6 +40,23 @@ describe('Article image classification', () => {
     expect(handleImg(dom.window, dom.window.document.querySelector('img'), state(), CONSTANTS, dom.window.location.href)?.src).toBe('https://example.test/assets/line-chart-series.png');
   });
 
+  it('omits an enlarged covered preview while keeping distinct small artwork', () => {
+    const source = 'data:image/jpeg;base64,cHJldmlldw==';
+    const dom = scene(`<div style="overflow-x:hidden;overflow-y:hidden"><img src="${source}" alt="" style="filter:blur(5px)">
+      <picture style="position:absolute;visibility:visible"><img src="/full-resolution.jpg" alt="Field"></picture></div>
+      <div><img src="${source}" alt="" style="filter:blur(5px)"></div>`);
+    const [preview, image, standalone] = Array.from(dom.window.document.images);
+    for (const [element, naturalWidth, naturalHeight] of [[preview, 64, 36], [image, 640, 360], [standalone, 64, 36]]) {
+      Object.defineProperties(element, { complete: { value: true }, naturalWidth: { value: naturalWidth }, naturalHeight: { value: naturalHeight } });
+      vi.spyOn(element, 'getBoundingClientRect').mockReturnValue(new dom.window.DOMRect(20, 40, 640, 360));
+    }
+    vi.spyOn(preview.parentElement, 'getBoundingClientRect').mockReturnValue(new dom.window.DOMRect(20, 40, 640, 360));
+    preview.getBoundingClientRect.mockReturnValue(new dom.window.DOMRect(10, 30, 660, 380));
+    expect(isDecorativeImage(dom.window, preview, [])).toBe(true);
+    expect(isDecorativeImage(dom.window, image, [])).toBe(false);
+    expect(isDecorativeImage(dom.window, standalone, [])).toBe(false);
+  });
+
   it.each([
     ['<img src="/assets/site-logo.svg" width="640" height="200">'],
     ['<img src="/assets/logo-gradient.png" width="640" height="200">'],

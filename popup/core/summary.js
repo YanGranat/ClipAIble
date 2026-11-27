@@ -617,6 +617,7 @@ export function initSummary(deps) {
               }
               return {
                 html: document.documentElement.outerHTML,
+                sourceContentType: document.contentType,
                 url: window.location.href,
                 title: pageTitle
               };
@@ -690,6 +691,7 @@ export function initSummary(deps) {
               action: 'extractContentOnly',
               data: {
                 html: pageData.html,
+                sourceContentType: pageData.sourceContentType,
                 url: pageData.url,
                 title: pageData.title || tab.title,
                 apiKey: apiKey,

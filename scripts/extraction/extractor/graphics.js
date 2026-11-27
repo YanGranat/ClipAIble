@@ -22,6 +22,9 @@ function hidden(element, descendants = false) {
   for (let node = element; node; node = node.parentElement) {
     const style = win.getComputedStyle(node);
     if (style.display === 'none' || style.contentVisibility === 'hidden' || style.opacity === '0') return true;
+    const absolute = style.position === 'absolute' || style.position === 'fixed';
+    const emptyClip = absolute && /^rect\(0px,0px,0px,0px\)$/.test((style.clip || '').replace(/\s/g, ''));
+    if (emptyClip || style.clipPath === 'inset(50%)') return true;
     if (node.matches('.katex-mathml,.MJX_Assistive_MathML') && style.position === 'absolute' && style.overflow === 'hidden') return true;
   }
   return ['hidden', 'collapse'].includes(win.getComputedStyle(element).visibility) && (!descendants || !Array.from(element.querySelectorAll('*')).some(node => !node.closest(DEFINITIONS) && !hidden(node)));
@@ -85,9 +88,12 @@ function isCaptionSvgGlyph(graphic, figure) {
 /** Identify a graphic by its reading scope and semantic ownership. */
 export function getGraphicReadingOwner(element, roots) {
   if (!element || !roots?.some(root => root === element || root.contains(element))) return null;
-  if (element.closest('pre,code,math,mjx-container,.MathJax,.katex')) return null;
-  const figure = element.closest('figure');
   const graphic = element.closest('svg,canvas');
+  const pre = graphic?.parentElement;
+  const replacesCodeBlock = pre?.tagName === 'PRE' && Array.from(pre.childNodes).every(node =>
+    node === graphic || node.nodeType === 8 || node.nodeType === 3 && !node.textContent?.trim());
+  if (element.closest('code,math,mjx-container,.MathJax,.katex') || (!replacesCodeBlock && element.closest('pre'))) return null;
+  const figure = element.closest('figure');
   if ((!figure && !graphic) || isDecorativeLinkGraphic(graphic) || controls(element) || hidden(element, true)) return null;
   if (figure && roots.some(root => root === figure || root.contains(figure))) {
     const graphics = Array.from(figure.querySelectorAll('svg,canvas')).filter(node => node.closest('figure') === figure &&
@@ -101,7 +107,7 @@ export function getGraphicReadingOwner(element, roots) {
     }
   }
   if (!graphic || /(?:^|[\s_-])icon(?:$|[\s_-])/i.test(graphic.getAttribute('class') || '')) return null;
-  const labelled = graphic.tagName === 'CANVAS' || graphic.getAttribute('role') === 'img' || graphic.hasAttribute('aria-label') || graphic.hasAttribute('aria-labelledby') ||
+  const labelled = replacesCodeBlock || graphic.tagName === 'CANVAS' || graphic.matches('[role~="img"],[role~="graphics-document"]') || graphic.hasAttribute('aria-label') || graphic.hasAttribute('aria-labelledby') ||
     !!graphic.querySelector('title') || roots.includes(graphic);
   return labelled ? graphic : null;
 }
@@ -199,6 +205,34 @@ function originalImageLayers(owner, included) {
   return sources;
 }
 
+function paintedRectangles(win, owner, elements) {
+  const clips = new Map();
+  const boundary = owner.parentElement;
+  const clipsAxis = value => /^(hidden|clip|auto|scroll)$/.test(value);
+  const clippingBox = element => {
+    if (!clips.has(element)) {
+      const style = win.getComputedStyle(element);
+      const horizontal = clipsAxis(style.overflowX || style.overflow);
+      const vertical = clipsAxis(style.overflowY || style.overflow);
+      clips.set(element, horizontal || vertical ? { horizontal, vertical, rect: element.getBoundingClientRect() } : null);
+    }
+    return clips.get(element);
+  };
+  const rectangles = [];
+  for (const element of elements) {
+    let { left, top, right, bottom } = element.getBoundingClientRect();
+    if (right <= left || bottom <= top) continue;
+    for (let parent = element.parentElement; parent && parent !== boundary; parent = parent.parentElement) {
+      const clip = clippingBox(parent);
+      if (clip?.horizontal) { left = Math.max(left, clip.rect.left); right = Math.min(right, clip.rect.right); }
+      if (clip?.vertical) { top = Math.max(top, clip.rect.top); bottom = Math.min(bottom, clip.rect.bottom); }
+      if (right <= left || bottom <= top) break;
+    }
+    if (right > left && bottom > top) rectangles.push({ left, top, right, bottom });
+  }
+  return rectangles;
+}
+
 /** Capture each owned graphic once without modifying its source document. */
 export async function captureReadingGraphics(win, elements, state, constants) {
   const roots = state.referenceRoots || [];
@@ -267,9 +301,22 @@ export async function captureReadingGraphics(win, elements, state, constants) {
       const alt = [label.trim() && label.trim() !== text && label.trim() !== caption ? label.trim() : '', text].filter(Boolean).join('\n');
       const nodes = [owner, ...Array.from(owner.querySelectorAll('*'))];
       const included = nodes.filter(node => !excluded(node, owner, selectors) && !node.closest(DEFINITIONS));
-      const rectangles = (owner.tagName === 'FIGURE' ? included.slice(1) : included).map(node => node.getBoundingClientRect()).filter(rect => rect.width > 0 && rect.height > 0);
+      const rectangles = paintedRectangles(win, owner, owner.tagName === 'FIGURE' ? included.slice(1) : included);
       if (!rectangles.length) throw failure();
       const extent = rectangles.reduce((bounds, rect) => ({ left: Math.min(bounds.left, rect.left), top: Math.min(bounds.top, rect.top), right: Math.max(bounds.right, rect.right), bottom: Math.max(bounds.bottom, rect.bottom) }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+      if (owner.localName === 'svg') {
+        // The viewport clips descendant geometry before the SVG is painted.
+        const viewport = owner.getBoundingClientRect();
+        const { overflowX, overflowY } = win.getComputedStyle(owner);
+        if (viewport.width && /^(hidden|clip|auto|scroll)$/.test(overflowX)) {
+          extent.left = viewport.left;
+          extent.right = viewport.right;
+        }
+        if (viewport.height && /^(hidden|clip|auto|scroll)$/.test(overflowY)) {
+          extent.top = viewport.top;
+          extent.bottom = viewport.bottom;
+        }
+      }
       let width = extent.right - extent.left, height = extent.bottom - extent.top;
       if (!Number.isFinite(width * height) || width <= 0 || height <= 0) throw failure();
       const scale = Math.min(1, 32767 / width, 32767 / height, Math.sqrt(2 ** 25 / (width * height)));
@@ -417,12 +464,15 @@ export async function captureReadingGraphics(win, elements, state, constants) {
         const svgUrl = await bounded(toSvg(wrapper, { width, height, skipFonts: true, includeQueryParams: true, includeStyleProperties: [], imagePlaceholder: FAILURE_IMAGE,
           fetchRequestInit: { credentials: 'omit', signal: controller.signal }, onImageErrorHandler: () => { throw failure(); } }));
         const xml = decodeURIComponent(svgUrl.slice(svgUrl.indexOf(',') + 1));
-        if (xml.includes(FAILURE_IMAGE) || /(?:href|src)\s*=\s*["'](?:https?:|blob:)/i.test(xml) || /url\(\s*["']?(?:https?:|blob:)/i.test(xml)) throw failure();
+        if (xml.includes(FAILURE_IMAGE) || /url\(\s*["']?(?:https?:|blob:)/i.test(xml)) throw failure();
         const serialized = new win.DOMParser().parseFromString(xml, 'image/svg+xml');
         if (serialized.querySelector('parsererror')) throw failure();
+        const serializedElements = Array.from(serialized.querySelectorAll('*'));
+        if (serializedElements.some(node => Array.from(node.attributes).some(attribute =>
+          ['href', 'src'].includes(attribute.localName) && /^(?:https?:|blob:)/i.test(attribute.value.trim())))) throw failure();
         const ids = new Set(Array.from(serialized.querySelectorAll('[id]')).map(node => node.id));
         const references = [...xml.matchAll(/url\(['"]?(#[^)'"\s]+)['"]?\)/g)].map(match => match[1]);
-        references.push(...Array.from(serialized.querySelectorAll('*')).flatMap(node => Array.from(node.attributes).filter(attribute => (attribute.name === 'href' || attribute.name.endsWith(':href')) && attribute.value.startsWith('#')).map(attribute => attribute.value)));
+        references.push(...serializedElements.flatMap(node => Array.from(node.attributes).filter(attribute => (attribute.name === 'href' || attribute.name.endsWith(':href')) && attribute.value.startsWith('#')).map(attribute => attribute.value)));
         if (references.some(reference => !ids.has(decodeURIComponent(reference.slice(1))))) throw failure();
         if (scale < 1) { serialized.documentElement.setAttribute('width', String(canvas.width)); serialized.documentElement.setAttribute('height', String(canvas.height)); }
         const rendered = await image(scale < 1 ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new win.XMLSerializer().serializeToString(serialized)) : svgUrl);

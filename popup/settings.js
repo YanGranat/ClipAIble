@@ -920,13 +920,7 @@ export function initSettings(deps) {
         }
       }
       
-      if (result[STORAGE_KEYS.AUDIO_SPEED]) {
-        const audioSpeed = String(result[STORAGE_KEYS.AUDIO_SPEED]);
-        elements.audioSpeed.value = audioSpeed;
-        if (elements.audioSpeedValue) {
-          elements.audioSpeedValue.textContent = audioSpeed + 'x';
-        }
-      }
+      audioModule.restoreAudioSpeed(result[STORAGE_KEYS.AUDIO_SPEED] ?? 1);
       
       // Update voice list based on provider (AFTER loading audio_voice from storage)
       // This ensures that invalid voices (e.g., 'volodymyr' for Ukrainian text, or 'nova' for Respeecher)

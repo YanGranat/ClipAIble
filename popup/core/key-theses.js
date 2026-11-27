@@ -368,7 +368,12 @@ export function initKeyTheses(deps) {
               return (t && !/^\d+$/.test(t)) ? t : pageTitle;
             })();
           }
-          return { html: document.documentElement.outerHTML, url: window.location.href, title: pageTitle };
+          return {
+            html: document.documentElement.outerHTML,
+            sourceContentType: document.contentType,
+            url: window.location.href,
+            title: pageTitle
+          };
         }
       }), attempt);
       if (!htmlResult?.[0]?.result) {
@@ -392,6 +397,7 @@ export function initKeyTheses(deps) {
         action: 'extractContentOnly',
         data: {
           html: pageData.html,
+          sourceContentType: pageData.sourceContentType,
           url: pageData.url,
           title: pageData.title || tab.title,
           apiKey,

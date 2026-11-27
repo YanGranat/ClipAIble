@@ -35,10 +35,13 @@ export function readProcessingSnapshot(value) {
 /** @param {unknown} value @returns {import('../types.js').TTSProgressData|null} */
 export function readTtsProgress(value) {
   if (!value || typeof value !== 'object') return null;
-  const { processingRunId, sentenceIndex, totalSentences, progressBase = 60, progressRange = 35 } =
+  const { processingRunId, sentenceIndex, totalSentences, progressBase = 60, progressRange = 35, current, total } =
     /** @type {import('../types.js').TTSProgressData} */ (value);
+  const hasParts = current !== undefined || total !== undefined;
   if (!isValidProcessingRunId(processingRunId) || !Number.isSafeInteger(sentenceIndex) || !Number.isSafeInteger(totalSentences) ||
-      sentenceIndex < 1 || sentenceIndex > totalSentences || !Number.isFinite(progressBase) || !Number.isFinite(progressRange) ||
+      totalSentences < 1 || sentenceIndex < (hasParts ? 0 : 1) || sentenceIndex > totalSentences ||
+      (hasParts && (!Number.isSafeInteger(current) || !Number.isSafeInteger(total) || total < 2 || current < 1 || current > total)) ||
+      !Number.isFinite(progressBase) || !Number.isFinite(progressRange) ||
       progressBase < 0 || progressRange < 0 || progressBase + progressRange > 100) return null;
-  return { processingRunId, sentenceIndex, totalSentences, progressBase, progressRange };
+  return { processingRunId, sentenceIndex, totalSentences, progressBase, progressRange, current, total };
 }

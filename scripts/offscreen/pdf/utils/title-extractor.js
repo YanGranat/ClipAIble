@@ -183,6 +183,7 @@ export function extractTitle({ metadataTitle, elements, url }) {
   
   let title = '';
   let finalElements = [...elements]; // Copy to avoid mutation
+  const onlyHeading = finalElements.length === 1 && finalElements[0].type === 'heading';
   
   // Priority 1: Metadata title (if not ignored)
   if (metadataTitle && !shouldIgnoreMetadataTitle(metadataTitle)) {
@@ -195,7 +196,7 @@ export function extractTitle({ metadataTitle, elements, url }) {
   log('[PDF v3] Metadata title ignored (empty or generic)', { metadataTitle });
   
   // Priority 2: First short heading
-  if (finalElements.length > 0) {
+  if (finalElements.length > 0 && !onlyHeading) {
     log('[PDF v3] extractTitle: Looking for heading in elements', {
       elementsCount: finalElements.length,
       elementTypes: finalElements.map(el => ({ 
@@ -296,8 +297,9 @@ export function extractTitle({ metadataTitle, elements, url }) {
     }
   }
   
+  // Keep a lone authored heading as document content.
   // Priority 4: First sentence of first element (regardless of type)
-  if (finalElements.length > 0) {
+  if (finalElements.length > 0 && !onlyHeading) {
     const { title: titleFromElement, element: firstElement, shouldConvertToParagraph } = 
       extractTitleFromFirstElement(finalElements);
     

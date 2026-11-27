@@ -1,5 +1,5 @@
 // @ts-check
-import { cloneWithoutRepeatedNoteTooltips } from './dom-utils.js';
+import { cloneWithoutRepeatedNoteTooltips, MATHJAX_COMMON_HTML } from './dom-utils.js';
 import { cleanLatexFormula } from './text-utils.js';
 import { isIcon, isInteractiveControlLabel, isSubscriptionFormContent } from './filters.js';
 import { materializeAnnotationReferences } from './annotations.js';
@@ -78,13 +78,37 @@ function presentationMathText(element) {
     child.nodeType === 3 ? child.textContent : child.nodeType === 1 ? presentationMathText(child) : '').join('');
 }
 
+/** Project simple CommonHTML expressions without using the renderer's layout styles. */
+function renderCommonHtmlMath(element, doc) {
+  if (element.matches('.mjx-mi,.mjx-mn,.mjx-mo,.mjx-mtext')) {
+    const glyphs = Array.from(element.children);
+    if (!glyphs.length || !glyphs.every(glyph => glyph.matches('.mjx-char') && !glyph.children.length)) return null;
+    const text = glyphs.map(glyph => glyph.textContent).join('');
+    return text ? doc.createTextNode(text) : null;
+  }
+  const fraction = element.matches('.mjx-mfrac');
+  const children = fraction
+    ? [element.querySelector(':scope > .mjx-box > .mjx-numerator'), element.querySelector(':scope > .mjx-box > .mjx-denominator')]
+    : Array.from(element.children);
+  if (!fraction && !element.matches('.mjx-math,.mjx-mrow,.mjx-numerator,.mjx-denominator')) return null;
+  if (!children.length || children.some(child => !child) ||
+      Array.from(element.childNodes).some(node => node.nodeType === 3 && node.textContent.trim())) return null;
+  const parts = children.map(child => renderCommonHtmlMath(child, doc));
+  if (parts.some(part => !part)) return null;
+  const rendered = doc.createDocumentFragment();
+  if (fraction) rendered.append('(', parts[0], ')/(', parts[1], ')');
+  else rendered.append(...parts);
+  return rendered;
+}
+
 /**
  * Process math elements using semantic markup or the original LaTeX fallback.
  * @param {Element} container - Container element
  */
 export function processMathElements(container, runtimeInputs = new Map()) {
   // Find all math-related elements
-  const mathElements = container.querySelectorAll('.mwe-math-element, .mathjax, .MathJax, .MathJax_Display, .latex, .katex, mjx-container, math');
+  const mathElements = container.querySelectorAll(
+    '.mwe-math-element, .mathjax, .MathJax, .MathJax_Display, .latex, .katex, mjx-container, math,' + MATHJAX_COMMON_HTML);
 
   for (const mathEl of Array.from(mathElements)) {
     if (!container.contains(mathEl)) continue;
@@ -119,6 +143,9 @@ export function processMathElements(container, runtimeInputs = new Map()) {
       }
     }
     if (!latex) latex = runtimeInputs.get(mathEl) || '';
+    const commonHtml = mathEl.matches(MATHJAX_COMMON_HTML) ? mathEl : mathEl.querySelector(MATHJAX_COMMON_HTML);
+    const commonVisual = commonHtml?.querySelector('.mjx-math');
+    const commonSource = commonVisual?.getAttribute('aria-label')?.trim() || '';
 
     let semanticMath = mathTag;
     if (!semanticMath && frame?.getAttribute('data-mathml')) {
@@ -128,21 +155,23 @@ export function processMathElements(container, runtimeInputs = new Map()) {
         if (!parsed.querySelector('parsererror')) semanticMath = parsed.documentElement;
       }
     }
-    const rendered = semanticMath ? renderSimpleMathMl(semanticMath, container.ownerDocument, !latex) : null;
+    const rendered = semanticMath
+      ? renderSimpleMathMl(semanticMath, container.ownerDocument, !latex)
+      : commonVisual && renderCommonHtmlMath(commonVisual, container.ownerDocument);
     if (rendered) {
       const wrapper = container.ownerDocument.createElement('span');
       wrapper.className = 'math';
       wrapper.appendChild(rendered);
       mathEl.replaceWith(wrapper);
-    } else if (latex) {
+    } else if (latex || commonSource) {
       // Clean and wrap in markdown math delimiters
-      const cleanedLatex = cleanLatexFormula(latex);
+      const cleanedLatex = cleanLatexFormula(latex || commonSource);
       const textNode = container.ownerDocument.createTextNode(` $${cleanedLatex}$ `);
       mathEl.replaceWith(textNode);
     } else {
       const presentation = semanticMath?.namespaceURI === MATHML
         ? presentationMathText(semanticMath)
-        : mathEl.querySelector('mjx-math,.katex-html')?.textContent ?? mathEl.textContent;
+        : (commonVisual || mathEl.querySelector('mjx-math,.katex-html') || mathEl).textContent;
       mathEl.replaceWith(container.ownerDocument.createTextNode(presentation || ''));
     }
   }

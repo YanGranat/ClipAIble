@@ -59,6 +59,17 @@ describe('Piper synthesis', () => {
     expect(sendMessage.mock.calls.every(([message]) => message.action === 'TTS_PROGRESS' && message.data.processingRunId === 'current')).toBe(true);
   });
 
+  it('reports the overall request at the start and end of a single-pass part', async () => {
+    const sendMessage = vi.fn(async () => ({}));
+    vi.stubGlobal('chrome', { runtime: { sendMessage } });
+    vi.stubGlobal('performance', {});
+    const piperProgress = { current: 2, total: 2, progressBase: 85, progressRange: 10 };
+    await synthesizeText({ ...params('Last words.', async () => new Blob(['audio'])), processingRunId: 'current', piperProgress });
+    expect(sendMessage.mock.calls.map(([message]) => message.data)).toEqual([0, 1].map(sentenceIndex => ({
+      processingRunId: 'current', sentenceIndex, totalSentences: 1, ...piperProgress
+    })));
+  });
+
   it('stops streaming before another sentence when its owner changes', async () => {
     let owner = 'current';
     const predict = vi.fn(async () => { owner = 'replacement'; return new Blob(['audio']); });

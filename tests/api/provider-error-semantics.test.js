@@ -49,6 +49,12 @@ describe('provider error identity', () => {
     expect(await createApiError(new Response(JSON.stringify({ error: { message: 'Bad request' } }), { status: 400 }), 'openrouter')).toMatchObject({ retryWithoutResponseFormat: false });
     expect(await createApiError(new Response(JSON.stringify({ error: { code: 'unsupported_parameter', param: 'response_format' } }), { status: 400 }), 'openrouter')).toMatchObject({ retryWithoutResponseFormat: true });
   });
+  it('classifies organization spend limits as quota exhaustion', async () => {
+    const response = new Response(JSON.stringify({ error: { code: 'organization_spend_limit_exceeded' } }), { status: 429 });
+    await expect(createApiError(response, 'openai')).resolves.toMatchObject({
+      status: 429, translationKey: 'errorApiQuotaExceeded', retryable: false
+    });
+  });
   it.each([[401, 'errorApiKeyInvalid'], [403, 'errorApiAccessForbidden'], [429, 'errorRateLimit']])('retains HTTP%s when the caller supplies an extraction context', (status, key) => {
     expect(getUserFriendlyErrorDescriptor('contentExtractionFailed', { error: Object.assign(new Error('Unavailable'), { status }) })).toEqual({ key, params: {} });
   });

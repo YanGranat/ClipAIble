@@ -25,6 +25,138 @@ async function extract(body, selectors = {}, prepare = () => {}) {
   return { ...result, plain: node.textContent.replace(/\s+/g, ' ').trim() };
 }
 describe('Reading ownership', () => {
+  it.each([null, {}])('removes single linked suggestions while retaining authored links and referenced notes (%j)', async selectors => {
+    const opening = 'The station recorded the temperature every hour and verified the sensors. '.repeat(5).trim();
+    const result = await extract('<article><h1>Field report</h1><p>' + opening + '</p>' +
+      '<div class="reading-suggestions"><div>Further updates</div><a href="/other"><div>Unrelated update</div>' +
+      '<img src="/thumbnail.jpg" alt="Preview"></a></div>' +
+      '<div class="suggested-reading"><div>Read also</div><a href="/plain-card">A plain recommended link</a></div>' +
+      '<p>Compare the <a href="/original-study">validated results from a separate test</a>.</p>' +
+      '<p>See the <a href="#annotated-note">note on calibration</a>.</p>' +
+      '<div class="reading-suggestions" id="annotated-note"><p>Calibration note</p><a href="/protocol">' +
+      '<img src="/protocol.png" alt="Protocol diagram">Calibrated protocol</a></div></article>', selectors);
+    expect(result.plain).toContain('validated results from a separate test');
+    expect(result.plain).toContain('Calibration note');
+    expect(result.plain).not.toMatch(/Further updates|Unrelated update|A plain recommended link/);
+  });
+
+  it('preserves a visible description associated with the headline outside the article body', async () => {
+    const description = 'This report explains how independent calibration and measurement preserve the validity of the readings.';
+    const opening = 'The station checked the instrument before logging the independent measurements. '.repeat(5).trim();
+    const result = await extract('<main><div><div><h1>Field report</h1><p>' + description +
+      '</p></div><article><p>' + opening + '</p><p>The team verified the results.</p></article></div></main>', null, doc => {
+      const tag = doc.createElement('meta');
+      tag.name = 'description';
+      tag.content = description;
+      doc.head.append(tag);
+    });
+    expect(result.content.filter(item => item.isStandfirst)).toHaveLength(1);
+    expect(result.plain).toContain(description);
+    expect(result.plain).toContain(opening);
+  });
+
+  it.each([null, { content: '.reading' }])('retains prose in a document with comments enabled (%j)', async selectors => {
+    const opening = 'The instrument recorded each sample independently during the session. '.repeat(9).trim();
+    const closing = 'The recording was consistent with the measured calibration.';
+    const result = await extract('<div class="reading comment-enabled"><h1>Field report</h1><p>' + opening +
+      '</p><div class="comments"><p>The reader discussion is separate from the report.</p></div><p>' +
+      closing + '</p></div>', selectors);
+    expect(result.plain).toBe(opening + ' ' + closing);
+  });
+
+  it('retains authored tables with sticky headers and figures that open a lightbox', async () => {
+    const result = await extract(`<article><h1>Field report</h1><p>The report compares two measurement stations.</p>
+      <table class="supports-sticky-header"><thead><tr><th>Station</th><th>Value</th></tr></thead>
+      <tbody><tr><td>North station</td><td>892</td></tr></tbody></table>
+      <figure><img class="lightbox-image" src="/site-plan.png" width="720" height="480" alt="Station map">
+      <figcaption>Locations of the measurement stations.</figcaption></figure>
+      <nav><table class="sticky-header"><tr><th>Site sections</th><td>Products</td></tr></table></nav>
+      <div role="dialog"><figure><img class="lightbox-image" src="/duplicate.png" width="720" height="480"
+      alt="Station map"><figcaption>Dialog duplicate.</figcaption></figure></div></article>`);
+    expect(result.content.filter(item => item.type === 'table').map(item => item.rows)).toEqual([[['North station', '892']]]);
+    expect(result.content.filter(item => item.type === 'image').map(item => item.caption)).toEqual(['Locations of the measurement stations.']);
+    expect(result.plain).not.toMatch(/Site sections|Dialog duplicate/);
+  });
+
+  it('excludes abbreviated navigation controls inside a table header and keeps its title and data', async () => {
+    const result = await extract(`<article><h1>Field report</h1><table><thead>
+      <tr><th colspan="2"><div class="navbar"><ul>
+      <li><a href="/settings"><abbr title="View properties">V</abbr></a></li>
+      <li><a href="/action"><abbr title="Change display">C</abbr></a></li>
+      </ul></div><div>Station reference values</div></th></tr>
+      <tr><th>Station</th><th>Value</th></tr></thead>
+      <tbody><tr><td><a href="/station/a"><abbr title="Station A">A</abbr></a></td><td>892</td></tr></tbody></table></article>`);
+    const table = result.content.find(item => item.type === 'table');
+    expect(JSON.stringify(table)).toContain('Station reference values');
+    expect(JSON.stringify(table)).toContain('/station/a');
+    expect(JSON.stringify(table)).not.toMatch(/\/settings|\/action/);
+  });
+
+  it('retains a localized label when it introduces authored text, while dropping an adjacent link-only panel', async () => {
+    const label = '\u0427\u0438\u0442\u0430\u0439\u0442\u0435 \u0442\u0430\u043a\u043e\u0436';
+    const result = await extract(`<article><h1>Field report</h1><p>Article introduction and supporting information.</p>
+      <p><strong>${label}</strong><br><a href="/other-a">Suggested article A</a><br><a href="/other-b">Suggested article B</a></p>
+      <p><strong>${label}</strong><br>The independent survey makes this claim testable.</p></article>`);
+    expect(result.plain).toContain('The independent survey');
+    expect(result.plain).not.toContain('Suggested article');
+  });
+
+  it('removes a standalone promotion and keeps an authored discussion with links', async () => {
+    const result = await extract(`<article><h1>Field report</h1><p>The author introduces the findings.</p>
+      <div class="inline-promo"><h3>Explore our service</h3><div class="inline-promo__content"><p>Browse the available plans.</p>
+      <a class="inline-promo__action btn" href="/plans">Plans and pricing</a></div></div>
+      <div class="vacancy-analysis" id="discussion"><h3>Vacancy analysis</h3>
+      <p>The survey records an increase in vacant premises.</p>
+      <a class="btn" href="/dataset">Download data</a></div><p>See the <a href="#discussion">analysis</a>.</p></article>`);
+    expect(result.plain).toContain('The survey records an increase');
+    expect(result.plain).not.toMatch(/Explore our service|Plans and pricing/);
+  });
+
+  it('preserves an inline illustrated emoji as text without excluding an author illustration', async () => {
+    const result = await extract(`<article><h1>Field report</h1><p>Check complete <img class="emoji" width="72"
+      height="72" src="/icon.svg" alt="&#x1f600;"> and record the result.</p>
+      <figure><img class="emoji" width="640" height="420" src="/examples.png" alt="Diagram of emoji alignment"></figure></article>`);
+    expect(result.plain).toContain('Check complete \u{1f600} and record the result.');
+    expect(result.content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.test/examples.png']);
+  });
+
+  it('drops publisher actions for the same page and keeps contact and license links in prose', async () => {
+    const source = encodeURIComponent('https://example.test/report?campaign=share');
+    const share = 'mailto:?subject=Field%20report&amp;body=' + source;
+    const reuse = 'https://distribution.test/publisher?url=' + source;
+    const result = await extract('<article><h1>Field report</h1><p>The recorder kept one copy of the findings. ' +
+      '<a href="mailto:records@example.test">Contact the records desk</a> for older copies. ' +
+      '<a rel="license" href="' + reuse + '">Terms for redistributing the report</a> apply.</p>' +
+      '<div><a href="' + share + '">Email this page</a></div>' +
+      '<div><a data-link-name="article-syndication" href="' + reuse + '">Publisher distribution action</a></div>' +
+      '<p>The final copy omits the operator controls.</p></article>');
+    expect(result.plain).toContain('Contact the records desk');
+    expect(result.plain).toContain('Terms for redistributing the report');
+    expect(result.plain).not.toMatch(/Email this page|Publisher distribution action/);
+  });
+
+  it.each([null, {}])('keeps prose and figures around a search widget without exporting its preview results (%j)', async selectors => {
+    const opening = 'The reference instrument was calibrated at the beginning of each trial. ' +
+      'An independent technician checked the instrument and recorded all values before moving to the next station. '.repeat(4);
+    const ending = 'The final result was independently verified at each station.';
+    const rows = ['North', 'East', 'West'].map((station, index) =>
+      '<li><a href="/station/' + index + '">Preview result ' + station + '</a>' +
+      '<ul><li><button aria-pressed="false"><img src="/thumbnail.png" alt=""></button></li></ul></li>').join('');
+    const result = await extract('<article><h1>Field report</h1><p>' + opening + '</p><section>' +
+      '<h2>Station reference</h2><input type="search"><ul>' + rows +
+      '<li><button>Load more results</button></li><li aria-hidden="true"></li></ul>' +
+      '<figure><img src="/figure.png" width="720" height="380" alt="Sensor layout">' +
+      '<figcaption>Observed locations of the sensors.</figcaption></figure>' +
+      '<ul><li>Use the same sensor for each trial.</li><li>Record the reading in the log.</li></ul>' +
+      '</section><section><h2>References</h2><ul>' + rows + '</ul></section><p>' + ending + '</p></article>', selectors);
+    expect(result.plain).toContain(opening.trim());
+    expect(result.plain).toContain(ending);
+    expect(result.plain).toContain('Use the same sensor for each trial.');
+    expect(result.content.some(item => item.type === 'image' && item.src.endsWith('/figure.png'))).toBe(true);
+    expect(result.plain.match(/Preview result North/g)).toHaveLength(1);
+    expect(result.plain).not.toContain('Load more results');
+  });
+
   it('retains visible shadow code between surrounding prose without reading component controls', async () => {
     const html = '<article><h1>Field report</h1><p>Opening explanation.</p>' +
       '<code-sample id="sample"></code-sample><code-sample hidden></code-sample>' +

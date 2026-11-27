@@ -1,5 +1,5 @@
 import { concatenateWav, readWav } from '../utils/wav.js';
-import { isWavBuffer, pcmToWav } from './audio-format.js';
+import { concatenateMp3, isWavBuffer, pcmToWav } from './audio-format.js';
 import { textToSpeech as openaiTTS } from './openai-tts.js';
 // @ts-check
 // Text-to-Speech API module for ClipAIble extension
@@ -415,7 +415,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
   // No need for tabId or window context
   const callStart = Date.now();
   try {
-    const result = await offlineTTS(text, { voice, speed, language, processingRunId: options.processingRunId });
+    const result = await offlineTTS(text, { voice, speed, language, processingRunId: options.processingRunId, piperProgress: options.piperProgress });
     const callDuration = Date.now() - callStart;
     
     log('[ClipAIble TTS] === offlineTTS call SUCCESS ===', {
@@ -563,15 +563,18 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   // Async progress tracker - updates UI every 2 seconds without blocking Worker
   let processedChunks = 0;
   const totalChunks = expandedChunks.length;
+  const trackPiperParts = provider === 'offline' && totalChunks > 1;
+  const characters = trackPiperParts ? expandedChunks.reduce((length, chunk) => length + chunk.text.length, 0) : 0;
+  let completedCharacters = 0;
   let progressTrackerInterval = null;
   
   log('[ClipAIble TTS] Progress tracker setup', {
     totalChunks,
     hasUpdateState: typeof updateState === 'function',
-    willEnableTracker: updateState && totalChunks > 1
+    willEnableTracker: updateState && totalChunks > 1 && !trackPiperParts
   });
   
-  if (updateState && totalChunks > 1) {
+  if (updateState && totalChunks > 1 && !trackPiperParts) {
     // Only enable tracker if there are multiple chunks (single chunk completes too fast)
     log('[ClipAIble TTS] Enabling progress tracker', {
       totalChunks,
@@ -606,13 +609,19 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     for (let i = 0; i < expandedChunks.length; i++) {
       await checkCancellation(`TTS chunk ${i + 1}/${expandedChunks.length}`, options.processingRunId);
       const chunk = expandedChunks[i];
+      const requestOptions = trackPiperParts ? { ...options, piperProgress: {
+        current: i + 1, total: totalChunks,
+        progressBase: progressBase + progressRange * completedCharacters / characters,
+        progressRange: progressRange * chunk.text.length / characters
+      } } : options;
       if (provider !== 'openai') markProcessingRequestStarted(options.processingRunId);
       const audioBuffer = provider === 'openai'
         ? await textToSpeechOpenAI(chunk.text, apiKey, options)
-        : await textToSpeech(chunk.text, apiKey, options);
+        : await textToSpeech(chunk.text, apiKey, requestOptions);
       await checkCancellation('TTS response', options.processingRunId);
       markProcessingRequestStarted(options.processingRunId);
       audioBuffers.push(audioBuffer);
+      completedCharacters += chunk.text.length;
       processedChunks = i + 1;
     }
   } finally {
@@ -644,7 +653,7 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
 
 /**
  * Concatenate multiple audio ArrayBuffers
- * Handles both MP3 (simple concat) and WAV (proper header merging)
+ * Validates and joins MP3 or WAV speech segments.
  * @param {Array<ArrayBuffer>} buffers - Array of audio buffers
  * @param {boolean} [asBlob=false] - Preserve the assembled audio as Blob parts
  * @returns {ArrayBuffer|Blob} Concatenated audio
@@ -654,32 +663,11 @@ function concatenateAudioBuffers(buffers, asBlob = false) {
   
   if (!buffers || buffers.length === 0) return new ArrayBuffer(0);
   
-  // Check if buffers are WAV format
   if (isWavBuffer(buffers[0])) {
     if (buffers.length === 1 && !asBlob) { readWav(buffers[0]); return buffers[0]; }
     return concatenateWav(buffers, asBlob);
   }
-  if (asBlob) return new Blob(buffers);
-  if (buffers.length === 1) return buffers[0];
-  
-  // For MP3 and other formats, simple concatenation works
-  const totalLength = buffers.reduce((sum, buf) => sum + buf.byteLength, 0);
-  
-  // Create new buffer
-  const result = new ArrayBuffer(totalLength);
-  const view = new Uint8Array(result);
-  
-  // Copy all buffers
-  let offset = 0;
-  for (let i = 0; i < buffers.length; i++) {
-    const buffer = buffers[i];
-    const bufferView = new Uint8Array(buffer);
-    
-    view.set(bufferView, offset);
-    offset += buffer.byteLength;
-  }
-
-  return result;
+  return concatenateMp3(buffers, asBlob);
 }
 
 /**

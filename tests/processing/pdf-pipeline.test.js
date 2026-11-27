@@ -353,6 +353,13 @@ describe('PDF pipeline integrity', () => {
     expect(result.value.content.some(item => item.text === 'Sample paragraph.')).toBe(true);
   });
 
+  it('keeps a matching title when it is the only transcribed content', async () => {
+    callAIWithImageAndHistory.mockResolvedValueOnce(response('# Moon Landing')).mockResolvedValue(response(''));
+    const result = await processPdfDocument(input, 'https://example.org/article.pdf');
+    expect(result.markdown).toBe('# Moon Landing');
+    expect(result.content).toEqual([{ type: 'heading', level: 1, text: 'Moon Landing' }]);
+  });
+
   it('passes the selected provider and operation identity through capture and AI requests', async () => {
     const checkCancelled = vi.fn();
     await processPdfDocument({ ...input, checkCancelled }, 'https://example.org/article.pdf');

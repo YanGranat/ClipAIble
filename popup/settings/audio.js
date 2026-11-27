@@ -79,6 +79,10 @@ export function initAudio(deps) {
   elements.audioSpeed?.addEventListener('input', () => { preferredSpeed = elements.audioSpeed.value; });
   const supertonic = initSupertonicControls(elements.supertonicModelGroup);
 
+  function restoreAudioSpeed(value) {
+    preferredSpeed = String(value);
+  }
+
   function showSupertonicModel(show) {
     if (elements.supertonicModelGroup) {
       setElementGroupDisplay('supertonicModelGroup', show ? 'flex' : 'none');
@@ -478,6 +482,7 @@ export function initAudio(deps) {
     saveAudioVoice,
     hideAllAudioFields,
     updateVoiceList,
+    restoreAudioSpeed,
     updateAudioProviderUI,
     refreshLocalization: supertonic.refreshLocalization,
     getVoiceIdByIndex

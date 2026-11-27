@@ -3,7 +3,7 @@ import { generateAudio } from '../../scripts/generation/audio.js';
 import { AUDIO_CONFIG } from '../../scripts/generation/audio-prep.js';
 import { prepareQuickSaveData } from '../../scripts/processing/quicksave.js';
 import { DocumentGeneratorFactory } from '../../scripts/generation/factory.js';
-import { pcmToWav } from '../../scripts/api/audio-format.js';
+import { concatenateMp3, pcmToWav } from '../../scripts/api/audio-format.js';
 import { realtimeWebSocket } from '../helpers/realtime-websocket.js';
 
 vi.mock('../../scripts/api/blob-download.js', () => ({ downloadBlob: async (blob, filename) => {
@@ -21,8 +21,12 @@ vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', tS
 vi.mock('../../scripts/generation/audio-prep.js', async importOriginal => ({ ...await importOriginal(), prepareContentForAudio: async () => [{ text: 'Article.', index: 0 }] }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+const id3v2 = [0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0];
+const mp3Frame = new Uint8Array(417);
+mp3Frame.set([0xff, 0xfb, 0x90, 0xc4]); // MPEG-1 Layer III, 44.1 kHz, 128 kbps, mono
+
 it.each([['pcm_24000', 'wav', 'audio/wav'], ['ulaw_8000', 'wav', 'audio/wav'], ['mp3_44100_128', 'mp3', 'audio/mpeg']])('downloads requested %s using the actual file format and MIME type', async (format, extension, mimeType) => {
-  const bytes = format === 'ulaw_8000' ? [0xff, 0x80] : format.startsWith('pcm_') ? [1, 0, 2, 0] : [73, 68, 51, 4, 0, 0, 0, 0, 0, 0, 0, 0];
+  const bytes = format === 'ulaw_8000' ? [0xff, 0x80] : format.startsWith('pcm_') ? [1, 0, 2, 0] : [...id3v2, ...mp3Frame];
   vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array(bytes))));
   let blob;
   vi.spyOn(URL, 'createObjectURL').mockImplementation(value => { blob = value; return 'blob:synthetic-audio'; });
@@ -40,6 +44,40 @@ it.each([['pcm_24000', 'wav', 'audio/wav'], ['ulaw_8000', 'wav', 'audio/wav'], [
   } else expect([...result]).toEqual(bytes);
   expect(AUDIO_CONFIG.VOICES).toEqual(expect.arrayContaining(['marin', 'cedar']));
   expect(AUDIO_CONFIG.VOICES).not.toContain('nova');
+});
+
+it.each([
+  ['non-audio response', new TextEncoder().encode('Invalid response that is not audio.')],
+  ['metadata without audio', new Uint8Array(id3v2)],
+  ['truncated frame after a complete frame', new Uint8Array([...mp3Frame, ...mp3Frame.slice(0, -60)])]
+])('does not download an MP3 for a %s', async (_, bytes) => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(bytes, { headers: { 'Content-Type': 'audio/mpeg' } })));
+  chrome.downloads.download.mockClear();
+  await expect(generateAudio({ content: [{ type: 'paragraph', text: 'Article.' }], title: 'Article',
+    apiKey: 'synthetic-prep-key', ttsApiKey: 'synthetic-tts-key',
+    model: 'synthetic-model', provider: 'elevenlabs', voice: 'saved-voice', speed: 1, format: 'mp3', language: 'en',
+    elevenlabsFormat: 'mp3_44100_128' })).rejects.toMatchObject({ translationKey: 'errorTtsInvalidAudio' });
+  expect(chrome.downloads.download).not.toHaveBeenCalled();
+});
+
+it.each([true, false])('combines ordered MP3 frames without repeated standalone tags (Blob: %s)', async asBlob => {
+  const index = mp3Frame.slice();
+  index.set(new TextEncoder().encode('Info'), 21);
+  const trailer = new Uint8Array(128);
+  trailer.set(new TextEncoder().encode('TAG'));
+  const other = mp3Frame.slice();
+  other[7] = 12;
+  const first = new Uint8Array([...id3v2, ...index, ...mp3Frame, ...trailer]);
+  const second = new Uint8Array([...id3v2, ...index, ...other]);
+  const combined = concatenateMp3([first.buffer, second.buffer], asBlob);
+  const output = combined instanceof Blob ? await combined.arrayBuffer() : combined;
+  expect(new Uint8Array(output)).toEqual(new Uint8Array([...mp3Frame, ...other]));
+});
+
+it('preserves a standalone MP3 when the ID3v1 marker occurs within the last audio frame', () => {
+  const audio = new Uint8Array([...mp3Frame, ...mp3Frame, ...mp3Frame]);
+  audio.set(new TextEncoder().encode('TAG'), audio.length - 128);
+  expect(concatenateMp3([audio.buffer], false)).toBe(audio.buffer);
 });
 
 it('keeps Qwen workspace, region, model and voice from stored quick-save settings through the factory to the synthesis request', async () => {

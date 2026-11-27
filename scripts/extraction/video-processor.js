@@ -64,7 +64,7 @@ async function processSubtitlesSingleChunk(subtitles, apiKey, model, processingR
     throw new Error('AI response is not an object');
   }
   
-  if (!parsed.content || !Array.isArray(parsed.content)) {
+  if (!Array.isArray(parsed.content) || parsed.content.length === 0) {
     logError('AI response missing content array', parsed);
     throw new Error('AI response missing content array');
   }
@@ -83,7 +83,7 @@ async function processSubtitlesSingleChunk(subtitles, apiKey, model, processingR
  * @returns {Promise<Array>} Processed content items (only new chunk, not previous)
  */
 async function processSubtitlesWithContext(subtitles, previousContent, apiKey, model, processingRunId, requestOptions) {
-  // Build context from previous content (can be large, that's OK)
+  // Give the model enough context to continue a sentence at the previous boundary.
   const previousText = previousContent
     .map(item => {
       if (item.type === 'heading') return `## ${item.text}`;
@@ -93,9 +93,9 @@ async function processSubtitlesWithContext(subtitles, previousContent, apiKey, m
     .filter(text => text)
     .join('\n\n');
   
-  // Take last ~10k chars of previous content for context (enough to understand flow)
-  const contextText = previousText.length > 10000 
-    ? '...' + previousText.slice(-10000)
+  const contextLength = 2000;
+  const contextText = previousText.length > contextLength
+    ? '...' + previousText.slice(-contextLength)
     : previousText;
   
   const userPrompt = `You already processed the first part of subtitles. Here's what you created so far (last part for context):
@@ -139,12 +139,50 @@ Remember:
     throw new Error('AI response is not an object');
   }
   
-  if (!parsed.content || !Array.isArray(parsed.content)) {
+  if (!Array.isArray(parsed.content) || parsed.content.length === 0) {
     logError('AI response missing content array', parsed);
     throw new Error('AI response missing content array');
   }
   
   return parsed.content;
+}
+
+/** @param {{text?: string}[]} subtitles */
+function splitSubtitleRequests(subtitles) {
+  // The output nearly repeats the source text. Timestamp and JSON overhead do not predict its size.
+  const maxTextLength = 8000;
+  const maxEntries = 500;
+  const chunks = [];
+  let start = 0;
+  let textLength = 0;
+  subtitles.forEach((subtitle, index) => {
+    const length = subtitle.text?.length || 0;
+    if (index > start && (textLength + length > maxTextLength || index - start >= maxEntries)) {
+      chunks.push(subtitles.slice(start, index));
+      start = index;
+      textLength = 0;
+    }
+    textLength += length;
+  });
+  chunks.push(subtitles.slice(start));
+  return chunks;
+}
+
+/** Process each part in order. A retry uses smaller input only after an explicit output limit. */
+async function processSubtitleRequest(subtitles, previousContent, apiKey, model, processingRunId, requestOptions, splitsRemaining = 3) {
+  try {
+    const content = previousContent
+      ? await processSubtitlesWithContext(subtitles, previousContent, apiKey, model, processingRunId, requestOptions)
+      : await processSubtitlesSingleChunk(subtitles, apiKey, model, processingRunId, requestOptions);
+    return { content, context: content };
+  } catch (error) {
+    if (error?.code !== 'AI_RESPONSE_TRUNCATED' || subtitles.length < 2 || splitsRemaining === 0) throw error;
+    await checkCancellation('subtitle output limit', processingRunId);
+    const middle = Math.floor(subtitles.length / 2);
+    const first = await processSubtitleRequest(subtitles.slice(0, middle), previousContent, apiKey, model, processingRunId, requestOptions, splitsRemaining - 1);
+    const second = await processSubtitleRequest(subtitles.slice(middle), first.context, apiKey, model, processingRunId, requestOptions, splitsRemaining - 1);
+    return { content: [...first.content, ...second.content], context: second.context };
+  }
 }
 
 /**
@@ -163,42 +201,8 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
   }
   await checkCancellation('subtitle processing', processingRunId);
   
-  // Split subtitles into chunks based on input size only
-  // No output size restrictions - let AI generate as much as needed
-  const MAX_INPUT_CHARS = 50000; // Maximum input size per chunk
-  const ESTIMATED_INPUT_PER_ENTRY = 100; // Rough estimate: each subtitle entry is ~100 chars in JSON format
-  
-  // Calculate if chunking is needed based on input size
-  const estimatedInput = subtitles.length * ESTIMATED_INPUT_PER_ENTRY;
-  const needsChunking = estimatedInput > MAX_INPUT_CHARS;
-  
-  if (!needsChunking) {
-    // Single chunk processing
-    if (progressCallback) progressCallback(0, 1);
-    const result = await processSubtitlesSingleChunk(subtitles, apiKey, model, processingRunId, requestOptions);
-    if (progressCallback) progressCallback(1, 1);
-    return result;
-  }
-  
-  // Multi-chunk processing with context
-  log('Subtitle processing requires chunking', {
-    totalEntries: subtitles.length,
-    estimatedInput
-  });
-  
-  // Split subtitles into chunks based on input size
-  // Each chunk should have ~500 entries (MAX_INPUT_CHARS / ESTIMATED_INPUT_PER_ENTRY)
-  const ENTRIES_PER_CHUNK = Math.floor(MAX_INPUT_CHARS / ESTIMATED_INPUT_PER_ENTRY);
-  const chunks = [];
-  
-  for (let i = 0; i < subtitles.length; i += ENTRIES_PER_CHUNK) {
-    chunks.push(subtitles.slice(i, i + ENTRIES_PER_CHUNK));
-  }
-  
-  log('Split subtitles into chunks', { 
-    chunkCount: chunks.length,
-    entriesPerChunk: ENTRIES_PER_CHUNK
-  });
+  const chunks = splitSubtitleRequests(subtitles);
+  log('Prepared subtitle requests', { chunkCount: chunks.length, totalEntries: subtitles.length });
   
   // Process each chunk with context from previous
   const allContent = [];
@@ -218,20 +222,15 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
       progressCallback(i, chunks.length);
     }
     
-    let chunkContent;
     try {
-      // The provider owns the retry deadline for each request.
-      chunkContent = i === 0
-        ? await processSubtitlesSingleChunk(chunk, apiKey, model, processingRunId, requestOptions)
-        : await processSubtitlesWithContext(chunk, previousContent, apiKey, model, processingRunId, requestOptions);
+      const result = await processSubtitleRequest(chunk, previousContent, apiKey, model, processingRunId, requestOptions);
       await checkCancellation('subtitle chunk result', processingRunId);
+      allContent.push(...result.content);
+      previousContent = result.context;
     } catch (error) {
       logError(`Failed to process subtitle chunk ${i + 1}/${chunks.length}`, error);
       throw error;
     }
-    
-    allContent.push(...chunkContent);
-    previousContent = chunkContent; // Save for next iteration
     
     // Update progress
     if (progressCallback) {

@@ -1,13 +1,16 @@
 import { tSync } from '../locales.js';
 
-const PROVIDER_CODES = new Set([
+const QUOTA_CODES = new Set([
   'insufficient_quota', 'billing_hard_limit_reached', 'billing_not_active', 'credit_balance_too_low',
+  'organization_spend_limit_exceeded'
+]);
+const PROVIDER_CODES = new Set([
+  ...QUOTA_CODES,
   'rate_limit_exceeded', 'rate_limit_error', 'invalid_api_key', 'authentication_error',
   'permission_denied', 'model_not_found', 'context_length_exceeded', 'invalid_request_error',
   'invalid_argument', 'unsupported_parameter', 'unsupported_value', 'resource_exhausted',
   'server_error', 'internal_error', 'overloaded_error', 'service_unavailable'
 ]);
-const QUOTA_CODES = new Set(['insufficient_quota', 'billing_hard_limit_reached', 'billing_not_active', 'credit_balance_too_low']);
 const REQUEST_PARAMETERS = new Set([
   'model', 'messages', 'max_tokens', 'max_completion_tokens', 'max_output_tokens', 'temperature',
   'response_format', 'reasoning_effort', 'thinking', 'budget_tokens', 'input', 'voice', 'speed',
@@ -17,6 +20,11 @@ const REQUEST_PARAMETERS = new Set([
 export function isApiBoundaryError(error) {
   return Boolean(error?.translationKey || error?.retryable === false || error?.retryExhausted ||
     ['AbortError', 'TimeoutError'].includes(error?.name));
+}
+
+/** @param {unknown} code */
+export function isApiQuotaCode(code) {
+  return typeof code === 'string' && QUOTA_CODES.has(code.toLowerCase());
 }
 
 /**
@@ -33,7 +41,7 @@ export async function createApiError(response, provider) {
     .find(value => PROVIDER_CODES.has(value));
   const parameter = REQUEST_PARAMETERS.has(remote?.param) ? remote.param : undefined;
   const status = response.status;
-  const quota = QUOTA_CODES.has(providerCode);
+  const quota = isApiQuotaCode(providerCode);
   let translationKey = 'errorApiError';
   /** @type {{status?: number, reason?: string}} */
   let translationParams = { status };

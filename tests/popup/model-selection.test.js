@@ -234,4 +234,21 @@ describe('model selection persistence', () => {
     expect(() => resolveStoredModelSelection({ api_provider: 'unsupported', openai_model: 'gpt-5.2' })).toThrow('Unsupported AI provider');
     expect(resolveStoredModelSelection({ api_provider: 'deepseek', openai_model: 'deepseek-chat', custom_models: { deepseek: ['deepseek-chat'] } })).toEqual({ provider: 'deepseek', model: 'deepseek-chat' });
   });
+
+  it('uses the selected provider default when the global model belongs to a different provider', () => {
+    const settings = { api_provider: 'gemini', openai_model: 'gpt-6.1-sol-high' };
+    const selection = { provider: 'gemini', model: getDefaultModel('gemini') };
+    expect(resolveStoredModelSelection(settings)).toEqual(selection);
+    expect(determineProviderAndModel(settings)).toEqual(selection);
+    expect(resolveStoredModelSelection({ api_provider: 'gemini', openai_model: 'sample-model', model_by_provider: { openai: 'sample-model' } }))
+      .toEqual(selection);
+  });
+
+  it('keeps custom legacy model IDs owned by the selected provider', () => {
+    expect(resolveStoredModelSelection({ api_provider: 'gemini', openai_model: 'gpt-sample-model',
+      model_by_provider: { openai: 'gpt-sample-model' }, custom_models: { gemini: ['gpt-sample-model'] } }))
+      .toEqual({ provider: 'gemini', model: 'gpt-sample-model' });
+    expect(resolveStoredModelSelection({ api_provider: 'gemini', openai_model: 'sample-model-v2' }))
+      .toEqual({ provider: 'gemini', model: 'sample-model-v2' });
+  });
 });

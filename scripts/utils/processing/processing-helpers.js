@@ -333,7 +333,7 @@ function quickSaveError(key, language) {
 /**
  * Extract page content from tab
  * @param {number} [tabId] - Optional tab ID (if not provided, will use active tab)
- * @returns {Promise<{html: string, url: string, title: string, tabId: number, isPdf?: boolean}>} Page data with html, url, title, tabId, and optional isPdf flag
+ * @returns {Promise<{html: string, url: string, title: string, tabId: number, isPdf?: boolean, sourceContentType?: string}>} Page data
  */
 export async function extractPageContent(tabId = null) {
   let tab;
@@ -407,6 +407,7 @@ export async function extractPageContent(tabId = null) {
       target: { tabId: tab.id },
       func: () => ({
         html: document.documentElement.outerHTML,
+        sourceContentType: document.contentType,
         url: window.location.href,
         title: document.title
       })
@@ -431,7 +432,7 @@ export async function extractPageContent(tabId = null) {
 /**
  * Prepare quick save processing data
  * @param {import('../../types.js').ExportFormat} outputFormat - Output format
- * @param {{tabId: number, html: string, url: string, title: string}} pageData - Page data from extractPageContent
+ * @param {{tabId: number, html: string, url: string, title: string, sourceContentType?: string}} pageData - Page data from extractPageContent
  * @returns {Promise<import('../../types.js').ProcessingData>} Processing data
  * @throws {Error} If settings loading fails
  * @throws {Error} If quick save data preparation fails
@@ -471,7 +472,7 @@ export async function prepareQuickSaveProcessingData(outputFormat, pageData) {
   });
   
   // Prepare processing data from settings
-  return await prepareQuickSaveData(
+  const processingData = await prepareQuickSaveData(
     settings,
     outputFormat,
     pageData.tabId,
@@ -479,6 +480,7 @@ export async function prepareQuickSaveProcessingData(outputFormat, pageData) {
     pageData.url,
     pageData.title
   );
+  return { ...processingData, sourceContentType: pageData.sourceContentType };
 }
 
 /**

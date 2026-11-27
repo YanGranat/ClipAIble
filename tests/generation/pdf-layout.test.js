@@ -80,6 +80,17 @@ describe('Final PDF print layout', () => {
     expect(long.style.breakInside).toBe('auto');
   });
 
+  it('lets oversized preformatted text flow across pages while keeping small examples intact', async () => {
+    const { doc, prepare } = page('<pre><code>const scale = 2;</code></pre><pre id="long">Header\n\n  Inline spacing remains part of the text.</pre>');
+    const [example, longBlock] = doc.querySelectorAll('pre');
+    example.getBoundingClientRect = () => ({ height: 100 });
+    longBlock.getBoundingClientRect = () => ({ height: 1800 });
+    await prepare('multi');
+    expect(example.style.breakInside).toBe('');
+    expect(longBlock.style.breakInside).toBe('auto');
+    expect(longBlock.textContent).toBe('Header\n\n  Inline spacing remains part of the text.');
+  });
+
   it('removes only unanchored empty paragraphs at the end of a continuous page', async () => {
     const { doc, prepare } = page('<p>Opening note.</p><p data-spacer></p><p>Closing note.</p><p></p><p></p>');
     const flow = doc.querySelector('.article-content');
@@ -242,6 +253,18 @@ describe('Final PDF print layout', () => {
     expect(doc.querySelector('#last-value').textContent).toBe('31 m');
     expect(doc.querySelector('a').getAttribute('href')).toBe('#station-key');
     expect(doc.getElementById('measurements').className).toBe('pdf-table-records');
+  });
+
+  it('renders an unscoped whole-table title once and keeps specific field labels and links', async () => {
+    const { doc, prepare } = page('<table><thead><tr><th colspan="2" id="survey-title">Seasonal survey results</th></tr><tr><th id="channel">Channel</th><th id="level">Water<br>level</th></tr></thead><tbody><tr><td>East inlet<br>North bank</td><td headers="survey-title level"><a href="#survey-title">27 m</a></td></tr><tr><td>West inlet</td><td>31 m</td></tr></tbody></table>', 1800);
+    expect((await prepare()).tableLayouts[0].mode).toBe('records');
+    expect(doc.querySelector('header.pdf-table-context').textContent).toBe('Seasonal survey results');
+    expect([...doc.querySelectorAll('dt')].map(node => node.textContent)).toEqual(['Channel', 'Water level', 'Channel', 'Water level']);
+    expect([...doc.querySelectorAll('dd')].map(node => node.textContent)).toEqual(['East inletNorth bank', '27 m', 'West inlet', '31 m']);
+    expect(doc.querySelector('dt br')).toBeNull();
+    expect(doc.querySelector('dd br')).not.toBeNull();
+    expect(doc.querySelectorAll('#survey-title')).toHaveLength(1);
+    expect(doc.querySelector('a').getAttribute('href')).toBe('#survey-title');
   });
 
   it('keeps header-only and unlabelled wide tables without inventing header content', async () => {

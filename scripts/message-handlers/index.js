@@ -524,15 +524,19 @@ export function routeMessage(request, sender, sendResponse, deps) {
         sendResponse({ success: false, error: 'Invalid audio progress' });
         return true;
       }
-      const { processingRunId, sentenceIndex, totalSentences, progressBase, progressRange } = update;
+      const { processingRunId, sentenceIndex, totalSentences, progressBase, progressRange, current, total } = update;
       const state = getProcessingState();
-      const progress = totalSentences === 1 ? 90 :
-        Math.min(progressBase + Math.floor((sentenceIndex - 1) / totalSentences * progressRange), 94);
+      const hasParts = current !== undefined;
+      const fraction = (hasParts ? sentenceIndex : sentenceIndex - 1) / totalSentences;
+      const progress = !hasParts && totalSentences === 1 ? 90 : Math.min(Math.floor(progressBase + fraction * progressRange), 94);
       const statusTranslationKey = 'statusGeneratingAudioChunks';
-      const statusTranslationParams = { current: sentenceIndex, total: totalSentences };
+      const statusTranslationParams = { current: current ?? sentenceIndex, total: total ?? totalSentences };
       const previous = state.statusTranslationKey === statusTranslationKey ? state.statusTranslationParams : null;
+      const noAdvance = previous?.total === statusTranslationParams.total &&
+        (previous.current > statusTranslationParams.current ||
+         (previous.current === statusTranslationParams.current && (!hasParts || progress <= state.progress)));
       if (!state.isProcessing || state.outputFormat !== 'audio' || isCancelled(processingRunId) || progress < state.progress ||
-          (previous?.total === totalSentences && previous.current >= sentenceIndex)) {
+          noAdvance) {
         sendResponse({ success: true, ignored: true });
         return true;
       }

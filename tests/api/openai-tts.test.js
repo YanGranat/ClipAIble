@@ -71,6 +71,20 @@ describe('OpenAI Realtime narration', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it.each([
+    { code: 'organization_spend_limit_exceeded' },
+    { type: 'insufficient_quota' }
+  ])('reports a Realtime billing limit as non-retryable quota exhaustion', async details => {
+    vi.stubGlobal('WebSocket', realtimeWebSocket(socket => {
+      socket.emit({ type: 'error', error: { ...details, message: 'Opaque provider details' } });
+    }));
+    await expect(textToSpeech('Article.', 'synthetic-key')).rejects.toMatchObject({
+      status: 429, translationKey: 'errorApiQuotaExceeded', retryable: false
+    });
+    expect(WebSocket.instances[0].closed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each(['foreign', 'missing-audio-end', 'empty', 'odd', 'invalid-base64', 'malformed-json', 'close'])('rejects %s audio without exporting partial data', async fault => {
     vi.stubGlobal('WebSocket', realtimeWebSocket(socket => {
       socket.emit({ type: 'response.created', response: { id: 'r' } });

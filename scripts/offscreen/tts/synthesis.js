@@ -6,6 +6,15 @@ import { concatenateWavBuffers } from '../audio/wav-utils.js';
 import { splitIntoSentences, checkMemory } from './text-processing.js';
 import { DEFAULT_VOICES, FALLBACK_VOICES } from './voice-selection.js';
 
+function reportProgress(processingRunId, sentenceIndex, totalSentences, piperProgress) {
+  if (!processingRunId) return;
+  try {
+    chrome.runtime.sendMessage({ action: 'TTS_PROGRESS', data: {
+      processingRunId, sentenceIndex, totalSentences, progressBase: 60, progressRange: 35, ...piperProgress
+    } }).catch(() => {});
+  } catch (_) { /* The audio does not depend on a progress receiver. */ }
+}
+
 /**
  * Synthesize text to audio
  * @param {Object} params - Parameters
@@ -15,6 +24,7 @@ import { DEFAULT_VOICES, FALLBACK_VOICES } from './voice-selection.js';
  * @param {string} params.langCode - Language code
  * @param {string} params.messageId - Message ID
  * @param {string} [params.processingRunId] - Processing run owner
+ * @param {import('../../types.js').PiperProgress} [params.piperProgress] - Overall synthesis position
  * @param {typeof import('../worker/api.js').predictWithWorker} params.predictWithWorker - Predict function
  * @param {function(): Promise<string[]>} params.getStoredWithWorker - Get stored function
  * @param {typeof import('../worker/api.js').downloadWithWorker} params.downloadWithWorker - Download function
@@ -27,6 +37,7 @@ export async function synthesizeText({
   text,
   speed = 1,
   processingRunId,
+  piperProgress,
   voiceId,
   langCode,
   messageId,
@@ -54,6 +65,8 @@ export async function synthesizeText({
   const maxRetries = 2;
   let currentVoiceId = voiceId;
   let isFallbackVoice = false;
+
+  if (piperProgress) reportProgress(processingRunId, 0, 1, piperProgress);
   
   while (retryCount <= maxRetries) {
     try {
@@ -66,6 +79,7 @@ export async function synthesizeText({
         wavBlob = await synthesizeStreaming({
           sentences,
           processingRunId,
+          piperProgress,
           voiceId: currentVoiceId,
           speed,
           messageId,
@@ -86,6 +100,7 @@ export async function synthesizeText({
           initTTSWorker,
           state
         });
+        if (piperProgress) reportProgress(processingRunId, 1, 1, piperProgress);
       }
       
       break; // Success
@@ -158,6 +173,7 @@ export async function synthesizeText({
 async function synthesizeStreaming({
   sentences,
   processingRunId,
+  piperProgress,
   voiceId,
   speed,
   messageId,
@@ -204,18 +220,7 @@ async function synthesizeStreaming({
     
     // Send progress (debounced)
     if ((i + 1) % 2 === 0 || i === sentences.length - 1) {
-      try {
-        chrome.runtime.sendMessage({
-          action: 'TTS_PROGRESS',
-          data: {
-            processingRunId,
-            sentenceIndex: i + 1,
-            totalSentences: sentences.length,
-            progressBase: 60,
-            progressRange: 35
-          }
-        }).catch(() => {});
-      } catch (e) {}
+      reportProgress(processingRunId, i + 1, sentences.length, piperProgress);
     }
   }
   

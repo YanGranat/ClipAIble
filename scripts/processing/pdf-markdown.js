@@ -147,7 +147,7 @@ export function parsePdfMarkdown(markdown, figures, fallbackTitle, hasMetadataTi
       flush();
       const level = heading[1].length;
       const label = heading[2].trim();
-      if (level === 1 && !readingStarted) {
+      if (level === 1 && !readingStarted && lines.slice(index + 1).some(line => line.trim())) {
         const matchesMetadata = label.toLowerCase() === title.trim().toLowerCase();
         const plausibleTitle = label.length > 10 && !/\.pdf$/i.test(label) && !/^\d+[-_]/.test(label);
         if (hasMetadataTitle ? matchesMetadata : plausibleTitle) {

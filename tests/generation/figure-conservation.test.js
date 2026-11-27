@@ -6,6 +6,8 @@ import { generatePdf } from '../../scripts/generation/pdf.js';
 import { generateEpub } from '../../scripts/generation/epub.js';
 import { generateFb2 } from '../../scripts/generation/fb2.js';
 import { putPrintJob } from '../../scripts/api/print-storage.js';
+import { imageToBase64, processImagesInBatches } from '../../scripts/utils/images.js';
+import { JSDOM } from 'jsdom';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 vi.mock('../../scripts/utils/images.js', () => ({ imageToBase64: vi.fn(async () => null), processImagesInBatches: vi.fn(async () => []), embedImages: vi.fn(async html => html) }));
@@ -68,5 +70,26 @@ describe('figure paragraph conservation', () => {
       : result instanceof Blob ? await result.text() : result;
     expect(output).toContain('Prose before.');
     expect(output).toContain('Prose after.');
+  });
+
+  it('preserves linked HTML, Markdown, and literal text in embedded EPUB captions', async () => {
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII=';
+    vi.mocked(imageToBase64).mockResolvedValueOnce(png).mockResolvedValueOnce(png).mockResolvedValueOnce(png);
+    vi.mocked(processImagesInBatches).mockImplementationOnce((items, _limit, _state, process) => Promise.all(items.map(process)));
+    const content = [
+      { type: 'image', src: png, caption: '<a href="/field_sensor_data">Field readings</a> from the <em>first trial</em>.' },
+      { type: 'image', src: png, caption: 'Follow the [reading log](/log) for *details*.' },
+      { type: 'image', src: png, format: 'text', caption: 'Preserve a < b & <mark>literal text</mark>.' }
+    ];
+    const epub = await generateEpub({ content, title: 'Measurement report', sourceUrl: 'https://example.org/report' });
+    const chapter = readZipEntries(await epub.arrayBuffer())['OEBPS/content.xhtml'].toString('utf8');
+    const doc = JSDOM.fragment(chapter);
+    const [html, markdown, literal] = doc.querySelectorAll('figcaption');
+    expect(html.querySelector('a').getAttribute('href')).toBe('https://example.org/field_sensor_data');
+    expect(html.querySelector('em').textContent).toBe('first trial');
+    expect(markdown.querySelector('a').getAttribute('href')).toBe('https://example.org/log');
+    expect(markdown.querySelector('em').textContent).toBe('details');
+    expect(literal.textContent).toBe(content[2].caption);
+    expect(literal.childElementCount).toBe(0);
   });
 });

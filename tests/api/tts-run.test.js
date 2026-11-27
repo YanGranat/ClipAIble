@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chunksToSpeech } from '../../scripts/api/tts.js';
 import { cancelProcessing, getProcessingRunId, getProcessingState, getScopedUpdateState, isCancelled, resetState, startProcessing, updateState } from '../../scripts/state/processing.js';
 import { textToSpeech as openaiTTS } from '../../scripts/api/openai-tts.js';
+import { pcmToWav } from '../../scripts/api/audio-format.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 vi.mock('../../scripts/api/openai-tts.js', () => ({ textToSpeech: vi.fn() }));
@@ -32,13 +33,14 @@ afterEach(async () => {
 });
 
 const chunks = [{ text: 'First.', index: 0 }, { text: 'Middle.', index: 1 }, { text: 'Last.', index: 2 }];
+const chunkAudio = sample => pcmToWav(new Uint8Array([sample, 0]).buffer, 24000);
 
 describe('TTS output integrity and ownership', () => {
   it('preserves every successful chunk in order', async () => {
     let count = 0;
-    openaiTTS.mockImplementation(async () => new Uint8Array([++count]).buffer);
+    openaiTTS.mockImplementation(async () => chunkAudio(++count));
     const output = await chunksToSpeech(chunks, 'synthetic-key', { provider: 'openai', processingRunId: getProcessingRunId() });
-    expect([...new Uint8Array(output)]).toEqual([1, 2, 3]);
+    expect([...new Uint8Array(output, 44)]).toEqual([1, 0, 2, 0, 3, 0]);
   });
 
   it('rejects an incomplete file when the middle chunk fails', async () => {
@@ -47,7 +49,7 @@ describe('TTS output integrity and ownership', () => {
     openaiTTS.mockImplementation(async () => {
       count++;
       if (count === 2) throw failure;
-      return new Uint8Array([count]).buffer;
+      return chunkAudio(count);
     });
     await expect(chunksToSpeech(chunks, 'synthetic-key', { provider: 'openai', processingRunId: getProcessingRunId() })).rejects.toBe(failure);
     expect(count).toBe(2);
@@ -66,7 +68,7 @@ describe('TTS output integrity and ownership', () => {
     updateState({ progress: 37, outputFormat: 'markdown' });
     await vi.advanceTimersByTimeAsync(2100);
     expect(getProcessingState()).toMatchObject({ progress: 37, outputFormat: 'markdown' });
-    releaseResponse(new Uint8Array([1]).buffer);
+    releaseResponse(chunkAudio(1));
     expect(await failure).toBeInstanceOf(Error);
     expect(openaiTTS).toHaveBeenCalledTimes(1);
     expect(getProcessingState()).toMatchObject({ isProcessing: true, progress: 37, outputFormat: 'markdown' });

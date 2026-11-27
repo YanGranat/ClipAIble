@@ -13,6 +13,30 @@ beforeEach(() => {
 afterEach(() => { dom.window.close(); vi.unstubAllGlobals(); });
 
 describe('Vimeo caption language preference', () => {
+  it('reads captions published in the embedded player configuration', async () => {
+    dom.window.vimeoPlayerConfig = { request: {} };
+    dom.window.playerConfig = { request: { text_tracks: [
+      { kind: 'captions', lang: 'en-x-autogen', url: 'https://example.org/fallback.vtt' },
+      { kind: 'subtitles', lang: 'fr', url: 'https://example.org/preferred.vtt' }
+    ] } };
+
+    expect((await extractVimeoSubtitles(7, 'fr')).subtitles).toEqual([{ start: 1, duration: 2, text: 'Preferred caption' }]);
+    expect(fetchTrack).toHaveBeenCalledOnce();
+  });
+
+  it('reads the declared public CDN WebVTT with extension permissions and no credentials', async () => {
+    const url = 'https://captions.vimeo.com/example.vtt';
+    dom.window.playerConfig = { request: { text_tracks: [{ kind: 'captions', lang: 'en', url }] } };
+    const extensionFetch = vi.fn(async () => new Response('WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nPublished caption\n', {
+      headers: { 'Content-Type': 'text/vtt; charset=utf-8' }
+    }));
+    vi.stubGlobal('fetch', extensionFetch);
+
+    expect((await extractVimeoSubtitles(7)).subtitles).toEqual([{ start: 1, duration: 2, text: 'Published caption' }]);
+    expect(fetchTrack).not.toHaveBeenCalled();
+    expect(extensionFetch).toHaveBeenCalledExactlyOnceWith(url, expect.objectContaining({ credentials: 'omit', redirect: 'error' }));
+  });
+
   it.each(['config', 'state'])('selects the requested language from %s instead of an earlier manual track', async source => {
     const video = { textTracks: [
       { kind: 'captions', language: 'en', auto: false, src: 'https://example.org/fallback.vtt' },

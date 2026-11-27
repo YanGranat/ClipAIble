@@ -59,6 +59,38 @@ describe('Subtitle processing run ownership', () => {
     expect(progress).toHaveBeenLastCalledWith(2, 2);
   });
 
+  it('limits the amount of speech per request even when there are few subtitles', async () => {
+    const subtitles = ['Beginning', 'Middle', 'End'].map(label => ({ text: `${label} ${'text '.repeat(850)}` }));
+    await processSubtitlesWithAI(subtitles, 'placeholder', 'model', null, 'current');
+    const prompts = dependencies.callAI.mock.calls.map(args => args[1]);
+    expect(prompts).toHaveLength(3);
+    expect(prompts[0]).toContain('Beginning');
+    expect(prompts[0]).not.toContain('Middle');
+    expect(prompts[1]).toContain('Middle');
+    expect(prompts[2]).toContain('End');
+  });
+
+  it('retries truncated output with smaller parts and carries the successful first half forward', async () => {
+    const truncated = Object.assign(new Error('Output limit'), { code: 'AI_RESPONSE_TRUNCATED', retryable: false });
+    dependencies.callAI.mockRejectedValueOnce(truncated)
+      .mockResolvedValueOnce({ content: [{ type: 'paragraph', text: 'First half restored' }] })
+      .mockResolvedValueOnce({ content: [{ type: 'paragraph', text: 'Second half restored' }] });
+    const progress = vi.fn();
+    const result = await processSubtitlesWithAI([{ text: 'First source' }, { text: 'Last source' }], 'placeholder', 'model', progress, 'current');
+    expect(result.map(item => item.text)).toEqual(['First half restored', 'Second half restored']);
+    expect(dependencies.callAI.mock.calls[1][1]).not.toContain('Last source');
+    expect(dependencies.callAI.mock.calls[2][1]).toContain('First half restored');
+    expect(dependencies.callAI.mock.calls[2][1]).toContain('Last source');
+    expect(progress).toHaveBeenLastCalledWith(1, 1);
+  });
+
+  it('rejects empty content and does not present it as a complete transcript', async () => {
+    dependencies.callAI.mockResolvedValueOnce({ content: [] });
+    await expect(processSubtitlesWithAI([{ text: 'First source' }], 'placeholder', 'model', null, 'current'))
+      .rejects.toThrow('AI response missing content array');
+    expect(dependencies.callAI).toHaveBeenCalledOnce();
+  });
+
   it('preserves the original provider error after exhausting a chunk', async () => {
     const cause = Object.assign(new Error('Provider declined the request.'), { status: 429, code: 'rate_limit' });
     dependencies.callAI.mockRejectedValueOnce(cause);

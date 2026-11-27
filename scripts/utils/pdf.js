@@ -63,9 +63,14 @@ export function isChromePdfViewer(tabUrl) {
  * @param {string} url - Page URL
  * @param {string} [tabUrl] - Tab URL (optional, for Chrome PDF viewer detection)
  * @param {string} [html] - Page HTML content (optional, for inline PDF detection)
+ * @param {string} [sourceContentType] - Browser-reported document MIME type
  * @returns {Object|null} {isPdf: true, originalUrl: string} or null
  */
-export function detectPdfPage(url, tabUrl, html) {
+export function detectPdfPage(url, tabUrl, html, sourceContentType) {
+  if (sourceContentType === 'application/pdf' && /^(https?|file):\/\//i.test(url)) {
+    return { isPdf: true, originalUrl: url };
+  }
+
   // Check if URL is directly a PDF
   if (isPdfUrl(url)) {
     return { isPdf: true, originalUrl: url };

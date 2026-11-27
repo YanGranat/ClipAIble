@@ -155,7 +155,11 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
     const body = projected.filter(entry => entry.row.parentElement !== table.tHead);
     const headCells = [...new Set(projected.filter(entry => entry.row.parentElement === table.tHead)
       .flatMap(entry => entry.cells.map(owner => owner.cell)))];
-    return { columns, headingsFor, rows: body.length ? body : projected, headCells, headersOnly: body.length === 0 };
+    // A leading unscoped heading that covers the entire grid labels the table.
+    const tableHeading = body.length && columns > 1 && rows[0]?.parentElement === table.tHead
+      ? headers.find(owner => owner.rowIndex === 0 && owner.width === columns && !owner.cell.scope)?.cell
+      : null;
+    return { columns, headingsFor, rows: body.length ? body : projected, headCells, tableHeading, headersOnly: body.length === 0 };
   }
 
   for (const table of Array.from(article.querySelectorAll('table'))) {
@@ -196,6 +200,9 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
       const copy = document.createElement('span');
       if (cell.classList.contains('table-muted')) copy.className = 'table-muted';
       copy.append(...Array.from(cell.childNodes).map(node => node.cloneNode(true)));
+      if (target.tagName === 'DT') {
+        for (const lineBreak of copy.querySelectorAll('br')) lineBreak.replaceWith(' ');
+      }
       if (cell.id) copy.id = cell.id;
       for (const node of [copy, ...Array.from(copy.querySelectorAll('[id],[name]'))]) {
         for (const name of ['id', 'name']) {
@@ -207,6 +214,13 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
       }
       target.append(...(copy.id ? [copy] : Array.from(copy.childNodes)));
     }
+    if (projection.tableHeading) {
+      const caption = document.createElement('header');
+      caption.className = 'pdf-table-context';
+      appendCell(caption, projection.tableHeading);
+      usedHeadings.add(projection.tableHeading);
+      records.append(caption);
+    }
     projection.rows.forEach(entry => {
       const record = document.createElement('dl');
       record.className = 'pdf-table-record';
@@ -216,7 +230,7 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
         field.className = rowHeaders.includes(owner) ? 'pdf-table-field pdf-table-context' : 'pdf-table-field';
         const label = document.createElement('dt');
         const value = document.createElement('dd');
-        const headings = projection.headersOnly ? [] : projection.headingsFor(owner);
+        const headings = projection.headersOnly ? [] : projection.headingsFor(owner).filter(heading => heading !== projection.tableHeading);
         headings.forEach((heading, index) => {
           usedHeadings.add(heading);
           if (index) label.appendChild(document.createElement('br'));
@@ -237,7 +251,8 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
           if (index) context.appendChild(document.createElement('br'));
           appendCell(context, cell);
         });
-        records.prepend(context);
+        if (projection.tableHeading) records.firstElementChild.after(context);
+        else records.prepend(context);
       }
     }
     table.replaceWith(records);
@@ -254,9 +269,9 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
   }
   if (pageMode === 'multi' && paperHeightInches > pageMarginMm / 25.4) {
     const printableHeight = (paperHeightInches - pageMarginMm / 25.4) * 96;
-    for (const quote of article.querySelectorAll('.article-content blockquote')) {
-      if (quote instanceof HTMLElement && quote.getBoundingClientRect().height > printableHeight / 2) {
-        quote.style.breakInside = 'auto';
+    for (const block of article.querySelectorAll('.article-content :is(blockquote, pre)')) {
+      if (block instanceof HTMLElement && block.getBoundingClientRect().height > printableHeight / 2) {
+        block.style.breakInside = 'auto';
       }
     }
     fitPageEndFigures(printableHeight);

@@ -470,13 +470,15 @@
 /**
  * @typedef {Object} TTSProgressData
  * @property {string} processingRunId - Document operation identity
- * @property {number} sentenceIndex - One-based position of the completed sentence
+ * @property {number} sentenceIndex - Number of completed sentences, or zero when a part starts
  * @property {number} totalSentences - Number of sentences in the synthesis request
  * @property {number} [progressBase] - Starting percentage for synthesis
  * @property {number} [progressRange] - Percentage range for synthesis
  * @property {number} [current] - Current chunk number
  * @property {number} [total] - Total chunks
  */
+
+/** @typedef {{current:number,total:number,progressBase:number,progressRange:number}} PiperProgress */
 
 /**
  * Discriminated union for MessageRequest based on action
@@ -632,6 +634,7 @@
  * @property {AbortSignal} [signal] - Captured operation cancellation signal
  * @property {boolean} [returnBlob] - Return assembled audio as a Blob
  * @property {string} [processingRunId] - Processing run identity
+ * @property {PiperProgress} [piperProgress] - Range and position of the current Piper request
  * @property {string} [provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'openrouter', 'offline' (Piper), or 'supertonic'
  * @property {string} [voice] - Voice to use
  * @property {number} [speed] - Speech speed (OpenAI: 0.25-1.5, default: 1.0, offline: 0.1-10.0)
@@ -732,7 +735,9 @@
  * @property {boolean} [extractionOnly] - Extract content independently of document generation
  * @property {boolean} [autoGenerateKeyTheses] - Continue with key theses generation
  * @property {string} html - HTML content
+ * @property {number} [sourceHtmlLength] - Size of an Automatic tab snapshot omitted from the request
  * @property {string} url - Page URL
+ * @property {string} [sourceContentType] - Browser-reported document MIME type
  * @property {string} title - Page title
  * @property {number} tabId - Tab ID
  * @property {string} apiKey - API key for AI processing

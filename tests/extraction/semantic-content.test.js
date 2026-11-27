@@ -36,6 +36,54 @@ describe('Semantic article content', () => {
     container.replaceWith(...container.childNodes);
     expect(findMainContent(win, win.document, element => isExcluded(win, element, constants), null, () => {}).id).toBe('body');
   });
+
+  it('selects the document scope when its contents link to independently wrapped chapters', () => {
+    const win = page(`<h1>Field Manual</h1>
+      <nav role="doc-toc"><a href="#setup">Setup</a><a href="#sampling">Sampling</a><a href="#closure">Closure</a></nav>
+      <div><section id="setup"><h2>Setup</h2><p>The initial procedure establishes the calibration.</p></section></div>
+      <div><section id="sampling"><h2>Sampling</h2><p>${'The equipment collects a new measurement. '.repeat(15)}</p></section></div>
+      <div><section id="closure"><h2>Closure</h2><p>The final procedure records the coordinates.</p></section></div>
+      <footer><p>Publisher links</p></footer>`);
+    win.document.title = 'Technical Reports: Field Manual';
+    const container = win.document.querySelector('article');
+    container.replaceWith(...container.childNodes);
+    win.document.body.className = 'toc-sidebar';
+
+    expect(findMainContent(win, win.document, element => isExcluded(win, element, constants))).toBe(win.document.body);
+  });
+
+  it('uses authored chapter links when headings and prose are flat siblings', () => {
+    const win = page(`<h1>Workshop Notes</h1>
+      <ol class="toc"><li><a href="#tools">Tools</a></li><li><a href="#records">Records</a></li></ol>
+      <h2 id="tools">Tools</h2><p>Set the baseline with a calibrated meter.</p>
+      <h2 id="records">Records</h2><p>Copy the final reading into the separate log.</p>
+      <div><p>${'A separate note adds an observation about the terminal. '.repeat(12)}</p></div>`);
+    win.document.title = 'Workshop Notes and Guidelines';
+    const container = win.document.querySelector('article');
+    container.replaceWith(...container.childNodes);
+
+    expect(findMainContent(win, win.document, element => isExcluded(win, element, constants))).toBe(win.document.body);
+  });
+
+  it('distinguishes a listed chapter heading from an unrelated panel with a similar name', () => {
+    const win = page('<nav role="doc-toc"><a href="#widgets">Widgets</a></nav><h4 id="widgets">4. Widgets</h4><p>Each component has an independent control.</p><aside><h4 id="promo">Sponsored equipment</h4></aside>');
+    const root = win.document.querySelector('article');
+
+    expect(isExcluded(win, win.document.getElementById('widgets'), constants, [root])).toBe(false);
+    expect(isExcluded(win, win.document.getElementById('promo'), constants, [root])).toBe(true);
+  });
+
+  it('keeps an ordinary navigation widget from widening the chosen reading scope', () => {
+    const win = page(`<h1>Project Library</h1>
+      <nav class="toc"><a href="#current">Current</a><a href="/archive#other">Archived</a></nav>
+      <section id="current" class="article-body"><h2>Current release</h2><p>${'This part explains the procedure in detail. '.repeat(10)}</p></section>
+      <section id="other"><h2>Unrelated resources</h2><p>Links for other projects are kept in a separate listing.</p></section>`);
+    win.document.title = 'Project Library';
+    const container = win.document.querySelector('article');
+    container.replaceWith(...container.childNodes);
+
+    expect(findMainContent(win, win.document, element => isExcluded(win, element, constants))?.id).toBe('current');
+  });
   it('retains structural blocks and headings belonging to different sections', () => {
     const content = [
       { type: 'heading', text: 'Parameters', level: 2 },

@@ -1478,7 +1478,29 @@ export async function extractVimeoSubtitles(tabId, targetLanguage = 'auto') {
     throw new Error('Subtitle extraction returned no result');
   }
   
-  const result = results[0].result;
+  let result = results[0].result;
+
+  if (result.captionUrl && !result.subtitles?.length) {
+    try {
+      const url = new URL(result.captionUrl);
+      if (url.origin === 'https://captions.vimeo.com' && !url.username && !url.password) {
+        const response = await fetch(url.href, { credentials: 'omit', redirect: 'error',
+          signal: AbortSignal.timeout(CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2 * 5) });
+        if (response.ok && response.headers.get('content-type')?.toLowerCase().startsWith('text/vtt')) {
+          const vtt = await response.text();
+          if (vtt.length <= 5 * 1024 * 1024) {
+            const [parsed] = await chrome.scripting.executeScript({
+              target: { tabId }, world: 'MAIN', func: extractVimeoSubtitlesInlined,
+              args: [CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2, targetLanguage, CONFIG.VIDEO_SUBTITLES_TIMEOUT, vtt]
+            });
+            if (parsed?.result?.subtitles?.length) result = { ...result, subtitles: parsed.result.subtitles };
+          }
+        }
+      }
+    } catch (error) {
+      logWarn('Vimeo caption download failed', { name: error?.name });
+    }
+  }
   
   if (!result.subtitles || result.subtitles.length === 0) {
     logError('No subtitles in result', {
@@ -1504,8 +1526,9 @@ export async function extractVimeoSubtitles(tabId, targetLanguage = 'auto') {
  * @param {number} retryDelay2 - Second retry delay for video subtitles (ms)
  * @param {string} targetLanguage - Preferred caption language, or auto
  * @param {number} timeout - Total caption discovery budget (ms)
+ * @param {string} [publishedVtt] - Public WebVTT downloaded by the extension
  */
-function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage, timeout) {
+function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage, timeout, publishedVtt) {
   const logError = console.error.bind(console, '[ClipAIble]');
   return (async () => {
     try {
@@ -1626,6 +1649,8 @@ function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage, timeout) {
         }
         return subtitles;
       };
+      if (publishedVtt !== undefined) return { subtitles: parseWebVTT(publishedVtt), metadata };
+
       const declaredTracks = data => [
         data?.video?.textTracks, data?.data?.video?.textTracks, data?.player?.video?.textTracks,
         data?.textTracks, data?.request?.text_tracks
@@ -1647,13 +1672,20 @@ function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage, timeout) {
       };
       
       // ============================================
-      // METHOD 1: window.vimeoPlayerConfig
+      // METHOD 1: Vimeo player configuration published on watch and embed pages.
       // ============================================
       /** @type {any} */
       const win = window;
-      if (win.vimeoPlayerConfig) {
+      for (const config of [win.vimeoPlayerConfig, win.playerConfig]) {
+        if (!config) continue;
         try {
-          const parsedSubtitles = await readDeclaredTrack(win.vimeoPlayerConfig);
+          // Vimeo's embed policy can disallow page fetches to its public caption CDN.
+          const [preferred] = rankedTracks(declaredTracks(config), candidate => candidate.kind === 'captions' ? (candidate.auto ? 1 : 2) : 0);
+          const source = preferred?.src || preferred?.url;
+          if (source && new URL(source, document.baseURI).origin === 'https://captions.vimeo.com') {
+            return { subtitles: [], metadata, captionUrl: new URL(source, document.baseURI).href };
+          }
+          const parsedSubtitles = await readDeclaredTrack(config);
           if (parsedSubtitles.length > 0) return { subtitles: parsedSubtitles, metadata };
         } catch (e) {
           logError('Method 1 failed:', e);

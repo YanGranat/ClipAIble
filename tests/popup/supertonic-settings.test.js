@@ -78,6 +78,20 @@ describe('Supertonic settings', () => {
     expect(audioVoiceMap.current).toEqual({ offline: 'en_US-amy-medium', supertonic: 'F1' });
   });
 
+  it('renders a restored speed in the open popup and keeps it across provider bounds', () => {
+    selectProvider('offline');
+    elements.audioSpeed.value = '1.1';
+    elements.audioSpeed.dispatchEvent(new dom.window.Event('input'));
+    audio.restoreAudioSpeed('1.8');
+    audio.updateAudioProviderUI();
+    expect(elements.audioSpeed.value).toBe('1.8');
+    expect(elements.audioSpeedValue.textContent).toBe('1.8x');
+    selectProvider('supertonic');
+    expect(elements.audioSpeed.value).toBe('1.3');
+    selectProvider('offline');
+    expect(elements.audioSpeed.value).toBe('1.8');
+  });
+
   it('displays an explicit download, accessible progress, and deletion when installed', async () => {
     document.documentElement.lang = 'ru';
     getSupertonicModelStatus.mockResolvedValue({ state: 'missing' });

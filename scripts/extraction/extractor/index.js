@@ -126,7 +126,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         .find(element => !isSelectedContentExcluded(element, selection.exclusions));
       const standfirst = selection
         ? { element: selectedSubtitle || null, text: selectedSubtitle ? readArticleMetadataText(selectedSubtitle) : null }
-        : extractStandfirst(mainContent);
+        : extractStandfirst(mainContent, titleElement);
       const readingRoots = [...new Set([...bodyRoots, ...media.roots, ...(standfirst.element ? [standfirst.element] : [])])];
       const recommendationRegions = bodyRoots.flatMap(findRecommendationRegions);
       const publisherIgnores = bodyRoots.flatMap(root => Array.from(root.querySelectorAll('.instapaper_body .instapaper_ignore')));

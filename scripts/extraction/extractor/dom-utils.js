@@ -4,6 +4,26 @@
 
 /** Regions that own interface text independently of the surrounding article. */
 export const INTERFACE_REGIONS = 'nav,footer,dialog,[role~="navigation"],[role~="dialog"],[role~="alertdialog"],[aria-modal="true"]';
+export const MATHJAX_COMMON_HTML = '.mjx-chtml';
+
+/** An emoji image represents text in the sentence that owns it. */
+export function readInlineEmoji(element) {
+  if (!element.matches('img.emoji[alt]')) return '';
+  const alt = element.getAttribute('alt').trim();
+  return /^[\p{Extended_Pictographic}\p{Emoji_Component}\u200d]+$/u.test(alt) &&
+    /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(alt) ? alt : '';
+}
+
+/** An inline navigation bar exposes abbreviated controls alongside the reading text. */
+function isInlineNavigationBar(element) {
+  if (!element.matches('.navbar,[role~="toolbar"]') || !element.parentElement ||
+      element.closest('pre,code,math,figure') || !element.nextElementSibling?.textContent?.trim()) return false;
+  const links = Array.from(element.querySelectorAll('li > a[href]'));
+  if (links.length < 2 || element.querySelectorAll('a[href]').length !== links.length) return false;
+  return links.every(link => link.querySelector('abbr[title]') &&
+    Array.from(link.textContent?.trim() || '').length === 1) &&
+    links.map(link => link.textContent?.trim()).join('') === element.textContent?.replace(/\s+/g, '');
+}
 
 /** Identify an inline graphic explicitly attached to a neighboring link. */
 export function isExternalLinkAdornment(element) {
@@ -49,7 +69,12 @@ export function isPublisherLinkAction(element) {
     }
     if (link.closest('[data-preferred-source]') &&
         ['google.com', 'www.google.com'].includes(target.hostname) && target.pathname === '/preferences/source') return true;
-    const marked = link.hasAttribute('data-social-service') ||
+    const standalone = !link.closest(readingContext);
+    const emailShare = standalone && target.protocol === 'mailto:' && !target.pathname &&
+      target.searchParams.has('subject') && target.searchParams.has('body');
+    const reuseAction = standalone && !link.matches('[rel~="license"]') &&
+      /(?:^|[-_\s])syndication(?:$|[-_\s])/i.test(link.getAttribute('data-link-name') || '');
+    const marked = emailShare || reuseAction || link.hasAttribute('data-social-service') ||
       /(?:^|\/)(?:share|sharer|shareArticle|intent)(?:[./]|$)/i.test(target.pathname);
     if (!marked || link.querySelector('figure,p,blockquote')) return false;
     const urls = [doc.URL, doc.querySelector('link[rel="canonical"]')?.getAttribute('href')]
@@ -256,7 +281,7 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
   const win = element.ownerDocument.defaultView;
   const excluded = node => {
     const region = node.closest(INTERFACE_REGIONS);
-    return (region && !(disclosed && region === element)) || isExternalLinkAdornment(node) ||
+    return (region && !(disclosed && region === element)) || isInlineNavigationBar(node) || isExternalLinkAdornment(node) ||
       isPublisherLinkAction(node) || isSourceExcluded(node, exclusions) || (win && isHiddenSlotAssignment(win, node));
   };
   if (excluded(element)) { clone.replaceChildren(); return clone; }
@@ -270,7 +295,7 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
   for (let index = 0; index < originals.length; index++) {
     const original = originals[index], copy = copies[index];
     if (excluded(original)) { copy.remove(); continue; }
-    const literal = original.closest('pre,code,math,mjx-container,.MathJax,.katex');
+    const literal = original.closest('pre,code,math,mjx-container,.MathJax,.katex,' + MATHJAX_COMMON_HTML);
     const style = original.ownerDocument.defaultView ? safeGetComputedStyle(original.ownerDocument.defaultView, original) : null;
     if (!literal && isHiddenMathSource(original, style)) {
       const pair = readLazyMathPair(original, excluded);
@@ -292,6 +317,15 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
     if (textHidden) {
       for (const child of Array.from(copy.childNodes)) if (child.nodeType === 3) child.remove();
     }
+    const emoji = !literal && !textHidden && readInlineEmoji(original);
+    if (emoji) {
+      const text = clone.ownerDocument.createElement('span');
+      text.textContent = emoji;
+      if (original.id) text.id = original.id;
+      copyMap?.set(original, text);
+      copy.replaceWith(text);
+      continue;
+    }
     const originalText = original.getAttribute('data-original-text');
     if (!textHidden && originalText?.trim()) copy.textContent = originalText;
     if (!literal && original.matches('.screen-reader-text,.screen-reader-only,.sr-only,.visually-hidden') &&
@@ -305,7 +339,7 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
       }
     }
     if (!original.matches('span,a,button,b,i,em,strong,small,sup,sub') ||
-        original.closest('pre,code,math,mjx-container,.MathJax,.katex')) continue;
+        literal) continue;
     const adjacentText = original.nextSibling?.textContent || '';
     if (/^(?:left|right|inline-start|inline-end)$/.test(style?.float || '') &&
         /^\p{L}\p{M}*$/u.test(original.textContent || '') && /^[\p{L}\p{N}]/u.test(adjacentText)) continue;

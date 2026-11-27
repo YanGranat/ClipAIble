@@ -588,7 +588,7 @@ describe('processing/modes', () => {
   });
 
   describe('processWithoutAI', () => {
-    it('should process content without AI (automatic mode)', async () => {
+    it('reads the full live tab in automatic mode without an HTML snapshot', async () => {
       const mockResult = {
         title: 'Test Title',
         author: 'Test Author',
@@ -605,7 +605,7 @@ describe('processing/modes', () => {
       }]);
 
       const result = await processWithoutAI({
-        html: '<html>Content</html>',
+        html: '',
         url: 'https://example.com',
         title: 'Test Title',
         tabId: 1
@@ -614,17 +614,6 @@ describe('processing/modes', () => {
       expect(result.title).toBe('Test Title');
       expect(result.content).toHaveLength(2);
       expect(global.chrome.scripting.executeScript).toHaveBeenCalled();
-    });
-
-    it('should throw error if HTML is missing', async () => {
-      await expect(
-        processWithoutAI({
-          html: '',
-          url: 'https://example.com',
-          title: 'Title',
-          tabId: 1
-        })
-      ).rejects.toThrow('No HTML content');
     });
 
     it('should throw error if tabId is missing', async () => {
@@ -660,35 +649,32 @@ describe('processing/modes', () => {
       ).rejects.toThrow('Tab closed during processing');
     });
 
-    it('should handle extraction timeout', async () => {
+    it.each([0, 16 * 1024 * 1024])('bounds extraction time for an omitted snapshot of %s characters', async sourceHtmlLength => {
       const { CONFIG } = await import('../../scripts/utils/config.js');
       
       // Use fake timers
       vi.useFakeTimers();
       
-      // Mock script that never resolves
-      let resolveTimeout;
-      const timeoutPromise = new Promise((resolve) => {
-        resolveTimeout = resolve;
-      });
-      
-      global.chrome.scripting.executeScript.mockImplementationOnce(() => timeoutPromise);
+      global.chrome.scripting.executeScript.mockImplementationOnce(() => new Promise(() => {}));
       
       const promise = processWithoutAI({
-        html: '<html>Content</html>',
+        html: '',
+        sourceHtmlLength,
         url: 'https://example.com',
         title: 'Title',
         tabId: 1
       });
-      // Attach rejection handler before advancing timers to avoid unhandled rejection warnings.
-      const assertion = expect(promise).rejects.toThrow();
-
-      // Advance timers to trigger timeout
-      await vi.advanceTimersByTimeAsync(CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT + 1000);
-
-      await assertion;
-      
-      vi.useRealTimers();
+      try {
+        const rejected = vi.fn();
+        const tracked = promise.catch(rejected);
+        await vi.advanceTimersByTimeAsync(CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT + 1000);
+        expect(rejected).toHaveBeenCalledTimes(sourceHtmlLength ? 0 : 1);
+        await vi.advanceTimersByTimeAsync(CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT * 3);
+        await tracked;
+        expect(rejected).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
     }, 10000);
 
     it('should detect language from content', async () => {

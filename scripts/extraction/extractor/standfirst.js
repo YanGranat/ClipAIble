@@ -5,14 +5,15 @@
 import { cloneReadingContent, safeGetComputedStyle, INTERFACE_REGIONS } from './dom-utils.js';
 import { STANDFIRST_SELECTORS } from '../constants/content-thresholds.js';
 import { isOutsideArticleBody } from './discover.js';
-import { isEditorialLayoutLabel } from './reading-context.js';
+import { isDocumentHeadline, isEditorialLayoutLabel } from './reading-context.js';
 
 /**
  * Extract standfirst/subtitle from main content
  * @param {Element|null} mainContent - Main content element
+ * @param {Element|null} [titleElement] - Source headline used for document metadata
  * @returns {{text: string|null, element: Element|null}} - Standfirst text and element
  */
-export function extractStandfirst(mainContent) {
+export function extractStandfirst(mainContent, titleElement = null) {
   if (!mainContent) {
     return { text: null, element: null };
   }
@@ -53,5 +54,19 @@ export function extractStandfirst(mainContent) {
     }
   }
   
+  // A publisher can keep its visible description beside the headline, just before the body.
+  if (titleElement && isDocumentHeadline(titleElement)) {
+    const next = titleElement.parentElement?.nextElementSibling;
+    const deck = titleElement.nextElementSibling;
+    const nextOwnsBody = next && (next.contains(mainContent) ||
+      (mainContent.contains(next) && next.querySelector('article p,[itemprop~="articleBody"] p,p + p')));
+    if (nextOwnsBody && deck?.matches('p') && isInlineCandidate(deck)) {
+      const normalize = value => (value || '').trim().replace(/\s+/g, ' ');
+      const text = normalize(cloneReadingContent(deck).textContent);
+      const descriptions = deck.ownerDocument.querySelectorAll('meta[name="description"],meta[property="og:description"]');
+      if (text.length >= 50 && text.length <= 500 &&
+          Array.from(descriptions).some(node => normalize(node.getAttribute('content')) === text)) return { text, element: deck };
+    }
+  }
   return { text: null, element: null };
 }

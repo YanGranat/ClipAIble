@@ -6,6 +6,7 @@ import { isValidProcessingRunId, getProcessingPhase } from '../../scripts/state/
 import { DEFAULT_ELEVENLABS_TTS_MODEL } from '../../scripts/api/tts-catalog.js';
 import { t, tSync } from '../../scripts/locales.js';
 import { getUserFriendlyError, getUserFriendlyErrorDescriptor, createUserFriendlyError } from '../../scripts/utils/error-messages.js';
+import { isPdfHtml } from '../../scripts/utils/pdf.js';
 import { getExportPageIssue, getExportSelectionIssue, inspectExportRequirements, readExportOptions } from './export-readiness.js';
 import { readOpenRouterSpeechControls } from '../settings/openrouter-speech.js';
 
@@ -378,6 +379,7 @@ export function initProcessing(deps) {
 
                 return {
                   html: html,
+                  sourceContentType: document.contentType,
                   images: images,
                   url: window.location.href,
                   title: pageTitle
@@ -492,7 +494,10 @@ export function initProcessing(deps) {
       const response = await chrome.runtime.sendMessage({
         action: 'processArticle',
         data: {
-          html: pageData.html,
+          // Automatic extraction reads the live tab. Keep the snapshot only when it identifies an inline PDF.
+          html: mode === 'automatic' && !isPdfHtml(pageData.html) ? '' : pageData.html,
+          ...(mode === 'automatic' ? { sourceHtmlLength: pageData.html.length } : {}),
+          sourceContentType: pageData.sourceContentType,
           url: actualUrl,
           title: pageData.title || tab.title,
           apiKey: apiKey,

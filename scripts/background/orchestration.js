@@ -103,7 +103,7 @@ export function initOrchestration(deps) {
   }
   if (isCancelled(data.processingRunId)) return false;
   
-  const pdfInfo = detectPdfPage(data.url, tabUrl, data.html);
+  const pdfInfo = detectPdfPage(data.url, tabUrl, data.html, data.sourceContentType);
   if (pdfInfo && pdfInfo.isPdf) {
     log('📄 Detected PDF page - processing as PDF document');
     // Process as PDF page - skip selector/extract modes

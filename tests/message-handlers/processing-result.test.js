@@ -131,3 +131,31 @@ it('keeps the latest offscreen speech segment when two updates round to the same
     await state.resetState();
   }
 });
+
+it('keeps the same total and advances across Piper requests with different sentence counts', async () => {
+  mocks.sizeValid = true;
+  const sender = { id: chrome.runtime.id, url: chrome.runtime.getURL('offscreen.html') };
+  await state.resetState();
+  try {
+    expect(await state.startProcessing()).toBe(true);
+    const processingRunId = state.getProcessingRunId();
+    state.updateState({ outputFormat: 'audio', progress: 60 }, processingRunId);
+    const sendProgress = data => new Promise(resolve => routeMessage({ action: 'TTS_PROGRESS',
+      data: { processingRunId, total: 2, ...data } }, sender, resolve, {}));
+    const first = { current: 1, totalSentences: 10, progressBase: 60, progressRange: 30 };
+    const second = { current: 2, totalSentences: 1, progressBase: 90, progressRange: 5 };
+    expect(await sendProgress({ ...first, sentenceIndex: 5 })).toEqual({ success: true });
+    expect(state.getProcessingState()).toMatchObject({ progress: 75, statusTranslationParams: { current: 1, total: 2 } });
+    expect(await sendProgress({ ...first, sentenceIndex: 4 })).toEqual({ success: true, ignored: true });
+    expect(await sendProgress({ ...first, sentenceIndex: 10 })).toEqual({ success: true });
+    expect(state.getProcessingState().progress).toBe(90);
+    expect(await sendProgress({ ...second, sentenceIndex: 0 })).toEqual({ success: true });
+    expect(state.getProcessingState()).toMatchObject({ progress: 90, statusTranslationParams: { current: 2, total: 2 } });
+    expect(await sendProgress({ ...first, sentenceIndex: 10 })).toEqual({ success: true, ignored: true });
+    expect(await sendProgress({ ...second, sentenceIndex: 1 })).toEqual({ success: true });
+    expect(state.getProcessingState()).toMatchObject({ progress: 94, statusTranslationParams: { current: 2, total: 2 } });
+    expect(await sendProgress({ ...second, sentenceIndex: 1, total: 1 })).toMatchObject({ success: false });
+  } finally {
+    await state.resetState();
+  }
+});

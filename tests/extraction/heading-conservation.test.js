@@ -88,6 +88,14 @@ describe('Heading source positions', () => {
     expect(headings(result.content)).toEqual(expected);
   });
 
+  it('uses the leading article header title after publication details and retains later headings', async () => {
+    const win = page(`<div class="story__header"><p>Published by the editorial team.</p>
+      <h1 id="cover">${title}</h1></div>${prose}<h1 id="independent">${title}</h1>${prose}`);
+    const result = await runExtraction(win.location.href);
+    expect(result.titleFragmentIds).toContain('cover');
+    expect(headings(result.content)).toEqual([{ id: 'independent', text: title, level: 1, format: 'text' }]);
+  });
+
   it('moves the exact selected title and its targets without deleting independent headings', async () => {
     const win = page('<section id="chapter"><h2 id="edition"><span id="label">Field Report</span> <a class="heading-control" href="#edition">Copy head link</a></h2>' +
       prose + '<h3 id="method">Method <a href="#method">\u00b6</a></h3><h2 id="repeat">Field Report</h2></section>');

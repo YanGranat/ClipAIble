@@ -95,6 +95,47 @@ it('retries an invalid response in two smaller batches without keeping any ambig
   expect(fetch).toHaveBeenCalledTimes(3);
 });
 
+it.each([true, false])('bounds a second subdivision and only commits complete translations (%s)', async recovers => {
+  const values = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+  const source = { content: values.map(text => ({ type: 'paragraph', text })) };
+  const batches = [];
+  vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+    const body = JSON.parse(init.body);
+    const prompt = body.messages[1].content;
+    if (!body.response_format) {
+      batches.push(1);
+      return reply(recovers ? prompt + ' translated' : '');
+    }
+    const texts = JSON.parse(prompt.slice(prompt.indexOf('\n') + 1));
+    batches.push(texts.length);
+    if (!recovers || texts.length === 8 || texts[0] === 'A') {
+      return reply('{"translations": [');
+    }
+    return reply(JSON.stringify({ translations: texts.map(text => text + ' translated') }));
+  }));
+  const result = translateContent(source, 'fr', 'synthetic-key', 'gpt-example', undefined, options);
+  if (recovers) {
+    expect((await result).content.map(item => item.text)).toEqual(values.map(value => value + ' translated'));
+    expect(batches).toEqual([8, 4, 2, 1, 1, 2, 4]);
+  } else {
+    await expect(result).rejects.toMatchObject({ code: 'AI_TRANSLATION_INVALID' });
+    expect(batches).toEqual([8, 4, 2, 1]);
+  }
+  expect(source.content.map(item => item.text)).toEqual(values);
+});
+
+it('requests only the one unusable field when the batch has an exact slot mapping', async () => {
+  const source = { content: ['First source', 'Second source', 'Third source'].map(text => ({ type: 'paragraph', text })) };
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(reply('{"translations":{"2":"Third translation","1":"","0":"First translation"}}'))
+    .mockResolvedValueOnce(reply('Second translation')));
+  const result = await translateContent(source, 'fr', 'synthetic-key', 'gpt-example', undefined, options);
+  expect(result.content.map(item => item.text)).toEqual(['First translation', 'Second translation', 'Third translation']);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(fetch.mock.calls[1][1].body).messages[1].content).toBe('Second source');
+  expect(source.content[1].text).toBe('Second source');
+});
+
 it('preserves the selected reasoning effort for translation requests', async () => {
   let body;
   vi.stubGlobal('fetch', vi.fn(async (_url, init) => { body = JSON.parse(init.body); return reply('Translated record'); }));

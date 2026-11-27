@@ -39,3 +39,11 @@ it('consumes the metadata-equivalent front title without removing a repeated bod
   expect(extractTitle({ metadataTitle, elements: [coverTitle], url: '' }).elements).toEqual([coverTitle]);
   expect(elements[2]).toBe(coverTitle);
 });
+
+it('keeps the only source line in the body when the PDF has no title metadata', () => {
+  const url = 'https://example.test/dispatch.pdf';
+  const elements = [{ type: 'heading', text: 'Delivery confirmed.', pageNum: 1, level: 1 }];
+  expect(extractTitle({ elements, url })).toEqual({ title: 'dispatch', elements });
+  const body = { type: 'paragraph', text: 'The record was signed at noon.', pageNum: 1 };
+  expect(extractTitle({ elements: [...elements, body], url })).toEqual({ title: 'Delivery confirmed.', elements: [body] });
+});

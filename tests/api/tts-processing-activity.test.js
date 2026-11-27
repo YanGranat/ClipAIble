@@ -4,6 +4,7 @@ import { textToSpeech as openaiTTS } from '../../scripts/api/openai-tts.js';
 import { textToSpeech as offlineTTS } from '../../scripts/api/offline-tts-offscreen.js';
 import { cancelProcessing, getProcessingRunId, getProcessingSignal, getProcessingState, getScopedUpdateState, resetState, startProcessing, updateState } from '../../scripts/state/processing.js';
 import { CONFIG } from '../../scripts/utils/config.js';
+import { pcmToWav } from '../../scripts/api/audio-format.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 vi.mock('../../scripts/utils/encryption.js', () => ({ clearDecryptedKeyCache: vi.fn() }));
@@ -24,7 +25,7 @@ vi.mock('../../scripts/api/google-tts.js', () => ({ textToSpeech: vi.fn(), GOOGL
 vi.mock('../../scripts/api/offline-tts-offscreen.js', () => ({ textToSpeech: vi.fn(), OFFLINE_TTS_CONFIG: { MAX_INPUT: 6000, DEFAULT_SPEED: 1 } }));
 
 const chunks = [{ text: 'First observation.', index: 0 }, { text: 'Second observation.', index: 1 }, { text: 'Final observation.', index: 2 }];
-const buffer = () => new Uint8Array([1]).buffer;
+const buffer = () => pcmToWav(new Uint8Array([1, 0]).buffer, 24000);
 let responses, outcomes;
 beforeEach(async () => {
   vi.useFakeTimers();
@@ -84,7 +85,21 @@ describe('Owned TTS processing activity', () => {
     responses.shift()(buffer());
     await vi.advanceTimersByTimeAsync(0);
     responses.shift()(buffer());
-    expect((await outcome).value.byteLength).toBe(3);
+    expect(new Uint8Array((await outcome).value, 44)).toEqual(new Uint8Array([1, 0, 1, 0, 1, 0]));
+  });
+
+  it('assigns adjacent weighted progress ranges to Piper requests', async () => {
+    const run = getProcessingRunId();
+    const outcome = begin({ provider: 'offline', processingRunId: run }, [
+      { text: 'x'.repeat(280), index: 0 }, { text: 'y'.repeat(70), index: 1 }
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(offlineTTS.mock.calls[0][1].piperProgress).toEqual({ current: 1, total: 2, progressBase: 60, progressRange: 28 });
+    responses.shift()(buffer());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(offlineTTS.mock.calls[1][1].piperProgress).toEqual({ current: 2, total: 2, progressBase: 88, progressRange: 7 });
+    responses.shift()(buffer());
+    expect(new Uint8Array((await outcome).value, 44)).toEqual(new Uint8Array([1, 0, 1, 0]));
   });
 
   it('records the final completed chunk even without a UI progress callback', async () => {
@@ -95,7 +110,7 @@ describe('Owned TTS processing activity', () => {
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(1000);
     responses.shift()(buffer());
-    expect((await outcome).value.byteLength).toBe(1);
+    expect((await outcome).value).toEqual(buffer());
     expect(getProcessingState()).toMatchObject({ progress: 94, inactivityDeadlineAt: Date.now() + CONFIG.PROCESSING_INACTIVITY_TIMEOUT_MS });
   });
 
@@ -136,6 +151,6 @@ describe('Owned TTS processing activity', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(getProcessingState().inactivityDeadlineAt).toBe(deadline);
     responses.shift()(buffer());
-    expect((await outcome).value.byteLength).toBe(1);
+    expect((await outcome).value).toEqual(buffer());
   });
 });

@@ -154,7 +154,6 @@ export async function processWithoutAI(data, extractFromPageInlined) {
   log('Input data', { url, title, htmlLength: html?.length, tabId: tabId });
 
   const uiLang = await getUILanguage();
-  if (!html) throw new Error(tSync('errorNoHtmlContent', uiLang));
   if (!tabId) throw new Error(tSync('errorTabIdRequired', uiLang));
 
   // Check if processing was cancelled
@@ -203,6 +202,10 @@ export async function processWithoutAI(data, extractFromPageInlined) {
     // Performance optimization: only collect debug info if LOG_LEVEL is DEBUG (0)
     // This significantly reduces memory and CPU usage in production
     const enableDebugInfo = CONFIG.LOG_LEVEL === 0; // 0 = DEBUG level
+    const snapshotLength = data.sourceHtmlLength ?? html?.length ?? 0;
+    const extractionTimeout = snapshotLength >= 8 * 1024 * 1024
+      ? CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT * 4
+      : CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT;
 
     // Execute automatic extraction in page context with timeout
     try {
@@ -217,12 +220,12 @@ export async function processWithoutAI(data, extractFromPageInlined) {
       const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(async () => {
           logError('=== processWithoutAI: TIMEOUT TRIGGERED ===', {
-            timeout: CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT,
+            timeout: extractionTimeout,
             timestamp: Date.now()
           });
           const uiLang = await getUILanguage();
-          reject(new Error(tSync('errorExtractionTimeout', uiLang).replace('{seconds}', String(CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT / 1000))));
-        }, CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT);
+          reject(new Error(tSync('errorExtractionTimeout', uiLang).replace('{seconds}', String(extractionTimeout / 1000))));
+        }, extractionTimeout);
       });
       
       log('=== processWithoutAI: Calling chrome.scripting.executeScript ===', {

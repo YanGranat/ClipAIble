@@ -292,7 +292,7 @@ function isArticleAuthorCandidate(element) {
 
 /** Prefer an expanded name over initials only when both labels identify the same profile. */
 function readAuthorProfileName(element, baseUrl) {
-  const readLabel = node => readArticleMetadataText(node).replace(/^by\s+/i, '').trim();
+  const readLabel = node => readArticleMetadataText(node, ['time,[itemprop~="datePublished"]']).replace(/^by\s+/i, '').trim();
   const label = readLabel(element);
   const anchor = element.closest('a[href]');
   const initials = label.replace(/[\s.\u00b7-]/g, '');

@@ -315,6 +315,18 @@ var clipaibleArticleExtractor = (() => {
 
   // scripts/extraction/extractor/dom-utils.js
   var INTERFACE_REGIONS = 'nav,footer,dialog,[role~="navigation"],[role~="dialog"],[role~="alertdialog"],[aria-modal="true"]';
+  var MATHJAX_COMMON_HTML = ".mjx-chtml";
+  function readInlineEmoji(element) {
+    if (!element.matches("img.emoji[alt]")) return "";
+    const alt = element.getAttribute("alt").trim();
+    return /^[\p{Extended_Pictographic}\p{Emoji_Component}\u200d]+$/u.test(alt) && /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(alt) ? alt : "";
+  }
+  function isInlineNavigationBar(element) {
+    if (!element.matches('.navbar,[role~="toolbar"]') || !element.parentElement || element.closest("pre,code,math,figure") || !element.nextElementSibling?.textContent?.trim()) return false;
+    const links = Array.from(element.querySelectorAll("li > a[href]"));
+    if (links.length < 2 || element.querySelectorAll("a[href]").length !== links.length) return false;
+    return links.every((link) => link.querySelector("abbr[title]") && Array.from(link.textContent?.trim() || "").length === 1) && links.map((link) => link.textContent?.trim()).join("") === element.textContent?.replace(/\s+/g, "");
+  }
   function isExternalLinkAdornment(element) {
     const svg = element.closest("svg[data-extlink-placement]");
     if (!svg) return false;
@@ -352,7 +364,10 @@ var clipaibleArticleExtractor = (() => {
         if (destination === doc.body || destination === doc.documentElement || !destination && /^top$/i.test(fragment)) return true;
       }
       if (link.closest("[data-preferred-source]") && ["google.com", "www.google.com"].includes(target.hostname) && target.pathname === "/preferences/source") return true;
-      const marked = link.hasAttribute("data-social-service") || /(?:^|\/)(?:share|sharer|shareArticle|intent)(?:[./]|$)/i.test(target.pathname);
+      const standalone = !link.closest(readingContext);
+      const emailShare = standalone && target.protocol === "mailto:" && !target.pathname && target.searchParams.has("subject") && target.searchParams.has("body");
+      const reuseAction = standalone && !link.matches('[rel~="license"]') && /(?:^|[-_\s])syndication(?:$|[-_\s])/i.test(link.getAttribute("data-link-name") || "");
+      const marked = emailShare || reuseAction || link.hasAttribute("data-social-service") || /(?:^|\/)(?:share|sharer|shareArticle|intent)(?:[./]|$)/i.test(target.pathname);
       if (!marked || link.querySelector("figure,p,blockquote")) return false;
       const urls = [doc.URL, doc.querySelector('link[rel="canonical"]')?.getAttribute("href")].filter(Boolean).map((value) => new URL(value, doc.baseURI));
       for (const value of target.searchParams.values()) {
@@ -459,7 +474,7 @@ var clipaibleArticleExtractor = (() => {
     const win = element.ownerDocument.defaultView;
     const excluded2 = (node) => {
       const region = node.closest(INTERFACE_REGIONS);
-      return region && !(disclosed && region === element) || isExternalLinkAdornment(node) || isPublisherLinkAction(node) || isSourceExcluded(node, exclusions) || win && isHiddenSlotAssignment(win, node);
+      return region && !(disclosed && region === element) || isInlineNavigationBar(node) || isExternalLinkAdornment(node) || isPublisherLinkAction(node) || isSourceExcluded(node, exclusions) || win && isHiddenSlotAssignment(win, node);
     };
     if (excluded2(element)) {
       clone.replaceChildren();
@@ -478,7 +493,7 @@ var clipaibleArticleExtractor = (() => {
         copy.remove();
         continue;
       }
-      const literal = original.closest("pre,code,math,mjx-container,.MathJax,.katex");
+      const literal = original.closest("pre,code,math,mjx-container,.MathJax,.katex," + MATHJAX_COMMON_HTML);
       const style = original.ownerDocument.defaultView ? safeGetComputedStyle(original.ownerDocument.defaultView, original) : null;
       if (!literal && isHiddenMathSource(original, style)) {
         const pair = readLazyMathPair(original, excluded2);
@@ -502,6 +517,15 @@ var clipaibleArticleExtractor = (() => {
       if (textHidden) {
         for (const child of Array.from(copy.childNodes)) if (child.nodeType === 3) child.remove();
       }
+      const emoji = !literal && !textHidden && readInlineEmoji(original);
+      if (emoji) {
+        const text = clone.ownerDocument.createElement("span");
+        text.textContent = emoji;
+        if (original.id) text.id = original.id;
+        copyMap?.set(original, text);
+        copy.replaceWith(text);
+        continue;
+      }
       const originalText = original.getAttribute("data-original-text");
       if (!textHidden && originalText?.trim()) copy.textContent = originalText;
       if (!literal && original.matches(".screen-reader-text,.screen-reader-only,.sr-only,.visually-hidden") && original.closest("a") && !original.closest("mjx-assistive-mml") && !original.querySelector("math,mjx-assistive-mml,.MathJax,.katex")) {
@@ -512,7 +536,7 @@ var clipaibleArticleExtractor = (() => {
           continue;
         }
       }
-      if (!original.matches("span,a,button,b,i,em,strong,small,sup,sub") || original.closest("pre,code,math,mjx-container,.MathJax,.katex")) continue;
+      if (!original.matches("span,a,button,b,i,em,strong,small,sup,sub") || literal) continue;
       const adjacentText = original.nextSibling?.textContent || "";
       if (/^(?:left|right|inline-start|inline-end)$/.test(style?.float || "") && new RegExp("^\\p{L}\\p{M}*$", "u").test(original.textContent || "") && /^[\p{L}\p{N}]/u.test(adjacentText)) continue;
       const parentStyle = original.parentElement && original.ownerDocument.defaultView?.getComputedStyle(original.parentElement);
@@ -884,7 +908,7 @@ var clipaibleArticleExtractor = (() => {
     return true;
   }
   function readAuthorProfileName(element, baseUrl) {
-    const readLabel = (node) => readArticleMetadataText(node).replace(/^by\s+/i, "").trim();
+    const readLabel = (node) => readArticleMetadataText(node, ['time,[itemprop~="datePublished"]']).replace(/^by\s+/i, "").trim();
     const label = readLabel(element);
     const anchor = element.closest("a[href]");
     const initials = label.replace(/[\s.\u00b7-]/g, "");
@@ -1006,12 +1030,912 @@ var clipaibleArticleExtractor = (() => {
     return null;
   }
 
+  // scripts/extraction/patterns/exclusion-patterns.js
+  var NAVIGATION_PATTERNS = {
+    // Patterns that match if text STARTS with them
+    startsWith: [
+      // English
+      /^next:/i,
+      /^read\s+more(?:\s*[.!?:;…»›>]+)?\s*$/i,
+      /^keep reading/i,
+      /^subscribe/i,
+      /^sign (in|up)/i,
+      /^already have an account/i,
+      /^try \d+ days/i,
+      /^start (free )?trial/i,
+      /^give a gift/i,
+      /^manage subscription/i,
+      /^essential journalism/i,
+      /^support independent journalism/i,
+      /^you might also like/i,
+      /^you may also like/i,
+      /^also in /i,
+      /^more in /i,
+      /^previous post/i,
+      /^next post/i,
+      /^related posts?/i,
+      /^recommended posts?/i,
+      /^subscribe (now|today|for)/i,
+      /^support (independent )?journalism/i,
+      /^donate (to|now)/i,
+      /^give a year of/i,
+      /^plus a free/i,
+      /^comment on this article/i,
+      /^view \/ add comments/i,
+      /^published in the print edition/i,
+      /^published in the/i,
+      /^fuel your wonder/i,
+      /^feed your curiosity/i,
+      /^expand your mind/i,
+      /^access the entire/i,
+      /^ad-free/i,
+      /^become a member/i,
+      /^nautilus members enjoy/i,
+      /^log in or join/i,
+      // Russian
+      /^чтобы прочитать целиком/i,
+      /^купите подписку/i,
+      /^платный журнал/i,
+      /^я уже подписчик/i,
+      /^подписка предоставлена/i,
+      /^оформить подписку/i,
+      /^чтобы читать далее/i,
+      /^подпишитесь чтобы/i,
+      /^чтобы продолжить/i,
+      /^новое и лучшее/i,
+      /^первая полоса/i,
+      /^рекомендуем/i,
+      /^читайте также/i,
+      /^похожие статьи/i,
+      /^связанные статьи/i,
+      /^другие статьи/i,
+      /^ещё по теме/i,
+      /^по теме/i,
+      // Ukrainian
+      /^щоб прочитати цілком/i,
+      /^купити підписку/i,
+      /^платний журнал/i,
+      /^я вже передплатник/i,
+      /^підписка надана/i,
+      /^оформити підписку/i,
+      /^щоб читати далі/i,
+      /^підпишіться щоб/i,
+      /^щоб продовжити/i,
+      /^нове і краще/i,
+      /^перша смуга/i,
+      /^рекомендуємо/i,
+      /^читайте також/i,
+      /^схожі статті/i,
+      /^пов'язані статті/i,
+      /^інші статті/i,
+      /^ще за темою/i,
+      /^за темою/i,
+      // German
+      /^um weiterzulesen/i,
+      /^abonnement kaufen/i,
+      /^bezahltes magazin/i,
+      /^ich bin bereits abonnent/i,
+      /^abonnement bereitgestellt/i,
+      /^abonnement abschließen/i,
+      /^um weiter zu lesen/i,
+      /^abonnieren um/i,
+      /^um fortzufahren/i,
+      /^neu und besser/i,
+      /^erste seite/i,
+      /^empfehlen/i,
+      /^lesen sie auch/i,
+      /^ähnliche artikel/i,
+      /^verwandte artikel/i,
+      /^andere artikel/i,
+      /^mehr zum thema/i,
+      /^zum thema/i,
+      // French
+      /^pour lire en entier/i,
+      /^acheter un abonnement/i,
+      /^magazine payant/i,
+      /^je suis déjà abonné/i,
+      /^abonnement fourni/i,
+      /^s'abonner/i,
+      /^pour continuer à lire/i,
+      /^abonnez-vous pour/i,
+      /^pour continuer/i,
+      /^nouveau et mieux/i,
+      /^première page/i,
+      /^recommandons/i,
+      /^lisez aussi/i,
+      /^articles similaires/i,
+      /^articles connexes/i,
+      /^autres articles/i,
+      /^plus sur le sujet/i,
+      /^sur le sujet/i,
+      // Spanish
+      /^para leer completo/i,
+      /^comprar suscripción/i,
+      /^revista de pago/i,
+      /^ya soy suscriptor/i,
+      /^suscripción proporcionada/i,
+      /^suscribirse/i,
+      /^para seguir leyendo/i,
+      /^suscríbete para/i,
+      /^para continuar/i,
+      /^nuevo y mejor/i,
+      /^primera página/i,
+      /^recomendamos/i,
+      /^lee también/i,
+      /^artículos similares/i,
+      /^artículos relacionados/i,
+      /^otros artículos/i,
+      /^más sobre el tema/i,
+      /^sobre el tema/i,
+      // Italian
+      /^per leggere completo/i,
+      /^acquista abbonamento/i,
+      /^rivista a pagamento/i,
+      /^sono già abbonato/i,
+      /^abbonamento fornito/i,
+      /^abbonarsi/i,
+      /^per continuare a leggere/i,
+      /^abbonati per/i,
+      /^per continuare/i,
+      /^nuovo e migliore/i,
+      /^prima pagina/i,
+      /^consigliamo/i,
+      /^leggi anche/i,
+      /^articoli simili/i,
+      /^articoli correlati/i,
+      /^altri articoli/i,
+      /^altro sull'argomento/i,
+      /^sull'argomento/i,
+      // Portuguese
+      /^para ler completo/i,
+      /^comprar assinatura/i,
+      /^revista paga/i,
+      /^já sou assinante/i,
+      /^assinatura fornecida/i,
+      /^assinar/i,
+      /^para continuar lendo/i,
+      /^assine para/i,
+      /^para continuar/i,
+      /^novo e melhor/i,
+      /^primeira página/i,
+      /^recomendamos/i,
+      /^leia também/i,
+      /^artigos similares/i,
+      /^artigos relacionados/i,
+      /^outros artigos/i,
+      /^mais sobre o tema/i,
+      /^sobre o tema/i,
+      // Chinese
+      /^阅读全文/i,
+      /^购买订阅/i,
+      /^付费杂志/i,
+      /^我已经是订阅者/i,
+      /^已提供订阅/i,
+      /^订阅/i,
+      /^继续阅读/i,
+      /^订阅以/i,
+      /^继续/i,
+      /^最新和最佳/i,
+      /^头版/i,
+      /^推荐/i,
+      /^也阅读/i,
+      /^相似文章/i,
+      /^相关文章/i,
+      /^其他文章/i,
+      /^更多主题/i,
+      /^主题/i,
+      // Japanese
+      /^全文を読む/i,
+      /^購読を購入/i,
+      /^有料雑誌/i,
+      /^既に購読者です/i,
+      /^購読が提供されました/i,
+      /^購読する/i,
+      /^続きを読む/i,
+      /^購読して/i,
+      /^続ける/i,
+      /^新しくて最高/i,
+      /^第一面/i,
+      /^おすすめ/i,
+      /^こちらも読む/i,
+      /^類似記事/i,
+      /^関連記事/i,
+      /^その他の記事/i,
+      /^トピックの詳細/i,
+      /^トピック/i,
+      // Korean
+      /^전체 읽기/i,
+      /^구독 구매/i,
+      /^유료 잡지/i,
+      /^이미 구독자입니다/i,
+      /^구독 제공됨/i,
+      /^구독하기/i,
+      /^계속 읽기/i,
+      /^구독하여/i,
+      /^계속/i,
+      /^새로운 것과 최고/i,
+      /^첫 페이지/i,
+      /^추천/i,
+      /^또한 읽기/i,
+      /^유사한 기사/i,
+      /^관련 기사/i,
+      /^다른 기사/i,
+      /^주제에 대해 더/i,
+      /^주제/i
+    ],
+    // Patterns that match if text CONTAINS them
+    contains: [
+      // English
+      /previous\s+post/i,
+      /next\s+post/i,
+      /related\s+posts?/i,
+      /recommended\s+posts?/i,
+      /^read\s+more(?:\s*[.!?:;…»›>]+)?\s*$/i,
+      /keep\s+reading/i,
+      /you\s+might\s+also\s+like/i,
+      /you\s+may\s+also\s+like/i,
+      /also\s+in\s+/i,
+      /^more\s+in\s+/i,
+      /next\s+article/i,
+      /previous\s+article/i,
+      /next:/i,
+      /subscribe\s+(now|today|for)/i,
+      /sign\s+up/i,
+      /start\s+(free\s+)?trial/i,
+      /support\s+(independent\s+)?journalism/i,
+      /donate\s+(to|now)/i,
+      /essential\s+journalism/i,
+      /give\s+a\s+gift/i,
+      /comment\s+on\s+this\s+article/i,
+      /view\s+\/\s+add\s+comments/i,
+      /published\s+in\s+the\s+print\s+edition/i,
+      // Paywall/subscription messages
+      /get\s+access\s+to\s+print\s+and\s+digital/i,
+      /subscribe\s+for\s+full\s+access/i,
+      /free\s+articles?\s+this\s+month/i,
+      /subscribe\s+for\s+less\s+than/i,
+      /subscribe\s+or\s+log\s+in\s+to\s+access/i,
+      /connect\s+to\s+your\s+subscription/i,
+      /you've\s+read\s+(one|your)/i,
+      /you've\s+reached\s+your\s+free/i,
+      /subscribe\s+or\s+log\s+in\s+to\s+access\s+this\s+pdf/i,
+      /download\s+pdf/i,
+      // Russian
+      /чтобы\s+прочитать\s+целиком/i,
+      /купите\s+подписку/i,
+      /платный\s+журнал/i,
+      /я\s+уже\s+подписчик/i,
+      /подписка\s+предоставлена/i,
+      /оформить\s+подписку/i,
+      /чтобы\s+читать\s+далее/i,
+      /подпишитесь\s+чтобы/i,
+      /чтобы\s+продолжить/i,
+      /новое\s+и\s+лучшее/i,
+      /первая\s+полоса/i,
+      /рекомендуем/i,
+      /читайте\s+также/i,
+      /похожие\s+статьи/i,
+      /связанные\s+статьи/i,
+      /другие\s+статьи/i,
+      /ещё\s+по\s+теме/i,
+      /по\s+теме/i,
+      // Ukrainian
+      /щоб\s+прочитати\s+цілком/i,
+      /купити\s+підписку/i,
+      /платний\s+журнал/i,
+      /я\s+вже\s+передплатник/i,
+      /підписка\s+надана/i,
+      /оформити\s+підписку/i,
+      /щоб\s+читати\s+далі/i,
+      /підпишіться\s+щоб/i,
+      /щоб\s+продовжить/i,
+      /нове\s+і\s+краще/i,
+      /перша\s+смуга/i,
+      /рекомендуємо/i,
+      /читайте\s+також/i,
+      /схожі\s+статті/i,
+      /пов'язані\s+статті/i,
+      /інші\s+статті/i,
+      /ще\s+за\s+темою/i,
+      /за\s+темою/i,
+      // German
+      /um\s+weiterzulesen/i,
+      /abonnement\s+kaufen/i,
+      /bezahltes\s+magazin/i,
+      /ich\s+bin\s+bereits\s+abonnent/i,
+      /abonnement\s+bereitgestellt/i,
+      /abonnement\s+abschließen/i,
+      /um\s+weiter\s+zu\s+lesen/i,
+      /abonnieren\s+um/i,
+      /um\s+fortzufahren/i,
+      /neu\s+und\s+besser/i,
+      /erste\s+seite/i,
+      /empfehlen/i,
+      /lesen\s+sie\s+auch/i,
+      /ähnliche\s+artikel/i,
+      /verwandte\s+artikel/i,
+      /andere\s+artikel/i,
+      /mehr\s+zum\s+thema/i,
+      /zum\s+thema/i,
+      // French
+      /pour\s+lire\s+en\s+entier/i,
+      /acheter\s+un\s+abonnement/i,
+      /magazine\s+payant/i,
+      /je\s+suis\s+déjà\s+abonné/i,
+      /abonnement\s+fourni/i,
+      /s'abonner/i,
+      /pour\s+continuer\s+à\s+lire/i,
+      /abonnez-vous\s+pour/i,
+      /pour\s+continuer/i,
+      /nouveau\s+et\s+mieux/i,
+      /première\s+page/i,
+      /recommandons/i,
+      /lisez\s+aussi/i,
+      /articles\s+similaires/i,
+      /articles\s+connexes/i,
+      /autres\s+articles/i,
+      /plus\s+sur\s+le\s+sujet/i,
+      /sur\s+le\s+sujet/i,
+      // Spanish
+      /para\s+leer\s+completo/i,
+      /comprar\s+suscripción/i,
+      /revista\s+de\s+pago/i,
+      /ya\s+soy\s+suscriptor/i,
+      /suscripción\s+proporcionada/i,
+      /suscribirse/i,
+      /para\s+seguir\s+leyendo/i,
+      /suscríbete\s+para/i,
+      /para\s+continuar/i,
+      /nuevo\s+y\s+mejor/i,
+      /primera\s+página/i,
+      /recomendamos/i,
+      /lee\s+también/i,
+      /artículos\s+similares/i,
+      /artículos\s+relacionados/i,
+      /otros\s+artículos/i,
+      /más\s+sobre\s+el\s+tema/i,
+      /sobre\s+el\s+tema/i,
+      // Italian
+      /per\s+leggere\s+completo/i,
+      /acquista\s+abbonamento/i,
+      /rivista\s+a\s+pagamento/i,
+      /sono\s+già\s+abbonato/i,
+      /abbonamento\s+fornito/i,
+      /abbonarsi/i,
+      /per\s+continuare\s+a\s+leggere/i,
+      /abbonati\s+per/i,
+      /per\s+continuare/i,
+      /nuovo\s+e\s+migliore/i,
+      /prima\s+pagina/i,
+      /consigliamo/i,
+      /leggi\s+anche/i,
+      /articoli\s+simili/i,
+      /articoli\s+correlati/i,
+      /altri\s+articoli/i,
+      /altro\s+sull'argomento/i,
+      /sull'argomento/i,
+      // Portuguese
+      /para\s+ler\s+completo/i,
+      /comprar\s+assinatura/i,
+      /revista\s+paga/i,
+      /já\s+sou\s+assinante/i,
+      /assinatura\s+fornecida/i,
+      /assinar/i,
+      /para\s+continuar\s+lendo/i,
+      /assine\s+para/i,
+      /para\s+continuar/i,
+      /novo\s+e\s+melhor/i,
+      /primeira\s+página/i,
+      /recomendamos/i,
+      /leia\s+também/i,
+      /artigos\s+similares/i,
+      /artigos\s+relacionados/i,
+      /outros\s+artigos/i,
+      /mais\s+sobre\s+o\s+tema/i,
+      /sobre\s+o\s+tema/i,
+      // Chinese
+      /阅读全文/i,
+      /购买订阅/i,
+      /付费杂志/i,
+      /我已经是订阅者/i,
+      /已提供订阅/i,
+      /订阅/i,
+      /继续阅读/i,
+      /订阅以/i,
+      /继续/i,
+      /最新和最佳/i,
+      /头版/i,
+      /推荐/i,
+      /也阅读/i,
+      /相似文章/i,
+      /相关文章/i,
+      /其他文章/i,
+      /更多主题/i,
+      /主题/i,
+      // Japanese
+      /全文を読む/i,
+      /購読を購入/i,
+      /有料雑誌/i,
+      /既に購読者です/i,
+      /購読が提供されました/i,
+      /購読する/i,
+      /続きを読む/i,
+      /購読して/i,
+      /続ける/i,
+      /新しくて最高/i,
+      /第一面/i,
+      /おすすめ/i,
+      /こちらも読む/i,
+      /類似記事/i,
+      /関連記事/i,
+      /その他の記事/i,
+      /トピックの詳細/i,
+      /トピック/i,
+      // Korean
+      /전체\s+읽기/i,
+      /구독\s+구매/i,
+      /유료\s+잡지/i,
+      /이미\s+구독자입니다/i,
+      /구독\s+제공됨/i,
+      /구독하기/i,
+      /계속\s+읽기/i,
+      /구독하여/i,
+      /계속/i,
+      /새로운\s+것과\s+최고/i,
+      /첫\s+페이지/i,
+      /추천/i,
+      /또한\s+읽기/i,
+      /유사한\s+기사/i,
+      /관련\s+기사/i,
+      /다른\s+기사/i,
+      /주제에\s+대해\s+더/i,
+      /주제/i
+    ]
+  };
+  var PAYWALL_PATTERNS = {
+    english: [
+      "keep reading",
+      "subscribe",
+      "sign up",
+      "try 30 days",
+      "already have an account",
+      "start free trial",
+      "get access to print and digital",
+      "subscribe for full access",
+      "free articles this month",
+      "subscribe for less than",
+      "subscribe or log in to access",
+      "connect to your subscription",
+      "you've read one",
+      "you've read your",
+      "you've reached your free"
+    ],
+    russian: [
+      "чтобы прочитать целиком",
+      "купите подписку",
+      "платный журнал",
+      "я уже подписчик",
+      "подписка предоставлена",
+      "оформить подписку",
+      "чтобы читать далее",
+      "подпишитесь чтобы",
+      "чтобы продолжить"
+    ],
+    ukrainian: [
+      "щоб прочитати цілком",
+      "купити підписку",
+      "платний журнал",
+      "я вже передплатник",
+      "підписка надана",
+      "оформити підписку",
+      "щоб читати далі",
+      "підпишіться щоб",
+      "щоб продовжити"
+    ],
+    german: [
+      "um weiterzulesen",
+      "abonnement kaufen",
+      "bezahltes magazin",
+      "ich bin bereits abonnent",
+      "abonnement bereitgestellt",
+      "abonnement abschließen",
+      "um weiter zu lesen",
+      "abonnieren um",
+      "um fortzufahren"
+    ],
+    french: [
+      "pour lire en entier",
+      "acheter un abonnement",
+      "magazine payant",
+      "je suis déjà abonné",
+      "abonnement fourni",
+      "s'abonner",
+      "pour continuer à lire",
+      "abonnez-vous pour",
+      "pour continuer"
+    ],
+    spanish: [
+      "para leer completo",
+      "comprar suscripción",
+      "revista de pago",
+      "ya soy suscriptor",
+      "suscripción proporcionada",
+      "suscribirse",
+      "para seguir leyendo",
+      "suscríbete para",
+      "para continuar"
+    ],
+    italian: [
+      "per leggere completo",
+      "acquista abbonamento",
+      "rivista a pagamento",
+      "sono già abbonato",
+      "abbonamento fornito",
+      "abbonarsi",
+      "per continuare a leggere",
+      "abbonati per",
+      "per continuare"
+    ],
+    portuguese: [
+      "para ler completo",
+      "comprar assinatura",
+      "revista paga",
+      "já sou assinante",
+      "assinatura fornecida",
+      "assinar",
+      "para continuar lendo",
+      "assine para",
+      "para continuar"
+    ],
+    chinese: [
+      "阅读全文",
+      "购买订阅",
+      "付费杂志",
+      "我已经是订阅者",
+      "已提供订阅",
+      "订阅",
+      "继续阅读",
+      "订阅以",
+      "继续"
+    ],
+    japanese: [
+      "全文を読む",
+      "購読を購入",
+      "有料雑誌",
+      "既に購読者です",
+      "購読が提供されました",
+      "購読する",
+      "続きを読む",
+      "購読して",
+      "続ける"
+    ],
+    korean: [
+      "전체 읽기",
+      "구독 구매",
+      "유료 잡지",
+      "이미 구독자입니다",
+      "구독 제공됨",
+      "구독하기",
+      "계속 읽기",
+      "구독하여",
+      "계속"
+    ]
+  };
+  var RELATED_ARTICLES_PATTERNS = {
+    english: [
+      "new and best",
+      "first page",
+      "recommend",
+      "read also",
+      "similar articles",
+      "related articles",
+      "other articles",
+      "more on topic",
+      "on topic"
+    ],
+    russian: [
+      "новое и лучшее",
+      "первая полоса",
+      "рекомендуем",
+      "читайте также",
+      "похожие статьи",
+      "связанные статьи",
+      "другие статьи",
+      "ещё по теме",
+      "по теме"
+    ],
+    ukrainian: [
+      "нове і краще",
+      "перша смуга",
+      "рекомендуємо",
+      "читайте також",
+      "схожі статті",
+      "пов'язані статті",
+      "інші статті",
+      "ще за темою",
+      "за темою"
+    ],
+    german: [
+      "neu und besser",
+      "erste seite",
+      "empfehlen",
+      "lesen sie auch",
+      "ähnliche artikel",
+      "verwandte artikel",
+      "andere artikel",
+      "mehr zum thema",
+      "zum thema"
+    ],
+    french: [
+      "nouveau et mieux",
+      "première page",
+      "recommandons",
+      "lisez aussi",
+      "articles similaires",
+      "articles connexes",
+      "autres articles",
+      "plus sur le sujet",
+      "sur le sujet"
+    ],
+    spanish: [
+      "nuevo y mejor",
+      "primera página",
+      "recomendamos",
+      "lee también",
+      "artículos similares",
+      "artículos relacionados",
+      "otros artículos",
+      "más sobre el tema",
+      "sobre el tema"
+    ],
+    italian: [
+      "nuovo e migliore",
+      "prima pagina",
+      "consigliamo",
+      "leggi anche",
+      "articoli simili",
+      "articoli correlati",
+      "altri articoli",
+      "altro sull'argomento",
+      "sull'argomento"
+    ],
+    portuguese: [
+      "novo e melhor",
+      "primeira página",
+      "recomendamos",
+      "leia também",
+      "artigos similares",
+      "artigos relacionados",
+      "outros artigos",
+      "mais sobre o tema",
+      "sobre o tema"
+    ],
+    chinese: [
+      "最新和最佳",
+      "头版",
+      "推荐",
+      "也阅读",
+      "相似文章",
+      "相关文章",
+      "其他文章",
+      "更多主题",
+      "主题"
+    ],
+    japanese: [
+      "新しくて最高",
+      "第一面",
+      "おすすめ",
+      "こちらも読む",
+      "類似記事",
+      "関連記事",
+      "その他の記事",
+      "トピックの詳細",
+      "トピック"
+    ],
+    korean: [
+      "새로운 것과 최고",
+      "첫 페이지",
+      "추천",
+      "또한 읽기",
+      "유사한 기사",
+      "관련 기사",
+      "다른 기사",
+      "주제에 대해 더",
+      "주제"
+    ]
+  };
+  var COURSE_AD_PATTERNS = [
+    "video + ux training",
+    "get video",
+    "video training",
+    "video course",
+    "measure ux & design impact",
+    "money-back-guarantee",
+    "money back guarantee",
+    "get the video course",
+    "get video + ux training",
+    "use the code",
+    "save 20%",
+    "save 20% off"
+  ];
+  var EXCLUDED_CLASSES = [
+    "nav",
+    "navigation",
+    "menu",
+    "sidebar",
+    "footer",
+    "header",
+    "ad",
+    "advertisement",
+    "ads",
+    "sponsor",
+    "sponsored",
+    "advert",
+    "comment",
+    "comments",
+    "disqus",
+    "related",
+    "related-posts",
+    "related-articles",
+    "related-articles__title",
+    "recommended",
+    "also-in",
+    "social",
+    "share",
+    "share-buttons",
+    "share-menu",
+    "author-bio",
+    "author-info",
+    "about-author",
+    "translation-notice",
+    "translation-badge",
+    "post-navigation",
+    "post-nav",
+    "prev",
+    "next",
+    "previous",
+    "read-more",
+    "readmore",
+    "keep-reading",
+    "subscribe",
+    "paywall",
+    "gate",
+    "newsletter",
+    "newsletter-signup",
+    "subscribe-box",
+    "you-might-also-like",
+    "you-may-also-like",
+    "more-in",
+    "next-article",
+    "previous-article",
+    "article-nav",
+    "comment-section",
+    "comments-section",
+    "view-comments",
+    "add-comment",
+    "book-cta",
+    "course-cta",
+    "product-cta",
+    "course-ad",
+    "product-ad",
+    "book-cta__inverted",
+    "book-cta__col",
+    "component-share-buttons",
+    "aria-font-adjusts",
+    "font-adjust",
+    // Patterns from node-unfluff not previously covered
+    "byline",
+    "dateline",
+    "timestamp",
+    "toolbar",
+    "toolbox",
+    "breadcrumb",
+    "breadcrumbs",
+    "tag-cloud",
+    "tags",
+    "tag-list",
+    "widget",
+    "widgets",
+    "promo",
+    "promotion",
+    "promotional",
+    "toc",
+    "table-of-contents",
+    "contents-nav",
+    "modal",
+    "popup",
+    "overlay",
+    "lightbox",
+    "cookie",
+    "gdpr",
+    "consent",
+    "tracking"
+  ];
+  var PAYWALL_CLASSES = [
+    "freebie-message",
+    "subscribe-text",
+    "message--freebie",
+    "subscribe-",
+    "paywall",
+    "subscription",
+    "freebie",
+    "article-limit",
+    "access-message"
+  ];
+  var LOGO_PATTERNS = [
+    "logo",
+    "brand",
+    "icon",
+    "badge",
+    "watermark",
+    "sprite",
+    "spacer",
+    "blank",
+    "clear",
+    "pixel",
+    "youtube",
+    "facebook",
+    "twitter",
+    "instagram",
+    "linkedin",
+    "pinterest",
+    "rss",
+    "social-media",
+    "social-icon",
+    "share-icon",
+    "share-button",
+    "youtube-white-logo",
+    "youtube-logo",
+    "yt-logo",
+    "facebook-logo",
+    "twitter-logo",
+    "instagram-logo",
+    "arrow",
+    "chevron",
+    "bullet",
+    "dot",
+    "bg",
+    "background",
+    "shadow",
+    "border",
+    "divider",
+    "separator",
+    "spinner",
+    "loader",
+    "loading",
+    "placeholder",
+    "default",
+    "avatar",
+    "user",
+    "profile",
+    "gravatar"
+  ];
+  var TRACKING_PATTERNS = [
+    "pixel",
+    "tracking",
+    "beacon",
+    "analytics",
+    "facebook.com/tr",
+    "doubleclick",
+    "googleads"
+  ];
+  var PLACEHOLDER_PATTERNS = [
+    "placeholder",
+    "spacer",
+    "blank",
+    "1x1",
+    "pixel.gif"
+  ];
+
   // scripts/extraction/extractor/reading-context.js
   var DECLARED_BODY = '[itemprop~="articleBody"],.instapaper_body';
   var EDITORIAL_CONTAINERS = 'article,[role~="article"],' + DECLARED_BODY;
+  var DOCUMENT_CONTENTS = '[role~="doc-toc"],nav.toc,nav#toc,nav[data-toc],ol.toc,ul.toc';
   var HEADINGS = "h1,h2,h3,h4,h5,h6";
   var RELATED_HEADING = /^(?:related (?:articles|stories|(?:blog )?posts)|recommended (?:articles|stories|posts)|most (?:read|viewed)|you (?:may|might) also like|also in .+)$/i;
+  var FLAT_RECOMMENDATION_LABELS = "p,h2,h3,h4,h5,h6,b,strong,span";
   var normalizedLabel = (value) => (value || "").trim().replace(/\s+/g, " ").toLowerCase();
+  var relatedLabels = new Set(Object.values(RELATED_ARTICLES_PATTERNS).flat().map(normalizedLabel));
   function isSemanticReadingScope(element) {
     return element.matches(EDITORIAL_CONTAINERS + ',main,[role~="main"]');
   }
@@ -1035,6 +1959,21 @@ var clipaibleArticleExtractor = (() => {
     return !Array.from(doc.querySelectorAll('article,[role~="article"]')).some((other) => other !== element && ownHeadings(other).some((heading) => normalizedLabel(heading.textContent)));
   }
   function isEditorialLayoutLabel(region, source, role) {
+    if (role === "header" && region.matches("table") && !region.closest(INTERFACE_REGIONS + ",header") && Array.from(region.querySelectorAll("th")).some((cell) => cell.closest("table") === region)) {
+      const labels = [region.id, ...region.classList].filter((name) => /(?:^|[-_])header(?:$|[-_])/i.test(name));
+      if (labels.length && labels.every((name) => /^(?:(?:has|uses|supports)[-_])?(?:sticky|fixed|pinned)[-_]headers?$/i.test(name))) {
+        return true;
+      }
+    }
+    if (role === "lightbox" && region.matches("img") && !region.closest(INTERFACE_REGIONS)) {
+      const figure = region.closest("figure");
+      const labels = [region.id, ...region.classList].filter((name) => /(?:^|[-_])lightbox(?:$|[-_])/i.test(name));
+      if (figure && labels.length && labels.every((name) => /^(?:lightbox[-_](?:image|photo|trigger)|(?:image|photo)[-_]lightbox)$/i.test(name)) && (region.getAttribute("alt")?.trim() || figure.querySelector("figcaption")?.textContent?.trim())) return true;
+    }
+    if (role === "comment" || role === "comments") {
+      const labels = [region.id, ...region.classList].filter((name) => /(?:^|[-_])comments?(?:$|[-_])/i.test(name));
+      return labels.length > 0 && labels.every((name) => /^(?:(?:has|with|without)[-_]comments?|comments?[-_](?:enabled|disabled|available))$/i.test(name)) && !region.closest(INTERFACE_REGIONS + ',aside,[role~="complementary"]') && Array.from(region.querySelectorAll("h1")).some(isDocumentHeadline);
+    }
     if (role === "modal") {
       if (!isSemanticReadingScope(region) || region.closest(INTERFACE_REGIONS)) return false;
     } else if (role !== "newsletter" && role !== "sidebar" && role !== "header") return false;
@@ -1091,8 +2030,8 @@ var clipaibleArticleExtractor = (() => {
     const linkedTargets = new Set(Array.from(root.querySelectorAll('a[href*="#"]'), getDocumentFragmentTarget));
     const page = new URL(root.ownerDocument.URL);
     page.hash = "";
-    function linkedPage(heading) {
-      const link = heading.closest("a[href]") || heading.querySelector("a[href]");
+    function linkedPage(element) {
+      const link = element.closest("a[href]") || element.querySelector("a[href]");
       if (!link) return null;
       try {
         const url = new URL(link.getAttribute("href"), root.ownerDocument.baseURI);
@@ -1101,6 +2040,23 @@ var clipaibleArticleExtractor = (() => {
       } catch {
         return null;
       }
+    }
+    for (const panel of root.querySelectorAll('[class*="related"],[class*="recommend"],[class*="suggest"]')) {
+      if (panel.children.length !== 2 || panel.closest('blockquote,pre,figure,[role~="doc-bibliography"],[role~="doc-endnotes"]') || Array.from(linkedTargets).some((target) => target && panel.contains(target))) continue;
+      const [label, card] = Array.from(panel.children);
+      const labelText = normalizedLabel(label.textContent).replace(/[:：]$/, "");
+      if (label.querySelector("a[href],img") || !labelText || labelText.length > 80 || !card.matches("a[href]") || !card.querySelector("img,picture,svg,h2,h3,h4,h5,h6") && !relatedLabels.has(labelText) || !linkedPage(card)) continue;
+      if (containsOnlyCardText(panel, label, [card])) regions.push(panel);
+    }
+    for (const action of root.querySelectorAll('a.btn[href],a.button[href],a[role~="button"][href]')) {
+      const componentLabel = /(?:^|-)\b(?:promo(?:tion)?|call[-_]to[-_]action|vacancy|cta)(?:$|[-_])/i;
+      const panelSelector = ':is(div,section,aside):is([class*="promo"],[class*="call-to-action"],[class*="vacancy"],[class*="cta"]):has(> :first-child:is(h2,h3,h4,h5,h6))';
+      const panel = action.closest(panelSelector);
+      if (!panel || !root.contains(panel) || panel === root || !linkedPage(action) || !Array.from(panel.classList).some((name) => componentLabel.test(name)) || panel.closest('figure,blockquote,pre,[role~="doc-bibliography"]') || Array.from(linkedTargets).some((target) => target && panel.contains(target))) continue;
+      const heading = panel.firstElementChild;
+      const descriptions = Array.from(panel.querySelectorAll("p"));
+      if (!heading?.matches("h2,h3,h4,h5,h6") || descriptions.length !== 1 || normalizedLabel(descriptions[0].textContent).length > 260 || panel.querySelectorAll("a[href]").length !== 1 || panel.querySelector("article,pre,figure,table,ol,ul,blockquote,math")) continue;
+      if (containsOnlyCardText(panel, heading, [action], null, descriptions[0])) regions.push(panel);
     }
     for (const label of Array.from(root.querySelectorAll(HEADINGS))) {
       if (label.tagName === "H1" || !RELATED_HEADING.test(normalizedLabel(label.textContent)) || linkedTargets.has(label) || label.closest("pre,blockquote,figcaption,a")) continue;
@@ -1130,12 +2086,56 @@ var clipaibleArticleExtractor = (() => {
       }
       if (collection) regions.push(collection);
     }
+    for (const label of root.querySelectorAll(FLAT_RECOMMENDATION_LABELS)) {
+      const text = normalizedLabel(label.textContent).replace(/[:：]$/, "");
+      if (text !== "related" && text !== "recommendations" && !RELATED_HEADING.test(text) && !relatedLabels.has(text) || linkedTargets.has(label) || label.closest('pre,blockquote,figcaption,a,[role~="doc-bibliography"],[role~="doc-endnotes"]')) continue;
+      if (label.matches("b,strong,span") && !isStandaloneLine(label)) continue;
+      const sharedBlock = label.parentElement;
+      if (label.matches("b,strong,span") && sharedBlock !== root && sharedBlock.matches("p,div") && sharedBlock.firstElementChild === label && !linkedTargets.has(sharedBlock) && isLinkCollection(sharedBlock, linkedPage, label)) {
+        regions.push(sharedBlock);
+        continue;
+      }
+      const links = nextFlowElement(label, linkedTargets);
+      if (links && !linkedTargets.has(links) && isLinkCollection(links, linkedPage)) regions.push(label, links);
+    }
     return [...new Set(regions)];
   }
-  function containsOnlyCardText(region, label, cards, previewOwners = null) {
+  function isWhitespaceNode(node) {
+    return node.nodeType === 8 || node.nodeType === 3 && !node.textContent?.trim();
+  }
+  function isStandaloneLine(label) {
+    let before = label.previousSibling;
+    let after = label.nextSibling;
+    while (before && isWhitespaceNode(before)) before = before.previousSibling;
+    while (after && isWhitespaceNode(after)) after = after.nextSibling;
+    return (!before || before.nodeName === "BR") && (!after || after.nodeName === "BR");
+  }
+  function nextFlowElement(label, linkedTargets) {
+    for (let parent = label; parent && !isSemanticReadingScope(parent) && !parent.matches("body,html"); parent = parent.parentElement) {
+      if (linkedTargets.has(parent)) return null;
+      let sibling = parent.nextSibling;
+      while (sibling && (isWhitespaceNode(sibling) || sibling.nodeName === "BR")) sibling = sibling.nextSibling;
+      if (sibling) return sibling.nodeType === 1 ? (
+        /** @type {Element} */
+        sibling
+      ) : null;
+    }
+    return null;
+  }
+  function isLinkCollection(region, linkedPage, label = null) {
+    if (region.matches('a,[role~="doc-bibliography"],[role~="doc-endnotes"]') || region.querySelector('pre,blockquote,math,thead,th,[role~="doc-bibliography"],[role~="doc-endnotes"]')) return false;
+    const destinations = new Set(Array.from(region.querySelectorAll("a[href]"), (link) => link.textContent?.trim() && linkedPage(link)).filter(Boolean));
+    if (destinations.size < 2) return false;
     const walker = region.ownerDocument.createTreeWalker(region, region.ownerDocument.defaultView.NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (!node.textContent?.trim() || label?.contains(node) || node.parentElement?.closest('script,style,template,noscript,button,[role="button"]')) continue;
+      if (node.textContent?.trim() && !label?.contains(node) && !node.parentElement?.closest("a[href],script,style,template,noscript")) return false;
+    }
+    return true;
+  }
+  function containsOnlyCardText(region, label, cards, previewOwners = null, description = null) {
+    const walker = region.ownerDocument.createTreeWalker(region, region.ownerDocument.defaultView.NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent?.trim() || label?.contains(node) || description?.contains(node) || node.parentElement?.closest('script,style,template,noscript,button,[role="button"]')) continue;
       if (previewOwners) {
         if (!previewOwners.has(node.parentElement?.closest('article,[role~="article"]'))) return false;
         continue;
@@ -1623,6 +2623,43 @@ var clipaibleArticleExtractor = (() => {
     if (longParagraphs > 3) score += longParagraphs * 5;
     return score;
   }
+  function findContentsDocument(doc, isExcluded2) {
+    const title = doc.title.trim().toLowerCase();
+    const headlines = Array.from(doc.querySelectorAll("h1")).filter((heading) => {
+      if (heading.closest(INTERFACE_REGIONS)) return false;
+      const label = readArticleMetadataText(heading).trim().toLowerCase();
+      return isDocumentHeadline(heading) || label.length > 0 && (title.endsWith(": " + label) || title.startsWith(label + " "));
+    });
+    if (!headlines.length) return null;
+    for (const contents of doc.querySelectorAll(DOCUMENT_CONTENTS)) {
+      const destinations = /* @__PURE__ */ new Set();
+      for (const link of contents.querySelectorAll('a[href*="#"]')) {
+        const target = getDocumentFragmentTarget(link);
+        if (!target || target.closest(INTERFACE_REGIONS) || contents.contains(target)) continue;
+        const section = target?.closest('section,[role~="doc-chapter"]');
+        if (section && !section.contains(contents) && !isExcluded2(section) && section.querySelector("h2,h3,h4,h5,h6") && section.querySelector("p,pre,blockquote,table")) {
+          destinations.add(section);
+        } else if (target.matches("h2,h3") && contents.compareDocumentPosition(target) & target.DOCUMENT_POSITION_FOLLOWING && target.nextElementSibling?.matches("p,pre,blockquote,table,ul,ol,dl,div,section")) {
+          destinations.add(target);
+        }
+      }
+      const chapters = [...destinations].filter((destination) => {
+        for (let parent = destination.parentElement; parent; parent = parent.parentElement) {
+          if (destinations.has(parent)) return false;
+        }
+        return true;
+      });
+      if (chapters.length < 2) continue;
+      let owner = chapters[0].parentElement;
+      while (owner && !chapters.every((chapter) => owner.contains(chapter))) owner = owner.parentElement;
+      if (!owner) continue;
+      const commonChapterOwner = owner;
+      while (owner && !headlines.some((heading) => owner.contains(heading))) owner = owner.parentElement;
+      if (owner === doc.body && commonChapterOwner === doc.body) return owner;
+      if (owner && owner !== doc.body && owner !== doc.documentElement && !isExcluded2(owner)) return owner;
+    }
+    return null;
+  }
   function findMainContent(win, doc, isExcluded2, debugInfo, pushDebugLog2) {
     const confirmedOwner = Array.from(doc.querySelectorAll(EDITORIAL_CONTAINERS)).find((element) => isEditorialOwner(element) && !isExcluded2(element));
     const main = Array.from(doc.querySelectorAll('main,[role~="main"]')).find((element) => !isExcluded2(element) && safeGetComputedStyle(win, element)?.display !== "none" && Array.from(element.querySelectorAll("h1")).some(isDocumentHeadline)) || doc.querySelector("main");
@@ -1717,6 +2754,8 @@ var clipaibleArticleExtractor = (() => {
         if (!isExcluded2(main)) return main;
       }
     }
+    const contentsDocument = findContentsDocument(doc, isExcluded2);
+    if (contentsDocument) return contentsDocument;
     const contentSelectors = [
       '[role="main"]',
       ".article-content",
@@ -2925,6 +3964,9 @@ var clipaibleArticleExtractor = (() => {
     for (let node = element; node; node = node.parentElement) {
       const style = win.getComputedStyle(node);
       if (style.display === "none" || style.contentVisibility === "hidden" || style.opacity === "0") return true;
+      const absolute = style.position === "absolute" || style.position === "fixed";
+      const emptyClip = absolute && /^rect\(0px,0px,0px,0px\)$/.test((style.clip || "").replace(/\s/g, ""));
+      if (emptyClip || style.clipPath === "inset(50%)") return true;
       if (node.matches(".katex-mathml,.MJX_Assistive_MathML") && style.position === "absolute" && style.overflow === "hidden") return true;
     }
     return ["hidden", "collapse"].includes(win.getComputedStyle(element).visibility) && (!descendants || !Array.from(element.querySelectorAll("*")).some((node) => !node.closest(DEFINITIONS) && !hidden(node)));
@@ -2982,9 +4024,11 @@ var clipaibleArticleExtractor = (() => {
   }
   function getGraphicReadingOwner(element, roots) {
     if (!element || !roots?.some((root) => root === element || root.contains(element))) return null;
-    if (element.closest("pre,code,math,mjx-container,.MathJax,.katex")) return null;
-    const figure = element.closest("figure");
     const graphic = element.closest("svg,canvas");
+    const pre = graphic?.parentElement;
+    const replacesCodeBlock = pre?.tagName === "PRE" && Array.from(pre.childNodes).every((node) => node === graphic || node.nodeType === 8 || node.nodeType === 3 && !node.textContent?.trim());
+    if (element.closest("code,math,mjx-container,.MathJax,.katex") || !replacesCodeBlock && element.closest("pre")) return null;
+    const figure = element.closest("figure");
     if (!figure && !graphic || isDecorativeLinkGraphic(graphic) || controls(element) || hidden(element, true)) return null;
     if (figure && roots.some((root) => root === figure || root.contains(figure))) {
       const graphics = Array.from(figure.querySelectorAll("svg,canvas")).filter((node) => node.closest("figure") === figure && !isCaptionSvgGlyph(node, figure) && !isDecorativeLinkGraphic(node) && !controls(node) && !hidden(node, true));
@@ -2996,7 +4040,7 @@ var clipaibleArticleExtractor = (() => {
       }
     }
     if (!graphic || /(?:^|[\s_-])icon(?:$|[\s_-])/i.test(graphic.getAttribute("class") || "")) return null;
-    const labelled = graphic.tagName === "CANVAS" || graphic.getAttribute("role") === "img" || graphic.hasAttribute("aria-label") || graphic.hasAttribute("aria-labelledby") || !!graphic.querySelector("title") || roots.includes(graphic);
+    const labelled = replacesCodeBlock || graphic.tagName === "CANVAS" || graphic.matches('[role~="img"],[role~="graphics-document"]') || graphic.hasAttribute("aria-label") || graphic.hasAttribute("aria-labelledby") || !!graphic.querySelector("title") || roots.includes(graphic);
     return labelled ? graphic : null;
   }
   function excluded(element, owner, selectors) {
@@ -3097,6 +4141,39 @@ var clipaibleArticleExtractor = (() => {
     }
     return sources;
   }
+  function paintedRectangles(win, owner, elements) {
+    const clips = /* @__PURE__ */ new Map();
+    const boundary = owner.parentElement;
+    const clipsAxis = (value) => /^(hidden|clip|auto|scroll)$/.test(value);
+    const clippingBox = (element) => {
+      if (!clips.has(element)) {
+        const style = win.getComputedStyle(element);
+        const horizontal = clipsAxis(style.overflowX || style.overflow);
+        const vertical = clipsAxis(style.overflowY || style.overflow);
+        clips.set(element, horizontal || vertical ? { horizontal, vertical, rect: element.getBoundingClientRect() } : null);
+      }
+      return clips.get(element);
+    };
+    const rectangles = [];
+    for (const element of elements) {
+      let { left, top, right, bottom } = element.getBoundingClientRect();
+      if (right <= left || bottom <= top) continue;
+      for (let parent = element.parentElement; parent && parent !== boundary; parent = parent.parentElement) {
+        const clip = clippingBox(parent);
+        if (clip?.horizontal) {
+          left = Math.max(left, clip.rect.left);
+          right = Math.min(right, clip.rect.right);
+        }
+        if (clip?.vertical) {
+          top = Math.max(top, clip.rect.top);
+          bottom = Math.min(bottom, clip.rect.bottom);
+        }
+        if (right <= left || bottom <= top) break;
+      }
+      if (right > left && bottom > top) rectangles.push({ left, top, right, bottom });
+    }
+    return rectangles;
+  }
   async function captureReadingGraphics(win, elements, state, constants) {
     const roots = state.referenceRoots || [];
     const selectors = state.selectionExclusions || [];
@@ -3168,9 +4245,21 @@ var clipaibleArticleExtractor = (() => {
         const alt = [label.trim() && label.trim() !== text && label.trim() !== caption ? label.trim() : "", text].filter(Boolean).join("\n");
         const nodes = [owner, ...Array.from(owner.querySelectorAll("*"))];
         const included = nodes.filter((node) => !excluded(node, owner, selectors) && !node.closest(DEFINITIONS));
-        const rectangles = (owner.tagName === "FIGURE" ? included.slice(1) : included).map((node) => node.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
+        const rectangles = paintedRectangles(win, owner, owner.tagName === "FIGURE" ? included.slice(1) : included);
         if (!rectangles.length) throw failure();
         const extent = rectangles.reduce((bounds, rect) => ({ left: Math.min(bounds.left, rect.left), top: Math.min(bounds.top, rect.top), right: Math.max(bounds.right, rect.right), bottom: Math.max(bounds.bottom, rect.bottom) }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+        if (owner.localName === "svg") {
+          const viewport = owner.getBoundingClientRect();
+          const { overflowX, overflowY } = win.getComputedStyle(owner);
+          if (viewport.width && /^(hidden|clip|auto|scroll)$/.test(overflowX)) {
+            extent.left = viewport.left;
+            extent.right = viewport.right;
+          }
+          if (viewport.height && /^(hidden|clip|auto|scroll)$/.test(overflowY)) {
+            extent.top = viewport.top;
+            extent.bottom = viewport.bottom;
+          }
+        }
         let width = extent.right - extent.left, height = extent.bottom - extent.top;
         if (!Number.isFinite(width * height) || width <= 0 || height <= 0) throw failure();
         const scale = Math.min(1, 32767 / width, 32767 / height, Math.sqrt(2 ** 25 / (width * height)));
@@ -3359,12 +4448,14 @@ var clipaibleArticleExtractor = (() => {
             }
           }));
           const xml = decodeURIComponent(svgUrl.slice(svgUrl.indexOf(",") + 1));
-          if (xml.includes(FAILURE_IMAGE) || /(?:href|src)\s*=\s*["'](?:https?:|blob:)/i.test(xml) || /url\(\s*["']?(?:https?:|blob:)/i.test(xml)) throw failure();
+          if (xml.includes(FAILURE_IMAGE) || /url\(\s*["']?(?:https?:|blob:)/i.test(xml)) throw failure();
           const serialized = new win.DOMParser().parseFromString(xml, "image/svg+xml");
           if (serialized.querySelector("parsererror")) throw failure();
+          const serializedElements = Array.from(serialized.querySelectorAll("*"));
+          if (serializedElements.some((node) => Array.from(node.attributes).some((attribute) => ["href", "src"].includes(attribute.localName) && /^(?:https?:|blob:)/i.test(attribute.value.trim())))) throw failure();
           const ids = new Set(Array.from(serialized.querySelectorAll("[id]")).map((node) => node.id));
           const references = [...xml.matchAll(/url\(['"]?(#[^)'"\s]+)['"]?\)/g)].map((match) => match[1]);
-          references.push(...Array.from(serialized.querySelectorAll("*")).flatMap((node) => Array.from(node.attributes).filter((attribute) => (attribute.name === "href" || attribute.name.endsWith(":href")) && attribute.value.startsWith("#")).map((attribute) => attribute.value)));
+          references.push(...serializedElements.flatMap((node) => Array.from(node.attributes).filter((attribute) => (attribute.name === "href" || attribute.name.endsWith(":href")) && attribute.value.startsWith("#")).map((attribute) => attribute.value)));
           if (references.some((reference) => !ids.has(decodeURIComponent(reference.slice(1))))) throw failure();
           if (scale < 1) {
             serialized.documentElement.setAttribute("width", String(canvas.width));
@@ -3541,15 +4632,32 @@ var clipaibleArticleExtractor = (() => {
   }
 
   // scripts/extraction/extractor/filters.js
+  var LABELLED_CONTROLS = ':is(input,select,button,[role="radiogroup"],[role="listbox"],[role="tablist"],[role="menu"])[aria-labelledby]';
   function semanticClassNames(element) {
     return Array.from(element.classList).filter((name) => !name.includes("[")).join(" ").toLowerCase();
   }
-  function isInteractiveControlLabel(element) {
+  function readControlLabelIds(document2) {
+    const ids = /* @__PURE__ */ new Set();
+    for (const control of document2.querySelectorAll(LABELLED_CONTROLS)) {
+      for (const id of control.getAttribute("aria-labelledby").trim().split(/\s+/)) {
+        if (id) ids.add(id);
+      }
+    }
+    return ids;
+  }
+  function isInteractiveControlLabel(element, controlLabelIds = null) {
     const label = element.closest("label,[id]");
     if (!label) return false;
     if (label.tagName === "LABEL" && label.getAttribute("for")) return true;
     if (!label.id || !label.contains(element)) return false;
-    return Array.from(element.ownerDocument.querySelectorAll("[aria-labelledby]")).some((control) => (control.getAttribute("aria-labelledby") || "").split(/\s+/).includes(label.id) && control.matches('input,select,button,[role="radiogroup"],[role="listbox"],[role="tablist"],[role="menu"]'));
+    return (controlLabelIds ?? readControlLabelIds(element.ownerDocument)).has(label.id);
+  }
+  function compileClassExclusions(names) {
+    return names.map((name) => ({
+      name,
+      word: new RegExp(`\\b${name}\\b`),
+      role: new RegExp(`(?:^|[\\s_-])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[\\s_-])`)
+    }));
   }
   function matchesNavigationPattern(text, patterns) {
     for (const pattern of patterns) {
@@ -3756,6 +4864,7 @@ var clipaibleArticleExtractor = (() => {
         regions.push(counter);
       }
     }
+    regions.push(...findSearchPreviewLists(root, ownsFragment));
     const headline = Array.from(root.querySelectorAll("h1")).find(isDocumentHeadline);
     if (!headline) return regions;
     const categoryLinks = [...root.querySelectorAll('a[href][rel~="category"]')];
@@ -3794,6 +4903,30 @@ var clipaibleArticleExtractor = (() => {
     }
     return regions;
   }
+  function findSearchPreviewLists(root, ownsFragment) {
+    const boundary = 'section,[role~="region"]';
+    const searchField = 'input[type="search"],[role~="searchbox"]';
+    const controls2 = 'button[aria-pressed],[role~="tab"][aria-selected]';
+    const protectedList = 'blockquote,pre,figcaption,[role~="doc-bibliography"],[role~="doc-endnotes"]';
+    const regions = new Set(Array.from(root.querySelectorAll(searchField), (input) => input.closest(boundary)).filter((region) => region && root.contains(region)));
+    const containingRegion = root.closest(boundary);
+    if (containingRegion && Array.from(containingRegion.querySelectorAll(searchField)).some((input) => input.closest(boundary) === containingRegion)) regions.add(containingRegion);
+    const lists = [];
+    for (const region of regions) {
+      for (const list of region.querySelectorAll("ul,ol")) {
+        if (list.closest(boundary) !== region || list.closest(protectedList) || ownsFragment(list)) continue;
+        const rows = Array.from(list.children).filter((child) => child.matches("li"));
+        const previewRows = rows.filter((row) => row.querySelector(controls2));
+        if (previewRows.length < 3) continue;
+        const links = previewRows.map((row) => Array.from(row.querySelectorAll("a[href]")).find((link) => link.closest("li") === row && link.textContent?.trim() && !getDocumentFragmentTarget(link)));
+        if (links.some((link) => !link) || new Set(links.map((link) => link.href)).size < 3) continue;
+        if (rows.some((row) => (row.firstElementChild || row.textContent?.trim()) && !previewRows.includes(row) && (!row.querySelector('button,[role~="button"]') || row.querySelector("a[href],p,figure")))) continue;
+        if (previewRows.some((row, index) => Array.from(row.querySelectorAll("p,blockquote,pre,table,figcaption")).some((block) => !links[index].contains(block) && block.textContent?.trim()))) continue;
+        lists.push(list);
+      }
+    }
+    return lists;
+  }
   function addPanelSkipControls(panel, label, regions) {
     const wrapper = panel.closest("figure,section");
     if (!wrapper) return;
@@ -3808,7 +4941,7 @@ var clipaibleArticleExtractor = (() => {
       }
     }
   }
-  function isExcluded(win, element, constants, readingRoots = [], tocRoots = [], selectedIllustration = false) {
+  function isExcluded(win, element, constants, readingRoots = [], tocRoots = [], selectedIllustration = false, batch = null) {
     const {
       EXCLUDED_CLASSES: EXCLUDED_CLASSES2,
       PAYWALL_CLASSES: PAYWALL_CLASSES2,
@@ -3863,7 +4996,7 @@ var clipaibleArticleExtractor = (() => {
       }
     }
     if (isSubscriptionFormContent(element)) return true;
-    if (isInteractiveControlLabel(element)) return true;
+    if (isInteractiveControlLabel(element, batch?.controlLabelIds)) return true;
     if (tagName === "iframe") {
       const iframeElement = (
         /** @type {HTMLIFrameElement} */
@@ -3930,11 +5063,12 @@ var clipaibleArticleExtractor = (() => {
     if (!readingOwned && (textLower.includes("powered by salesforce") || textLower.includes("marketing cloud"))) {
       return true;
     }
-    for (const excluded2 of EXCLUDED_CLASSES2) {
+    const exclusionRules = batch?.exclusionRules ?? compileClassExclusions(EXCLUDED_CLASSES2);
+    for (const { name: excluded2, word: pattern } of exclusionRules) {
       if ((authoredHeading || selectedMedia || selectedInline) && ["header", "article-section-title"].includes(excluded2)) continue;
       if (selectedMedia && excluded2 === "overlay") continue;
-      const pattern = new RegExp(`\\b${excluded2}\\b`);
-      if ((pattern.test(className) || (id === excluded2 || pattern.test(id) && !hasAuthoredAnchor(element)) || className === excluded2 || className.startsWith(excluded2 + "-") || className.endsWith("-" + excluded2)) && !isEditorialLayoutLabel(element, element, excluded2) && !(excluded2 === "sidebar" && isReferencedReadingAside(element, readingRoots, tocRoots))) {
+      const exactPanelId = id === excluded2 && !(authoredHeading && Array.from(element.ownerDocument.querySelectorAll(DOCUMENT_CONTENTS)).some((contents) => Array.from(contents.querySelectorAll('a[href*="#"]')).some((link) => getDocumentFragmentTarget(link) === element)));
+      if ((pattern.test(className) || exactPanelId || pattern.test(id) && !hasAuthoredAnchor(element) || className === excluded2 || className.startsWith(excluded2 + "-") || className.endsWith("-" + excluded2)) && !isEditorialLayoutLabel(element, element, excluded2) && !(excluded2 === "sidebar" && isReferencedReadingAside(element, readingRoots, tocRoots))) {
         return true;
       }
     }
@@ -3948,15 +5082,13 @@ var clipaibleArticleExtractor = (() => {
         const parentId = (parent.id || "").toLowerCase();
         const parentTag = parent.tagName.toLowerCase();
         if (parentTag === "nav" || parentTag === "footer" || parent.getAttribute("role") === "navigation") return true;
-        if (EXCLUDED_CLASSES2.some((excluded2) => {
+        if (exclusionRules.some(({ name: excluded2, role: role2 }) => {
           if ((authoredHeading || selectedMedia || selectedInline) && ["header", "article-section-title"].includes(excluded2)) return false;
           if (selectedMedia && excluded2 === "overlay") return false;
           if (excluded2 === "sidebar" && illustrationAside && parent.contains(illustrationAside)) return false;
           if (excluded2 === "next" || excluded2 === "prev" || excluded2 === "previous") {
             return parentClass.split(/\s+/).includes(excluded2) || parentId === excluded2;
           }
-          const escaped = excluded2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const role2 = new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`);
           const matchingRole = role2.test(parentClass) || parentId === excluded2 || role2.test(parentId) && !hasAuthoredAnchor(parent);
           if (!matchingRole || isEditorialLayoutLabel(parent, element, excluded2) || excluded2 === "sidebar" && isReferencedReadingAside(parent, readingRoots, tocRoots)) return false;
           const wrapsSelectedFlow = layoutRoles.includes(excluded2) && !hasExactRole(parent, excluded2) && !parent.matches('aside,[role~="complementary"],header,[role~="banner"]') && selectedFlows.some((root) => root !== parent && parent.contains(root));
@@ -4048,8 +5180,28 @@ var clipaibleArticleExtractor = (() => {
     if (element.localName === "semantics") return presentationChildren(element).map(presentationMathText).join("");
     return Array.from(element.childNodes, (child) => child.nodeType === 3 ? child.textContent : child.nodeType === 1 ? presentationMathText(child) : "").join("");
   }
+  function renderCommonHtmlMath(element, doc) {
+    if (element.matches(".mjx-mi,.mjx-mn,.mjx-mo,.mjx-mtext")) {
+      const glyphs = Array.from(element.children);
+      if (!glyphs.length || !glyphs.every((glyph) => glyph.matches(".mjx-char") && !glyph.children.length)) return null;
+      const text = glyphs.map((glyph) => glyph.textContent).join("");
+      return text ? doc.createTextNode(text) : null;
+    }
+    const fraction = element.matches(".mjx-mfrac");
+    const children = fraction ? [element.querySelector(":scope > .mjx-box > .mjx-numerator"), element.querySelector(":scope > .mjx-box > .mjx-denominator")] : Array.from(element.children);
+    if (!fraction && !element.matches(".mjx-math,.mjx-mrow,.mjx-numerator,.mjx-denominator")) return null;
+    if (!children.length || children.some((child) => !child) || Array.from(element.childNodes).some((node) => node.nodeType === 3 && node.textContent.trim())) return null;
+    const parts = children.map((child) => renderCommonHtmlMath(child, doc));
+    if (parts.some((part) => !part)) return null;
+    const rendered = doc.createDocumentFragment();
+    if (fraction) rendered.append("(", parts[0], ")/(", parts[1], ")");
+    else rendered.append(...parts);
+    return rendered;
+  }
   function processMathElements(container, runtimeInputs = /* @__PURE__ */ new Map()) {
-    const mathElements = container.querySelectorAll(".mwe-math-element, .mathjax, .MathJax, .MathJax_Display, .latex, .katex, mjx-container, math");
+    const mathElements = container.querySelectorAll(
+      ".mwe-math-element, .mathjax, .MathJax, .MathJax_Display, .latex, .katex, mjx-container, math," + MATHJAX_COMMON_HTML
+    );
     for (const mathEl of Array.from(mathElements)) {
       if (!container.contains(mathEl)) continue;
       let latex = "";
@@ -4074,6 +5226,9 @@ var clipaibleArticleExtractor = (() => {
         }
       }
       if (!latex) latex = runtimeInputs.get(mathEl) || "";
+      const commonHtml = mathEl.matches(MATHJAX_COMMON_HTML) ? mathEl : mathEl.querySelector(MATHJAX_COMMON_HTML);
+      const commonVisual = commonHtml?.querySelector(".mjx-math");
+      const commonSource = commonVisual?.getAttribute("aria-label")?.trim() || "";
       let semanticMath = mathTag;
       if (!semanticMath && frame?.getAttribute("data-mathml")) {
         const Parser = container.ownerDocument.defaultView?.DOMParser;
@@ -4082,18 +5237,18 @@ var clipaibleArticleExtractor = (() => {
           if (!parsed.querySelector("parsererror")) semanticMath = parsed.documentElement;
         }
       }
-      const rendered = semanticMath ? renderSimpleMathMl(semanticMath, container.ownerDocument, !latex) : null;
+      const rendered = semanticMath ? renderSimpleMathMl(semanticMath, container.ownerDocument, !latex) : commonVisual && renderCommonHtmlMath(commonVisual, container.ownerDocument);
       if (rendered) {
         const wrapper = container.ownerDocument.createElement("span");
         wrapper.className = "math";
         wrapper.appendChild(rendered);
         mathEl.replaceWith(wrapper);
-      } else if (latex) {
-        const cleanedLatex = cleanLatexFormula(latex);
+      } else if (latex || commonSource) {
+        const cleanedLatex = cleanLatexFormula(latex || commonSource);
         const textNode = container.ownerDocument.createTextNode(` $${cleanedLatex}$ `);
         mathEl.replaceWith(textNode);
       } else {
-        const presentation = semanticMath?.namespaceURI === MATHML ? presentationMathText(semanticMath) : mathEl.querySelector("mjx-math,.katex-html")?.textContent ?? mathEl.textContent;
+        const presentation = semanticMath?.namespaceURI === MATHML ? presentationMathText(semanticMath) : (commonVisual || mathEl.querySelector("mjx-math,.katex-html") || mathEl).textContent;
         mathEl.replaceWith(container.ownerDocument.createTextNode(presentation || ""));
       }
     }
@@ -4388,6 +5543,35 @@ var clipaibleArticleExtractor = (() => {
     if (!collapsed || !["absolute", "fixed"].includes(style?.position) || !getSelectedImageNaturalSize(img).matchesSource) return false;
     return Array.from(img.parentElement?.children || []).some((sibling) => sibling !== img && sibling.tagName === "IMG" && safeGetComputedStyle(win, sibling)?.position === style.position);
   }
+  function isCoveredImagePreview(win, img, source, width, height) {
+    if (!img.complete || !/^data:image\/(?:jpeg|png|webp);/i.test(source) || !width || !height || Math.max(width, height) > 96 || img.getAttribute("alt")?.trim() !== "" || img.title || img.closest("a[href]") || img.hasAttribute("aria-label") || img.hasAttribute("aria-labelledby")) return false;
+    const style = safeGetComputedStyle(win, img);
+    const holder = img.parentElement;
+    if (!holder || !style?.filter?.includes("blur(")) return false;
+    const preview = img.getBoundingClientRect();
+    if (preview.width <= width || preview.height <= height) return false;
+    const bounds = holder.getBoundingClientRect();
+    const holderStyle = safeGetComputedStyle(win, holder);
+    const clips = (value) => ["hidden", "clip"].includes(value);
+    const left = clips(holderStyle?.overflowX) ? Math.max(preview.left, bounds.left) : preview.left;
+    const right = clips(holderStyle?.overflowX) ? Math.min(preview.right, bounds.right) : preview.right;
+    const top = clips(holderStyle?.overflowY) ? Math.max(preview.top, bounds.top) : preview.top;
+    const bottom = clips(holderStyle?.overflowY) ? Math.min(preview.bottom, bounds.bottom) : preview.bottom;
+    for (let sibling = img.nextElementSibling; sibling; sibling = sibling.nextElementSibling) {
+      if (!sibling.matches("img,picture")) continue;
+      const replacement = (
+        /** @type {HTMLImageElement|null} */
+        sibling.matches("img") ? sibling : sibling.querySelector("img")
+      );
+      if (!replacement?.complete || replacement.naturalWidth < width * 3 || replacement.naturalHeight < height * 3) continue;
+      const placement = safeGetComputedStyle(win, sibling);
+      const appearance = sibling === replacement ? placement : safeGetComputedStyle(win, replacement);
+      if (placement?.position !== "absolute" || placement.visibility !== "visible" || placement.opacity && Number(placement.opacity) < 1 || appearance?.visibility !== "visible" || appearance.opacity && Number(appearance.opacity) < 1 || (Number(placement.zIndex) || 0) < (Number(style.zIndex) || 0)) continue;
+      const layer = replacement.getBoundingClientRect();
+      if (layer.left <= left && layer.top <= top && layer.right >= right && layer.bottom >= bottom) return true;
+    }
+    return false;
+  }
   function isTrackingPixel(win, img) {
     const selectedSource = extractBestImageUrl(img);
     const { width: naturalWidth, height: naturalHeight } = getSelectedImageNaturalSize(img);
@@ -4420,6 +5604,7 @@ var clipaibleArticleExtractor = (() => {
     const naturalWidth = naturalSize.width || (naturalSize.matchesSource ? img.width : Number(img.getAttribute("width"))) || 0;
     const naturalHeight = naturalSize.height || (naturalSize.matchesSource ? img.height : Number(img.getAttribute("height"))) || 0;
     if (img.getAttribute("role") === "separator") return true;
+    if (isCoveredImagePreview(win, img, src, naturalSize.width, naturalSize.height)) return true;
     if (naturalWidth > 0 && naturalHeight > 0 && (naturalWidth > 3 && naturalHeight <= 3 || naturalHeight > 3 && naturalWidth <= 3)) {
       return true;
     }
@@ -4812,7 +5997,7 @@ var clipaibleArticleExtractor = (() => {
   ];
 
   // scripts/extraction/extractor/standfirst.js
-  function extractStandfirst(mainContent) {
+  function extractStandfirst(mainContent, titleElement = null) {
     if (!mainContent) {
       return { text: null, element: null };
     }
@@ -4847,905 +6032,19 @@ var clipaibleArticleExtractor = (() => {
       } catch (e) {
       }
     }
+    if (titleElement && isDocumentHeadline(titleElement)) {
+      const next = titleElement.parentElement?.nextElementSibling;
+      const deck = titleElement.nextElementSibling;
+      const nextOwnsBody = next && (next.contains(mainContent) || mainContent.contains(next) && next.querySelector('article p,[itemprop~="articleBody"] p,p + p'));
+      if (nextOwnsBody && deck?.matches("p") && isInlineCandidate(deck)) {
+        const normalize = (value) => (value || "").trim().replace(/\s+/g, " ");
+        const text = normalize(cloneReadingContent(deck).textContent);
+        const descriptions = deck.ownerDocument.querySelectorAll('meta[name="description"],meta[property="og:description"]');
+        if (text.length >= 50 && text.length <= 500 && Array.from(descriptions).some((node) => normalize(node.getAttribute("content")) === text)) return { text, element: deck };
+      }
+    }
     return { text: null, element: null };
   }
-
-  // scripts/extraction/patterns/exclusion-patterns.js
-  var NAVIGATION_PATTERNS = {
-    // Patterns that match if text STARTS with them
-    startsWith: [
-      // English
-      /^next:/i,
-      /^read\s+more(?:\s*[.!?:;…»›>]+)?\s*$/i,
-      /^keep reading/i,
-      /^subscribe/i,
-      /^sign (in|up)/i,
-      /^already have an account/i,
-      /^try \d+ days/i,
-      /^start (free )?trial/i,
-      /^give a gift/i,
-      /^manage subscription/i,
-      /^essential journalism/i,
-      /^support independent journalism/i,
-      /^you might also like/i,
-      /^you may also like/i,
-      /^also in /i,
-      /^more in /i,
-      /^previous post/i,
-      /^next post/i,
-      /^related posts?/i,
-      /^recommended posts?/i,
-      /^subscribe (now|today|for)/i,
-      /^support (independent )?journalism/i,
-      /^donate (to|now)/i,
-      /^give a year of/i,
-      /^plus a free/i,
-      /^comment on this article/i,
-      /^view \/ add comments/i,
-      /^published in the print edition/i,
-      /^published in the/i,
-      /^fuel your wonder/i,
-      /^feed your curiosity/i,
-      /^expand your mind/i,
-      /^access the entire/i,
-      /^ad-free/i,
-      /^become a member/i,
-      /^nautilus members enjoy/i,
-      /^log in or join/i,
-      // Russian
-      /^чтобы прочитать целиком/i,
-      /^купите подписку/i,
-      /^платный журнал/i,
-      /^я уже подписчик/i,
-      /^подписка предоставлена/i,
-      /^оформить подписку/i,
-      /^чтобы читать далее/i,
-      /^подпишитесь чтобы/i,
-      /^чтобы продолжить/i,
-      /^новое и лучшее/i,
-      /^первая полоса/i,
-      /^рекомендуем/i,
-      /^читайте также/i,
-      /^похожие статьи/i,
-      /^связанные статьи/i,
-      /^другие статьи/i,
-      /^ещё по теме/i,
-      /^по теме/i,
-      // Ukrainian
-      /^щоб прочитати цілком/i,
-      /^купити підписку/i,
-      /^платний журнал/i,
-      /^я вже передплатник/i,
-      /^підписка надана/i,
-      /^оформити підписку/i,
-      /^щоб читати далі/i,
-      /^підпишіться щоб/i,
-      /^щоб продовжити/i,
-      /^нове і краще/i,
-      /^перша смуга/i,
-      /^рекомендуємо/i,
-      /^читайте також/i,
-      /^схожі статті/i,
-      /^пов'язані статті/i,
-      /^інші статті/i,
-      /^ще за темою/i,
-      /^за темою/i,
-      // German
-      /^um weiterzulesen/i,
-      /^abonnement kaufen/i,
-      /^bezahltes magazin/i,
-      /^ich bin bereits abonnent/i,
-      /^abonnement bereitgestellt/i,
-      /^abonnement abschließen/i,
-      /^um weiter zu lesen/i,
-      /^abonnieren um/i,
-      /^um fortzufahren/i,
-      /^neu und besser/i,
-      /^erste seite/i,
-      /^empfehlen/i,
-      /^lesen sie auch/i,
-      /^ähnliche artikel/i,
-      /^verwandte artikel/i,
-      /^andere artikel/i,
-      /^mehr zum thema/i,
-      /^zum thema/i,
-      // French
-      /^pour lire en entier/i,
-      /^acheter un abonnement/i,
-      /^magazine payant/i,
-      /^je suis déjà abonné/i,
-      /^abonnement fourni/i,
-      /^s'abonner/i,
-      /^pour continuer à lire/i,
-      /^abonnez-vous pour/i,
-      /^pour continuer/i,
-      /^nouveau et mieux/i,
-      /^première page/i,
-      /^recommandons/i,
-      /^lisez aussi/i,
-      /^articles similaires/i,
-      /^articles connexes/i,
-      /^autres articles/i,
-      /^plus sur le sujet/i,
-      /^sur le sujet/i,
-      // Spanish
-      /^para leer completo/i,
-      /^comprar suscripción/i,
-      /^revista de pago/i,
-      /^ya soy suscriptor/i,
-      /^suscripción proporcionada/i,
-      /^suscribirse/i,
-      /^para seguir leyendo/i,
-      /^suscríbete para/i,
-      /^para continuar/i,
-      /^nuevo y mejor/i,
-      /^primera página/i,
-      /^recomendamos/i,
-      /^lee también/i,
-      /^artículos similares/i,
-      /^artículos relacionados/i,
-      /^otros artículos/i,
-      /^más sobre el tema/i,
-      /^sobre el tema/i,
-      // Italian
-      /^per leggere completo/i,
-      /^acquista abbonamento/i,
-      /^rivista a pagamento/i,
-      /^sono già abbonato/i,
-      /^abbonamento fornito/i,
-      /^abbonarsi/i,
-      /^per continuare a leggere/i,
-      /^abbonati per/i,
-      /^per continuare/i,
-      /^nuovo e migliore/i,
-      /^prima pagina/i,
-      /^consigliamo/i,
-      /^leggi anche/i,
-      /^articoli simili/i,
-      /^articoli correlati/i,
-      /^altri articoli/i,
-      /^altro sull'argomento/i,
-      /^sull'argomento/i,
-      // Portuguese
-      /^para ler completo/i,
-      /^comprar assinatura/i,
-      /^revista paga/i,
-      /^já sou assinante/i,
-      /^assinatura fornecida/i,
-      /^assinar/i,
-      /^para continuar lendo/i,
-      /^assine para/i,
-      /^para continuar/i,
-      /^novo e melhor/i,
-      /^primeira página/i,
-      /^recomendamos/i,
-      /^leia também/i,
-      /^artigos similares/i,
-      /^artigos relacionados/i,
-      /^outros artigos/i,
-      /^mais sobre o tema/i,
-      /^sobre o tema/i,
-      // Chinese
-      /^阅读全文/i,
-      /^购买订阅/i,
-      /^付费杂志/i,
-      /^我已经是订阅者/i,
-      /^已提供订阅/i,
-      /^订阅/i,
-      /^继续阅读/i,
-      /^订阅以/i,
-      /^继续/i,
-      /^最新和最佳/i,
-      /^头版/i,
-      /^推荐/i,
-      /^也阅读/i,
-      /^相似文章/i,
-      /^相关文章/i,
-      /^其他文章/i,
-      /^更多主题/i,
-      /^主题/i,
-      // Japanese
-      /^全文を読む/i,
-      /^購読を購入/i,
-      /^有料雑誌/i,
-      /^既に購読者です/i,
-      /^購読が提供されました/i,
-      /^購読する/i,
-      /^続きを読む/i,
-      /^購読して/i,
-      /^続ける/i,
-      /^新しくて最高/i,
-      /^第一面/i,
-      /^おすすめ/i,
-      /^こちらも読む/i,
-      /^類似記事/i,
-      /^関連記事/i,
-      /^その他の記事/i,
-      /^トピックの詳細/i,
-      /^トピック/i,
-      // Korean
-      /^전체 읽기/i,
-      /^구독 구매/i,
-      /^유료 잡지/i,
-      /^이미 구독자입니다/i,
-      /^구독 제공됨/i,
-      /^구독하기/i,
-      /^계속 읽기/i,
-      /^구독하여/i,
-      /^계속/i,
-      /^새로운 것과 최고/i,
-      /^첫 페이지/i,
-      /^추천/i,
-      /^또한 읽기/i,
-      /^유사한 기사/i,
-      /^관련 기사/i,
-      /^다른 기사/i,
-      /^주제에 대해 더/i,
-      /^주제/i
-    ],
-    // Patterns that match if text CONTAINS them
-    contains: [
-      // English
-      /previous\s+post/i,
-      /next\s+post/i,
-      /related\s+posts?/i,
-      /recommended\s+posts?/i,
-      /^read\s+more(?:\s*[.!?:;…»›>]+)?\s*$/i,
-      /keep\s+reading/i,
-      /you\s+might\s+also\s+like/i,
-      /you\s+may\s+also\s+like/i,
-      /also\s+in\s+/i,
-      /^more\s+in\s+/i,
-      /next\s+article/i,
-      /previous\s+article/i,
-      /next:/i,
-      /subscribe\s+(now|today|for)/i,
-      /sign\s+up/i,
-      /start\s+(free\s+)?trial/i,
-      /support\s+(independent\s+)?journalism/i,
-      /donate\s+(to|now)/i,
-      /essential\s+journalism/i,
-      /give\s+a\s+gift/i,
-      /comment\s+on\s+this\s+article/i,
-      /view\s+\/\s+add\s+comments/i,
-      /published\s+in\s+the\s+print\s+edition/i,
-      // Paywall/subscription messages
-      /get\s+access\s+to\s+print\s+and\s+digital/i,
-      /subscribe\s+for\s+full\s+access/i,
-      /free\s+articles?\s+this\s+month/i,
-      /subscribe\s+for\s+less\s+than/i,
-      /subscribe\s+or\s+log\s+in\s+to\s+access/i,
-      /connect\s+to\s+your\s+subscription/i,
-      /you've\s+read\s+(one|your)/i,
-      /you've\s+reached\s+your\s+free/i,
-      /subscribe\s+or\s+log\s+in\s+to\s+access\s+this\s+pdf/i,
-      /download\s+pdf/i,
-      // Russian
-      /чтобы\s+прочитать\s+целиком/i,
-      /купите\s+подписку/i,
-      /платный\s+журнал/i,
-      /я\s+уже\s+подписчик/i,
-      /подписка\s+предоставлена/i,
-      /оформить\s+подписку/i,
-      /чтобы\s+читать\s+далее/i,
-      /подпишитесь\s+чтобы/i,
-      /чтобы\s+продолжить/i,
-      /новое\s+и\s+лучшее/i,
-      /первая\s+полоса/i,
-      /рекомендуем/i,
-      /читайте\s+также/i,
-      /похожие\s+статьи/i,
-      /связанные\s+статьи/i,
-      /другие\s+статьи/i,
-      /ещё\s+по\s+теме/i,
-      /по\s+теме/i,
-      // Ukrainian
-      /щоб\s+прочитати\s+цілком/i,
-      /купити\s+підписку/i,
-      /платний\s+журнал/i,
-      /я\s+вже\s+передплатник/i,
-      /підписка\s+надана/i,
-      /оформити\s+підписку/i,
-      /щоб\s+читати\s+далі/i,
-      /підпишіться\s+щоб/i,
-      /щоб\s+продовжить/i,
-      /нове\s+і\s+краще/i,
-      /перша\s+смуга/i,
-      /рекомендуємо/i,
-      /читайте\s+також/i,
-      /схожі\s+статті/i,
-      /пов'язані\s+статті/i,
-      /інші\s+статті/i,
-      /ще\s+за\s+темою/i,
-      /за\s+темою/i,
-      // German
-      /um\s+weiterzulesen/i,
-      /abonnement\s+kaufen/i,
-      /bezahltes\s+magazin/i,
-      /ich\s+bin\s+bereits\s+abonnent/i,
-      /abonnement\s+bereitgestellt/i,
-      /abonnement\s+abschließen/i,
-      /um\s+weiter\s+zu\s+lesen/i,
-      /abonnieren\s+um/i,
-      /um\s+fortzufahren/i,
-      /neu\s+und\s+besser/i,
-      /erste\s+seite/i,
-      /empfehlen/i,
-      /lesen\s+sie\s+auch/i,
-      /ähnliche\s+artikel/i,
-      /verwandte\s+artikel/i,
-      /andere\s+artikel/i,
-      /mehr\s+zum\s+thema/i,
-      /zum\s+thema/i,
-      // French
-      /pour\s+lire\s+en\s+entier/i,
-      /acheter\s+un\s+abonnement/i,
-      /magazine\s+payant/i,
-      /je\s+suis\s+déjà\s+abonné/i,
-      /abonnement\s+fourni/i,
-      /s'abonner/i,
-      /pour\s+continuer\s+à\s+lire/i,
-      /abonnez-vous\s+pour/i,
-      /pour\s+continuer/i,
-      /nouveau\s+et\s+mieux/i,
-      /première\s+page/i,
-      /recommandons/i,
-      /lisez\s+aussi/i,
-      /articles\s+similaires/i,
-      /articles\s+connexes/i,
-      /autres\s+articles/i,
-      /plus\s+sur\s+le\s+sujet/i,
-      /sur\s+le\s+sujet/i,
-      // Spanish
-      /para\s+leer\s+completo/i,
-      /comprar\s+suscripción/i,
-      /revista\s+de\s+pago/i,
-      /ya\s+soy\s+suscriptor/i,
-      /suscripción\s+proporcionada/i,
-      /suscribirse/i,
-      /para\s+seguir\s+leyendo/i,
-      /suscríbete\s+para/i,
-      /para\s+continuar/i,
-      /nuevo\s+y\s+mejor/i,
-      /primera\s+página/i,
-      /recomendamos/i,
-      /lee\s+también/i,
-      /artículos\s+similares/i,
-      /artículos\s+relacionados/i,
-      /otros\s+artículos/i,
-      /más\s+sobre\s+el\s+tema/i,
-      /sobre\s+el\s+tema/i,
-      // Italian
-      /per\s+leggere\s+completo/i,
-      /acquista\s+abbonamento/i,
-      /rivista\s+a\s+pagamento/i,
-      /sono\s+già\s+abbonato/i,
-      /abbonamento\s+fornito/i,
-      /abbonarsi/i,
-      /per\s+continuare\s+a\s+leggere/i,
-      /abbonati\s+per/i,
-      /per\s+continuare/i,
-      /nuovo\s+e\s+migliore/i,
-      /prima\s+pagina/i,
-      /consigliamo/i,
-      /leggi\s+anche/i,
-      /articoli\s+simili/i,
-      /articoli\s+correlati/i,
-      /altri\s+articoli/i,
-      /altro\s+sull'argomento/i,
-      /sull'argomento/i,
-      // Portuguese
-      /para\s+ler\s+completo/i,
-      /comprar\s+assinatura/i,
-      /revista\s+paga/i,
-      /já\s+sou\s+assinante/i,
-      /assinatura\s+fornecida/i,
-      /assinar/i,
-      /para\s+continuar\s+lendo/i,
-      /assine\s+para/i,
-      /para\s+continuar/i,
-      /novo\s+e\s+melhor/i,
-      /primeira\s+página/i,
-      /recomendamos/i,
-      /leia\s+também/i,
-      /artigos\s+similares/i,
-      /artigos\s+relacionados/i,
-      /outros\s+artigos/i,
-      /mais\s+sobre\s+o\s+tema/i,
-      /sobre\s+o\s+tema/i,
-      // Chinese
-      /阅读全文/i,
-      /购买订阅/i,
-      /付费杂志/i,
-      /我已经是订阅者/i,
-      /已提供订阅/i,
-      /订阅/i,
-      /继续阅读/i,
-      /订阅以/i,
-      /继续/i,
-      /最新和最佳/i,
-      /头版/i,
-      /推荐/i,
-      /也阅读/i,
-      /相似文章/i,
-      /相关文章/i,
-      /其他文章/i,
-      /更多主题/i,
-      /主题/i,
-      // Japanese
-      /全文を読む/i,
-      /購読を購入/i,
-      /有料雑誌/i,
-      /既に購読者です/i,
-      /購読が提供されました/i,
-      /購読する/i,
-      /続きを読む/i,
-      /購読して/i,
-      /続ける/i,
-      /新しくて最高/i,
-      /第一面/i,
-      /おすすめ/i,
-      /こちらも読む/i,
-      /類似記事/i,
-      /関連記事/i,
-      /その他の記事/i,
-      /トピックの詳細/i,
-      /トピック/i,
-      // Korean
-      /전체\s+읽기/i,
-      /구독\s+구매/i,
-      /유료\s+잡지/i,
-      /이미\s+구독자입니다/i,
-      /구독\s+제공됨/i,
-      /구독하기/i,
-      /계속\s+읽기/i,
-      /구독하여/i,
-      /계속/i,
-      /새로운\s+것과\s+최고/i,
-      /첫\s+페이지/i,
-      /추천/i,
-      /또한\s+읽기/i,
-      /유사한\s+기사/i,
-      /관련\s+기사/i,
-      /다른\s+기사/i,
-      /주제에\s+대해\s+더/i,
-      /주제/i
-    ]
-  };
-  var PAYWALL_PATTERNS = {
-    english: [
-      "keep reading",
-      "subscribe",
-      "sign up",
-      "try 30 days",
-      "already have an account",
-      "start free trial",
-      "get access to print and digital",
-      "subscribe for full access",
-      "free articles this month",
-      "subscribe for less than",
-      "subscribe or log in to access",
-      "connect to your subscription",
-      "you've read one",
-      "you've read your",
-      "you've reached your free"
-    ],
-    russian: [
-      "чтобы прочитать целиком",
-      "купите подписку",
-      "платный журнал",
-      "я уже подписчик",
-      "подписка предоставлена",
-      "оформить подписку",
-      "чтобы читать далее",
-      "подпишитесь чтобы",
-      "чтобы продолжить"
-    ],
-    ukrainian: [
-      "щоб прочитати цілком",
-      "купити підписку",
-      "платний журнал",
-      "я вже передплатник",
-      "підписка надана",
-      "оформити підписку",
-      "щоб читати далі",
-      "підпишіться щоб",
-      "щоб продовжити"
-    ],
-    german: [
-      "um weiterzulesen",
-      "abonnement kaufen",
-      "bezahltes magazin",
-      "ich bin bereits abonnent",
-      "abonnement bereitgestellt",
-      "abonnement abschließen",
-      "um weiter zu lesen",
-      "abonnieren um",
-      "um fortzufahren"
-    ],
-    french: [
-      "pour lire en entier",
-      "acheter un abonnement",
-      "magazine payant",
-      "je suis déjà abonné",
-      "abonnement fourni",
-      "s'abonner",
-      "pour continuer à lire",
-      "abonnez-vous pour",
-      "pour continuer"
-    ],
-    spanish: [
-      "para leer completo",
-      "comprar suscripción",
-      "revista de pago",
-      "ya soy suscriptor",
-      "suscripción proporcionada",
-      "suscribirse",
-      "para seguir leyendo",
-      "suscríbete para",
-      "para continuar"
-    ],
-    italian: [
-      "per leggere completo",
-      "acquista abbonamento",
-      "rivista a pagamento",
-      "sono già abbonato",
-      "abbonamento fornito",
-      "abbonarsi",
-      "per continuare a leggere",
-      "abbonati per",
-      "per continuare"
-    ],
-    portuguese: [
-      "para ler completo",
-      "comprar assinatura",
-      "revista paga",
-      "já sou assinante",
-      "assinatura fornecida",
-      "assinar",
-      "para continuar lendo",
-      "assine para",
-      "para continuar"
-    ],
-    chinese: [
-      "阅读全文",
-      "购买订阅",
-      "付费杂志",
-      "我已经是订阅者",
-      "已提供订阅",
-      "订阅",
-      "继续阅读",
-      "订阅以",
-      "继续"
-    ],
-    japanese: [
-      "全文を読む",
-      "購読を購入",
-      "有料雑誌",
-      "既に購読者です",
-      "購読が提供されました",
-      "購読する",
-      "続きを読む",
-      "購読して",
-      "続ける"
-    ],
-    korean: [
-      "전체 읽기",
-      "구독 구매",
-      "유료 잡지",
-      "이미 구독자입니다",
-      "구독 제공됨",
-      "구독하기",
-      "계속 읽기",
-      "구독하여",
-      "계속"
-    ]
-  };
-  var RELATED_ARTICLES_PATTERNS = {
-    english: [
-      "new and best",
-      "first page",
-      "recommend",
-      "read also",
-      "similar articles",
-      "related articles",
-      "other articles",
-      "more on topic",
-      "on topic"
-    ],
-    russian: [
-      "новое и лучшее",
-      "первая полоса",
-      "рекомендуем",
-      "читайте также",
-      "похожие статьи",
-      "связанные статьи",
-      "другие статьи",
-      "ещё по теме",
-      "по теме"
-    ],
-    ukrainian: [
-      "нове і краще",
-      "перша смуга",
-      "рекомендуємо",
-      "читайте також",
-      "схожі статті",
-      "пов'язані статті",
-      "інші статті",
-      "ще за темою",
-      "за темою"
-    ],
-    german: [
-      "neu und besser",
-      "erste seite",
-      "empfehlen",
-      "lesen sie auch",
-      "ähnliche artikel",
-      "verwandte artikel",
-      "andere artikel",
-      "mehr zum thema",
-      "zum thema"
-    ],
-    french: [
-      "nouveau et mieux",
-      "première page",
-      "recommandons",
-      "lisez aussi",
-      "articles similaires",
-      "articles connexes",
-      "autres articles",
-      "plus sur le sujet",
-      "sur le sujet"
-    ],
-    spanish: [
-      "nuevo y mejor",
-      "primera página",
-      "recomendamos",
-      "lee también",
-      "artículos similares",
-      "artículos relacionados",
-      "otros artículos",
-      "más sobre el tema",
-      "sobre el tema"
-    ],
-    italian: [
-      "nuovo e migliore",
-      "prima pagina",
-      "consigliamo",
-      "leggi anche",
-      "articoli simili",
-      "articoli correlati",
-      "altri articoli",
-      "altro sull'argomento",
-      "sull'argomento"
-    ],
-    portuguese: [
-      "novo e melhor",
-      "primeira página",
-      "recomendamos",
-      "leia também",
-      "artigos similares",
-      "artigos relacionados",
-      "outros artigos",
-      "mais sobre o tema",
-      "sobre o tema"
-    ],
-    chinese: [
-      "最新和最佳",
-      "头版",
-      "推荐",
-      "也阅读",
-      "相似文章",
-      "相关文章",
-      "其他文章",
-      "更多主题",
-      "主题"
-    ],
-    japanese: [
-      "新しくて最高",
-      "第一面",
-      "おすすめ",
-      "こちらも読む",
-      "類似記事",
-      "関連記事",
-      "その他の記事",
-      "トピックの詳細",
-      "トピック"
-    ],
-    korean: [
-      "새로운 것과 최고",
-      "첫 페이지",
-      "추천",
-      "또한 읽기",
-      "유사한 기사",
-      "관련 기사",
-      "다른 기사",
-      "주제에 대해 더",
-      "주제"
-    ]
-  };
-  var COURSE_AD_PATTERNS = [
-    "video + ux training",
-    "get video",
-    "video training",
-    "video course",
-    "measure ux & design impact",
-    "money-back-guarantee",
-    "money back guarantee",
-    "get the video course",
-    "get video + ux training",
-    "use the code",
-    "save 20%",
-    "save 20% off"
-  ];
-  var EXCLUDED_CLASSES = [
-    "nav",
-    "navigation",
-    "menu",
-    "sidebar",
-    "footer",
-    "header",
-    "ad",
-    "advertisement",
-    "ads",
-    "sponsor",
-    "sponsored",
-    "advert",
-    "comment",
-    "comments",
-    "disqus",
-    "related",
-    "related-posts",
-    "related-articles",
-    "related-articles__title",
-    "recommended",
-    "also-in",
-    "social",
-    "share",
-    "share-buttons",
-    "share-menu",
-    "author-bio",
-    "author-info",
-    "about-author",
-    "translation-notice",
-    "translation-badge",
-    "post-navigation",
-    "post-nav",
-    "prev",
-    "next",
-    "previous",
-    "read-more",
-    "readmore",
-    "keep-reading",
-    "subscribe",
-    "paywall",
-    "gate",
-    "newsletter",
-    "newsletter-signup",
-    "subscribe-box",
-    "you-might-also-like",
-    "you-may-also-like",
-    "more-in",
-    "next-article",
-    "previous-article",
-    "article-nav",
-    "comment-section",
-    "comments-section",
-    "view-comments",
-    "add-comment",
-    "book-cta",
-    "course-cta",
-    "product-cta",
-    "course-ad",
-    "product-ad",
-    "book-cta__inverted",
-    "book-cta__col",
-    "component-share-buttons",
-    "aria-font-adjusts",
-    "font-adjust",
-    // Patterns from node-unfluff not previously covered
-    "byline",
-    "dateline",
-    "timestamp",
-    "toolbar",
-    "toolbox",
-    "breadcrumb",
-    "breadcrumbs",
-    "tag-cloud",
-    "tags",
-    "tag-list",
-    "widget",
-    "widgets",
-    "promo",
-    "promotion",
-    "promotional",
-    "toc",
-    "table-of-contents",
-    "contents-nav",
-    "modal",
-    "popup",
-    "overlay",
-    "lightbox",
-    "cookie",
-    "gdpr",
-    "consent",
-    "tracking"
-  ];
-  var PAYWALL_CLASSES = [
-    "freebie-message",
-    "subscribe-text",
-    "message--freebie",
-    "subscribe-",
-    "paywall",
-    "subscription",
-    "freebie",
-    "article-limit",
-    "access-message"
-  ];
-  var LOGO_PATTERNS = [
-    "logo",
-    "brand",
-    "icon",
-    "badge",
-    "watermark",
-    "sprite",
-    "spacer",
-    "blank",
-    "clear",
-    "pixel",
-    "youtube",
-    "facebook",
-    "twitter",
-    "instagram",
-    "linkedin",
-    "pinterest",
-    "rss",
-    "social-media",
-    "social-icon",
-    "share-icon",
-    "share-button",
-    "youtube-white-logo",
-    "youtube-logo",
-    "yt-logo",
-    "facebook-logo",
-    "twitter-logo",
-    "instagram-logo",
-    "arrow",
-    "chevron",
-    "bullet",
-    "dot",
-    "bg",
-    "background",
-    "shadow",
-    "border",
-    "divider",
-    "separator",
-    "spinner",
-    "loader",
-    "loading",
-    "placeholder",
-    "default",
-    "avatar",
-    "user",
-    "profile",
-    "gravatar"
-  ];
-  var TRACKING_PATTERNS = [
-    "pixel",
-    "tracking",
-    "beacon",
-    "analytics",
-    "facebook.com/tr",
-    "doubleclick",
-    "googleads"
-  ];
-  var PLACEHOLDER_PATTERNS = [
-    "placeholder",
-    "spacer",
-    "blank",
-    "1x1",
-    "pixel.gif"
-  ];
 
   // scripts/extraction/extractor/constants.js
   var CANDIDATE_SELECTOR = "article,section,main,aside,body,h1,h2,h3,h4,h5,h6,p,img,svg,canvas,iframe,video,audio,figure,figcaption,blockquote,pre,code,ul,ol,dl,dt,dd,table,td,th,div,hr";
@@ -5961,8 +6260,9 @@ var clipaibleArticleExtractor = (() => {
   }
 
   // scripts/extraction/extractor/parse.js
+  var CODE_NON_TEXT_NODES = "svg,canvas,script,style,template,noscript";
   function collectCandidateElements(mainContent) {
-    return [mainContent, ...Array.from(mainContent.querySelectorAll("*"))].filter((element) => element.matches(CANDIDATE_SELECTOR) || visibleShadowCode(element).length);
+    return [mainContent, ...Array.from(mainContent.querySelectorAll("*"))].filter((element) => (element === mainContent || !readInlineEmoji(element)) && (element.matches(CANDIDATE_SELECTOR) || visibleShadowCode(element).length));
   }
   function isComposedLightElement(element) {
     for (let node = element; node.parentElement; node = node.parentElement) {
@@ -5980,7 +6280,7 @@ var clipaibleArticleExtractor = (() => {
     const slotted = [];
     const read = (node) => {
       if (node.nodeType === 3) return node.textContent || "";
-      if (node.nodeType !== 1 || node.matches('script,style,template,noscript,button,[role~="button"],[aria-hidden="true"],[hidden],[inert]') || isSourceExcluded(node, exclusions)) return "";
+      if (node.nodeType !== 1 || node.matches(CODE_NON_TEXT_NODES + ',button,[role~="button"],[aria-hidden="true"],[hidden],[inert]') || isSourceExcluded(node, exclusions)) return "";
       const style = safeGetComputedStyle(win, node);
       if (style?.display === "none" || ["hidden", "collapse"].includes(style?.visibility)) return "";
       if (node.tagName === "BR") return "\n";
@@ -6005,12 +6305,17 @@ var clipaibleArticleExtractor = (() => {
     }));
   }
   function filterCandidateElements(win, allElements, constants, debugInfo, readingRoots = [], tocRoots = [], selectedIllustrations = /* @__PURE__ */ new Map()) {
+    if (!allElements.length) return [];
+    const batch = {
+      controlLabelIds: readControlLabelIds(win.document),
+      exclusionRules: compileClassExclusions(constants.EXCLUDED_CLASSES)
+    };
     let excludedImageCount = 0;
     let excludedByType = {};
     const filteredElements = allElements.filter((el) => {
       const tagName = el.tagName.toLowerCase();
       const isImageOrFigure = tagName === "img" || tagName === "figure";
-      if (!isComposedLightElement(el) || isExcluded(win, el, constants, readingRoots, tocRoots, selectedIllustrations.has(el))) {
+      if (!isComposedLightElement(el) || isExcluded(win, el, constants, readingRoots, tocRoots, selectedIllustrations.has(el), batch)) {
         if (isImageOrFigure) {
           excludedImageCount++;
         } else excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
@@ -6102,7 +6407,7 @@ var clipaibleArticleExtractor = (() => {
         for (const child of Array.from(element.querySelectorAll("*"))) visited.add(child);
         return;
       }
-      const blockDescendants = Array.from(element.querySelectorAll(blockSelector)).filter((child) => !child.matches("svg,canvas") || graphics.has(child));
+      const blockDescendants = Array.from(element.querySelectorAll(blockSelector)).filter((child) => !readInlineEmoji(child) && (!child.matches("svg,canvas") || graphics.has(child)));
       const descendants = [.../* @__PURE__ */ new Set([
         ...blockDescendants,
         ...shadowHosts.filter((host) => host !== element && element.contains(host)),
@@ -6187,7 +6492,9 @@ var clipaibleArticleExtractor = (() => {
       if (state.captionOwners.has(container || element)) continue;
       const tagName = element.tagName.toLowerCase();
       const selectedTitle = element === state.selectedTitleElement && (/^h[1-6]$/.test(tagName) || isFlowContainer(element) && !element.querySelector(CANDIDATE_SELECTOR));
-      const declaredHeadline = tagName === "h1" && (element.matches('[itemprop~="headline"],[data-type="document-title"]') || Array.from(element.classList).some((name) => /(?:^|[-_])(?:page|article|post|entry)[-_](?:title|headline)$/i.test(name)));
+      const header = tagName === "h1" && element.closest('header,[class*="__header"]');
+      const leadingHeader = header && !header.previousElementSibling && header.parentElement.matches('article,[role~="article"]');
+      const declaredHeadline = tagName === "h1" && (element.matches('[itemprop~="headline"],[data-type="document-title"]') || leadingHeader || Array.from(element.classList).some((name) => /(?:^|[-_])(?:page|article|post|entry)[-_](?:title|headline)$/i.test(name)));
       const inferredTitle = tagName === "h1" && element === state.titleElement && (declaredHeadline && isDocumentHeadline(element) || content.every((item) => item.type === "subtitle" || item.type === "separator" || item.isStandfirst || item.isFeatured || item.type === "paragraph" && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || "")));
       if (selectedTitle || inferredTitle) {
         for (const child of Array.from(element.querySelectorAll("*"))) consumed.add(child);
@@ -6551,6 +6858,8 @@ var clipaibleArticleExtractor = (() => {
     };
   }
   function handleImg(win, element, state, constants, baseUrl) {
+    const emoji = readInlineEmoji(element);
+    if (emoji) return { type: "paragraph", text: emoji, format: "text", ...element.id ? { id: element.id } : {} };
     const item = createImageItem(win, element, state, constants, baseUrl);
     if (item && !element.closest("figure")) item.caption = getImageCaption(
       /** @type {HTMLImageElement} */
@@ -6595,21 +6904,17 @@ var clipaibleArticleExtractor = (() => {
   }
   function handleCode(element, composedText = null) {
     let text = composedText;
-    if (text === null && element.tagName === "PRE") {
-      const clone = element.cloneNode(true);
-      const brs = (
-        /** @type {HTMLElement} */
-        clone.querySelectorAll("br")
+    if (text === null) {
+      const clone = (
+        /** @type {Element} */
+        element.cloneNode(true)
       );
-      for (const br of Array.from(brs)) {
-        br.replaceWith("\n");
-      }
-      text = /** @type {HTMLElement} */
-      clone.textContent || "";
-    } else if (text === null) {
-      text = (element.textContent || "").trim();
+      for (const auxiliary of Array.from(clone.querySelectorAll(CODE_NON_TEXT_NODES))) auxiliary.remove();
+      for (const lineBreak of Array.from(clone.querySelectorAll("br"))) lineBreak.replaceWith("\n");
+      text = clone.textContent || "";
+      if (element.tagName !== "PRE") text = text.trim();
     }
-    if (!text) return null;
+    if (!text.trim()) return null;
     const className = element.className || "";
     const languageMatch = className.match(/(?:^|\s)(?:language-|brush:\s*)([\w+-]+)/);
     const language = languageMatch ? languageMatch[1] : "";
@@ -7027,7 +7332,7 @@ var clipaibleArticleExtractor = (() => {
         const selectedHeroes = selectorValues(selectors?.heroImage).flatMap((selector) => Array.from(doc.querySelectorAll(selector)));
         const media = discoverReadingMedia(bodyRoots, selectedHeroes);
         const selectedSubtitle = selectorValues(selectors?.subtitle).flatMap((selector) => Array.from(doc.querySelectorAll(selector))).find((element) => !isSelectedContentExcluded(element, selection.exclusions));
-        const standfirst = selection ? { element: selectedSubtitle || null, text: selectedSubtitle ? readArticleMetadataText(selectedSubtitle) : null } : extractStandfirst(mainContent);
+        const standfirst = selection ? { element: selectedSubtitle || null, text: selectedSubtitle ? readArticleMetadataText(selectedSubtitle) : null } : extractStandfirst(mainContent, titleElement);
         const readingRoots = [.../* @__PURE__ */ new Set([...bodyRoots, ...media.roots, ...standfirst.element ? [standfirst.element] : []])];
         const recommendationRegions = bodyRoots.flatMap(findRecommendationRegions);
         const publisherIgnores = bodyRoots.flatMap((root) => Array.from(root.querySelectorAll(".instapaper_body .instapaper_ignore")));

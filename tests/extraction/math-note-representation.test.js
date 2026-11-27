@@ -97,6 +97,32 @@ describe('Portable semantic math representation', () => {
     expect(output).toContain('$y = 12$');
     expect(document.body.innerHTML).toBe(before);
   });
+  it('keeps server-rendered CommonHTML notation in its paragraph and preserves a fraction', async () => {
+    const token = (kind, text) => `<span class="mjx-${kind}" style="display:block"><span class="mjx-char" style="display:block">${text}</span></span>`;
+    const fraction = '<span class="mjx-mfrac"><span class="mjx-box"><span class="mjx-numerator">' +
+      token('mn', '5') + '</span><span class="mjx-denominator">' + token('mn', '7') +
+      '</span><span class="mjx-line"></span></span></span>';
+    const renderer = '<span class="mjx-chtml"><span class="mjx-math"><span class="mjx-mrow" aria-hidden="true">' +
+      token('mi', 'rate') + token('mo', '=') + fraction +
+      '</span></span><style>.mjx-mn { color: red; }</style></span>';
+    const dom = page('<p>The measured value is ' + renderer + ' in the second series.</p>');
+    const run = dom.window.eval(extractor.replace('export async function', 'async function') + '\nextractAutomaticallyInlined;');
+    const result = await run(dom.window.location.href, false, { content: 'article', title: 'h1' });
+    const item = result.content.find(item => item.type === 'paragraph');
+    expect(item.html).toBe('The measured value is <span class="math">rate=(5)/(7)</span> in the second series.');
+    expect(documentMarkdown(item)).toBe('The measured value is rate=(5)/(7) in the second series.');
+  });
+
+  it('retains the CommonHTML accessibility source as one expression when layout cannot be represented', () => {
+    const dom = page('<p>Measured ' +
+      '<span class="mjx-chtml"><span class="mjx-math" aria-label="v_3"><span class="mjx-msub" style="display:block">v3</span></span></span>' +
+      ' and <span aria-label="ordinary annotation">recorded</span>.</p>');
+    const actual = serializeReadingHtml(dom.window.document.querySelector('p'));
+    expect(actual).toContain('Measured  $v_3$  and');
+    expect(actual).not.toMatch(/v3|<br/);
+    expect(actual).toContain('>recorded</span>.');
+  });
+
   it('keeps powers, grouped bases, variables and indices with semantic inline markup', () => {
     const dom = page(`<p>${formula('<msup><mn>3</mn><mi>k</mi></msup><mo>+</mo><mo>(</mo><mn>1</mn><mo>/</mo><mn>3</mn><msup><mo>)</mo><mi>k</mi></msup><mo>+</mo><msub><mi>x</mi><mi>i</mi></msub>')}</p>`);
     const p = dom.window.document.querySelector('p');

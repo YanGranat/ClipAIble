@@ -206,6 +206,40 @@ export function isCollapsedImageLayer(img) {
     safeGetComputedStyle(win, sibling)?.position === style.position);
 }
 
+/** A decoded, full-size replacement can cover an unlabeled inline image preview. */
+function isCoveredImagePreview(win, img, source, width, height) {
+  if (!img.complete || !/^data:image\/(?:jpeg|png|webp);/i.test(source) ||
+      !width || !height || Math.max(width, height) > 96 ||
+      img.getAttribute('alt')?.trim() !== '' || img.title || img.closest('a[href]') ||
+      img.hasAttribute('aria-label') || img.hasAttribute('aria-labelledby')) return false;
+  const style = safeGetComputedStyle(win, img);
+  const holder = img.parentElement;
+  if (!holder || !style?.filter?.includes('blur(')) return false;
+  const preview = img.getBoundingClientRect();
+  if (preview.width <= width || preview.height <= height) return false;
+  const bounds = holder.getBoundingClientRect();
+  const holderStyle = safeGetComputedStyle(win, holder);
+  const clips = value => ['hidden', 'clip'].includes(value);
+  const left = clips(holderStyle?.overflowX) ? Math.max(preview.left, bounds.left) : preview.left;
+  const right = clips(holderStyle?.overflowX) ? Math.min(preview.right, bounds.right) : preview.right;
+  const top = clips(holderStyle?.overflowY) ? Math.max(preview.top, bounds.top) : preview.top;
+  const bottom = clips(holderStyle?.overflowY) ? Math.min(preview.bottom, bounds.bottom) : preview.bottom;
+  for (let sibling = img.nextElementSibling; sibling; sibling = sibling.nextElementSibling) {
+    if (!sibling.matches('img,picture')) continue;
+    const replacement = /** @type {HTMLImageElement|null} */ (sibling.matches('img') ? sibling : sibling.querySelector('img'));
+    if (!replacement?.complete || replacement.naturalWidth < width * 3 || replacement.naturalHeight < height * 3) continue;
+    const placement = safeGetComputedStyle(win, sibling);
+    const appearance = sibling === replacement ? placement : safeGetComputedStyle(win, replacement);
+    if (placement?.position !== 'absolute' || placement.visibility !== 'visible' ||
+        (placement.opacity && Number(placement.opacity) < 1) || appearance?.visibility !== 'visible' ||
+        (appearance.opacity && Number(appearance.opacity) < 1) ||
+        (Number(placement.zIndex) || 0) < (Number(style.zIndex) || 0)) continue;
+    const layer = replacement.getBoundingClientRect();
+    if (layer.left <= left && layer.top <= top && layer.right >= right && layer.bottom >= bottom) return true;
+  }
+  return false;
+}
+
 /**
  * Check if image is tracking pixel
  * @param {Window} win - Window object
@@ -259,6 +293,7 @@ export function isDecorativeImage(win, img, logoPatterns) {
   const naturalHeight = naturalSize.height || (naturalSize.matchesSource ? img.height : Number(img.getAttribute('height'))) || 0;
 
   if (img.getAttribute('role') === 'separator') return true;
+  if (isCoveredImagePreview(win, img, src, naturalSize.width, naturalSize.height)) return true;
   if (naturalWidth > 0 && naturalHeight > 0 &&
       ((naturalWidth > 3 && naturalHeight <= 3) || (naturalHeight > 3 && naturalWidth <= 3))) {
     return true;

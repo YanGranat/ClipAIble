@@ -328,6 +328,28 @@ describe('generation/html-builder', () => {
       expect(html).toContain('Image caption text');
     });
 
+    it('keeps graphic descriptions as alternative text and authored captions as visible text', () => {
+      const content = [
+        { type: 'image', isGraphic: true, src: 'https://example.test/chart.png', alt: 'East station, west station' },
+        { type: 'image', isGraphic: true, src: 'https://example.test/map.png', alt: 'Shore line', caption: 'Figure 2. Location of samples.' }
+      ];
+      const html = buildHtmlForPdf(content, 'Measurements', '', '<style></style>', '', '', 'en');
+      expect(html).toContain('alt="East station, west station"');
+      expect(html).toContain('alt="Shore line"');
+      expect(html.match(/<figcaption>/g)).toHaveLength(1);
+      expect(html).toContain('<figcaption>Figure 2. Location of samples.</figcaption>');
+    });
+
+    it('does not render an image alternative repeating the document title as a caption', () => {
+      const html = buildHtmlForPdf([
+        { type: 'image', src: 'https://example.test/overview.png', alt: 'Sample measurements' },
+        { type: 'image', src: 'https://example.test/detail.png', alt: 'Sample measurements', caption: 'Measured values at station A.' }
+      ], 'Sample measurements', '', '<style></style>');
+      expect(html.match(/alt="Sample measurements"/g)).toHaveLength(2);
+      expect(html.match(/<figcaption>/g)).toHaveLength(1);
+      expect(html).toContain('<figcaption>Measured values at station A.</figcaption>');
+    });
+
     it('should use localization for different languages', () => {
       const htmlEn = buildHtmlForPdf(
         baseContent,

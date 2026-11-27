@@ -32,6 +32,7 @@ import { sendTTSResponse } from './response.js';
  * @param {string|null} [data.options.voice] - Voice ID or name
  * @param {number} [data.options.speed] - Synthesis speed
  * @param {string} [data.processingRunId] - Captured operation identity
+ * @param {import('../../types.js').PiperProgress} [data.piperProgress] - Overall synthesis position
  * @param {boolean} [data.hasUnlimitedStorage] - Has unlimited storage
  * @param {function(Object): void} sendResponse - Response function
  * @param {TTSContext} context - TTS context with helper functions
@@ -137,6 +138,7 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
       text: sanitizedText,
       speed: options.speed ?? 1,
       processingRunId: data.processingRunId,
+      piperProgress: data.piperProgress,
       voiceId: downloadedVoiceId,
       langCode,
       messageId,

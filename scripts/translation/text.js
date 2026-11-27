@@ -164,7 +164,14 @@ function parseBatch(content, texts) {
     if (keys.length !== texts.length || keys.some(key => !/^(0|[1-9]\d*)$/.test(key) || Number(key) >= texts.length)) throw invalidTranslation();
     translations = texts.map((_, index) => values[String(index)]);
   } else throw invalidTranslation();
-  return texts.map((original, index) => translateResult(translations[index], original));
+  return translations;
+}
+
+async function requestTranslationBatch(texts, targetLang, apiKey, model, options) {
+  const prompt = renderPrompt('translateBatch', options, { targetLanguage: targetLang, endIndex: texts.length - 1, unchangedMarker: NO_TRANSLATION_MARKER });
+  const content = await requestTranslation(prompt, 'Translate to ' + targetLang + ':\n' + JSON.stringify(texts.map(cleanTranslationHtml)), apiKey, model, options, { batch: true });
+  await checkActive(options);
+  return parseBatch(content, texts);
 }
 
 export async function translateBatch(texts, targetLang, apiKey, model, options = {}) {
@@ -172,10 +179,8 @@ export async function translateBatch(texts, targetLang, apiKey, model, options =
   if (!Array.isArray(texts) || texts.some(text => typeof text !== 'string')) throw invalidTranslation();
   if (!texts.length) return [];
   if (texts.length === 1) return [await translateText(texts[0], targetLang, apiKey, model, options)];
-  const prompt = renderPrompt('translateBatch', options, { targetLanguage: targetLang, endIndex: texts.length - 1, unchangedMarker: NO_TRANSLATION_MARKER });
-  const content = await requestTranslation(prompt, 'Translate to ' + targetLang + ':\n' + JSON.stringify(texts.map(cleanTranslationHtml)), apiKey, model, options, { batch: true });
-  await checkActive(options);
-  return parseBatch(content, texts);
+  const slots = await requestTranslationBatch(texts, targetLang, apiKey, model, options);
+  return texts.map((original, index) => translateResult(slots[index], original));
 }
 
 function copyContentItem(item) {
@@ -186,6 +191,33 @@ function copyContentItem(item) {
   if (Array.isArray(item.layoutRows)) copy.layoutRows = item.layoutRows.map(row => ({ ...row,
     cells: Array.isArray(row?.cells) ? row.cells.map(cell => ({ ...cell })) : row?.cells }));
   return copy;
+}
+
+/** Recover malformed batches while preserving the indexed mapping and source order. */
+async function translateWithSubdivision(texts, language, apiKey, model, options, remainingSplits = 2) {
+  if (texts.length === 1) return [await translateText(texts[0], language, apiKey, model, options)];
+  let slots;
+  let missing;
+  try {
+    slots = await requestTranslationBatch(texts, language, apiKey, model, options);
+    missing = texts.map((_, index) => index).filter(index => typeof slots[index] !== 'string' || !slots[index].trim());
+    if (missing.length > 1) throw invalidTranslation();
+  } catch (error) {
+    if (error.code !== 'AI_TRANSLATION_INVALID') throw error;
+    if (remainingSplits === 0) {
+      if (texts.length > 4) throw error;
+      const translated = [];
+      for (const text of texts) translated.push(await translateText(text, language, apiKey, model, options));
+      return translated;
+    }
+    const midpoint = Math.ceil(texts.length / 2);
+    const first = await translateWithSubdivision(texts.slice(0, midpoint), language, apiKey, model, options, remainingSplits - 1);
+    const second = await translateWithSubdivision(texts.slice(midpoint), language, apiKey, model, options, remainingSplits - 1);
+    return [...first, ...second];
+  }
+  const [index] = missing;
+  const recovered = index === undefined ? null : await translateText(texts[index], language, apiKey, model, options);
+  return texts.map((original, slot) => slot === index ? recovered : translateResult(slots[slot], original));
 }
 
 /** Publish a translated result only after every requested field has succeeded. */
@@ -253,18 +285,7 @@ export async function translateContent(original, targetLang, apiKey, model, upda
   for (const current of chunks) {
     await checkActive(options);
     await progress('statusTranslatingText', 20 + Math.floor(completed / total * 40));
-    const texts = current.map(field => field.text);
-    let translated;
-    try {
-      translated = await translateBatch(texts, language, apiKey, model, options);
-    } catch (error) {
-      if (error.code !== 'AI_TRANSLATION_INVALID' || texts.length < 2) throw error;
-      await checkActive(options);
-      const midpoint = Math.ceil(texts.length / 2);
-      const first = await translateBatch(texts.slice(0, midpoint), language, apiKey, model, options);
-      const second = await translateBatch(texts.slice(midpoint), language, apiKey, model, options);
-      translated = [...first, ...second];
-    }
+    const translated = await translateWithSubdivision(current.map(field => field.text), language, apiKey, model, options);
     await checkActive(options);
     for (let index = 0; index < current.length; index++) {
       const field = current[index];

@@ -590,7 +590,8 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
       };
       
       const captionText = item.caption || '';
-      const caption = (captionText && !isGenericCaption(captionText)) ? sanitizeHtmlForXhtml(captionText, sourceUrl, isNativePdfContent(item)) : '';
+      const literal = item.format === 'text' || isNativePdfContent(item);
+      const caption = (captionText && !isGenericCaption(captionText)) ? sanitizeHtmlForXhtml(captionText, sourceUrl, literal) : '';
       if (!src) return '';
 
       let figureHtml = `    <figure${idAttr}><img src="${escapeXml(src)}" alt="${alt}"/>`;
@@ -634,7 +635,7 @@ function sanitizeHtmlForXhtml(html, sourceUrl = '', plainText = false) {
   if (plainText) return escapeXml(html);
   let result = normalizeXmlCharacters(html);
   const hasMarkdown = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s\n]+\*|_[^_\s\n]+_|`[^`]+`|\[[^\]]+\]\([^)]+\)|~~[^~]+~~)/.test(result);
-  if (hasMarkdown) result = markdownToHtml(result);
+  if (hasMarkdown && !/<[a-z][^>]*>/i.test(result)) result = markdownToHtml(result, sourceUrl);
   result = sanitizeHtml(protectXmlLiteralText(result), sourceUrl);
   result = result.replace(/\s*style\s*=\s*["'][^"']*color\s*:[^"']*["']/gi, '');
   result = result.replace(/\s*style\s*=\s*["']\s*["']/gi, '');

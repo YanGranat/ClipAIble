@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
+import { toSvg } from 'html-to-image';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 import { captureReadingGraphics, getGraphicReadingOwner } from '../../scripts/extraction/extractor/graphics.js';
 import { parseElements } from '../../scripts/extraction/extractor/parse.js';
+
+vi.mock('html-to-image', { spy: true });
 
 const windows = [];
 function page(markup) {
@@ -12,6 +15,23 @@ function page(markup) {
   return { win, doc, root, owner: selector => getGraphicReadingOwner(doc.querySelector(selector), [root]) };
 }
 afterEach(() => windows.splice(0).forEach(win => win.close()));
+
+function fakeRasterWindow(win) {
+  const computedStyle = win.getComputedStyle.bind(win);
+  win.getComputedStyle = element => computedStyle(element);
+  win.DOMMatrix = class { a = 1; b = 0; c = 0; d = 1; is2D = true; };
+  win.Image = class {
+    naturalWidth = 100;
+    naturalHeight = 80;
+    set src(_) { queueMicrotask(() => this.onload()); }
+  };
+  win.HTMLCanvasElement.prototype.getContext = () => ({ fillRect() {}, drawImage() {} });
+  win.HTMLCanvasElement.prototype.toDataURL = () => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII=';
+}
+
+function position(node, left, top, right, bottom) {
+  node.getBoundingClientRect = () => ({ left, top, right, bottom, width: right-left, height: bottom-top });
+}
 
 function layeredFigure(extra = '') {
   const { win, doc, root } = page(`<p>Read the observations below for an independent comparison.</p>
@@ -46,6 +66,19 @@ describe('Reading graphic ownership', () => {
     const { owner } = page('<span class="MathJax"><svg role="img"><title>x squared</title></svg></span><code><svg role="img"><title>Literal example</title></svg></code>');
     expect(owner('.MathJax svg')).toBeNull();
     expect(owner('code svg')).toBeNull();
+  });
+  it('renders an illustrated code block as a graphic and retains literal markup in nearby examples', () => {
+    const { win, doc, root, owner } = page('<pre> <svg viewBox="0 0 100 40"><style>.path{fill:black}</style>' +
+      '<text x="12" y="28">Observation</text></svg> </pre>' +
+      '<pre><code>&lt;svg&gt;<br>&lt;style&gt;literal declaration&lt;/style&gt;</code></pre>');
+    const graphic = doc.querySelector('svg');
+    expect(owner('svg')).toBe(graphic);
+    const state = { referenceRoots: [root], processedImages: new Set(), addedHeadings: new Set(),
+      readingGraphics: new Map([[graphic, { type: 'image', src: 'data:image/png;base64,AA==', alt: 'Observation' }]]) };
+    const elements = [...root.querySelectorAll('pre,svg,code')];
+    const items = parseElements(win, elements, state, CONSTANTS, doc.URL);
+    expect(items.map(item => item.type)).toEqual(['image', 'code']);
+    expect(items[1].text).toBe('<svg>\n<style>literal declaration</style>');
   });
   it('owns the complete compound figure including visible aria-hidden edges', () => {
     const { doc, owner } = page('<figure aria-label="Observation flow"><svg aria-hidden="true"><path/></svg><div>Stage one</div><figcaption>Observed sequence.</figcaption></figure>');
@@ -245,5 +278,42 @@ describe('Reading graphic ownership', () => {
       });
     await expect(captureReadingGraphics(win, elements, state, CONSTANTS)).rejects.toMatchObject({ code: 'GRAPHIC_CAPTURE_FAILED' });
     expect(state.originalImageLayers).toBeUndefined();
+  });
+
+  it.each([
+    ['data-chart-src', true], ['src', false], ['href', false], ['xlink:href', false],
+  ])('distinguishes resource references from inert %s metadata in serialized graphics', async (attribute, allowed) => {
+    const { win, doc, root } = page('<svg role="img" aria-label="Sample chart" style="display:block;width:100px;height:80px"><path d="M0 0L50 70"/></svg>');
+    const svg = doc.querySelector('svg');
+    position(svg,0,0,100,80);
+    fakeRasterWindow(win);
+    const serialized = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ${attribute}="https://assets.example.test/reference"><path d="M0 0L50 70"/></svg>`;
+    vi.mocked(toSvg).mockResolvedValueOnce('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(serialized));
+    const capture = captureReadingGraphics(win, [svg], { referenceRoots: [root] }, CONSTANTS);
+    if (allowed) expect((await capture).get(svg)).toMatchObject({ type: 'image', alt: 'Sample chart' });
+    else await expect(capture).rejects.toMatchObject({ code: 'GRAPHIC_CAPTURE_FAILED' });
+  });
+
+  it('uses painted bounds through nested clip axes and still includes visible overflow', async () => {
+    const { win, doc, root } = page('<figure style="width:200px;height:100px">' +
+      '<svg><path d="M0 0L50 70"/></svg>' +
+      '<div id="viewport" style="overflow-y:auto"><div id="column" style="overflow-x:hidden"><span id="tall">Scrollable labels</span></div></div>' +
+      '<div id="proxy" style="position:fixed;clip:rect(0px, 0px, 0px, 0px);clip-path:inset(50%)">Invisible selector proxy</div>' +
+      '<div id="annotation" style="overflow:visible">Measure</div></figure>');
+    const figure = doc.querySelector('figure');
+    position(figure,0,0,200,100);
+    position(doc.querySelector('svg'),0,0,200,100);
+    position(doc.querySelector('#viewport'),0,0,72,100);
+    position(doc.querySelector('#column'),0,0,70,9700);
+    position(doc.querySelector('#tall'),0,10,5000,9500);
+    position(doc.querySelector('#proxy'),-1,-3400,0,-3399);
+    position(doc.querySelector('#annotation'),-30,104,230,120);
+    fakeRasterWindow(win);
+    const serialized = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L50 70"/></svg>';
+    vi.mocked(toSvg).mockResolvedValueOnce('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(serialized));
+    const content = await captureReadingGraphics(win, [figure], { referenceRoots: [root] }, CONSTANTS);
+    expect(content.get(figure)).toMatchObject({ type: 'image' });
+    expect(content.get(figure).alt).not.toContain('Invisible selector proxy');
+    expect(toSvg).toHaveBeenLastCalledWith(expect.anything(),expect.objectContaining({ width:260, height:120 }));
   });
 });

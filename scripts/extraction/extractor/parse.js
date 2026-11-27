@@ -2,9 +2,9 @@
 // Main DOM parser for extraction
 // Converts DOM elements to content items
 
-import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneReadingContent, getDocumentFragmentTarget, readArticleMetadataText, readSourceFragmentIds, safeGetComputedStyle, isElementVisible, isSourceExcluded, INTERFACE_REGIONS } from './dom-utils.js';
+import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneReadingContent, getDocumentFragmentTarget, readArticleMetadataText, readSourceFragmentIds, safeGetComputedStyle, isElementVisible, isSourceExcluded, INTERFACE_REGIONS, readInlineEmoji } from './dom-utils.js';
 import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isRealHeading } from './text-utils.js';
-import { isIcon, isExcluded, isNavigationParagraph, shouldSkipStronglyExcluded, isSubscriptionFormContent, semanticClassNames } from './filters.js';
+import { compileClassExclusions, isIcon, isExcluded, isNavigationParagraph, readControlLabelIds, shouldSkipStronglyExcluded, isSubscriptionFormContent, semanticClassNames } from './filters.js';
 import { extractBestImageUrl, isCollapsedImageLayer, isTrackingPixel, isDecorativeImage, getImageCaption, getEmbeddedMediaItems } from './images.js';
 import { getOriginalTextIfTranslated } from './translate.js';
 import { pushDebugLog, incrementContentType } from './debug.js';
@@ -13,6 +13,8 @@ import { CANDIDATE_SELECTOR } from './constants.js';
 import { isDocumentHeadline, isReadingOwned, isLayoutTable, isFlowContainer, isReferencedReadingAside } from './reading-context.js';
 import { collectAnnotationTargets, emittedReadingIds, reuseAnnotationCitations } from './annotations.js';
 import { projectAtomicMedia } from './atomic-media.js';
+
+const CODE_NON_TEXT_NODES = 'svg,canvas,script,style,template,noscript';
 
 /**
  * Candidate element selector
@@ -31,7 +33,8 @@ import { projectAtomicMedia } from './atomic-media.js';
  */
 export function collectCandidateElements(mainContent) {
   return [mainContent, ...Array.from(mainContent.querySelectorAll('*'))]
-    .filter(element => element.matches(CANDIDATE_SELECTOR) || visibleShadowCode(element).length);
+    .filter(element => (element === mainContent || !readInlineEmoji(element)) &&
+      (element.matches(CANDIDATE_SELECTOR) || visibleShadowCode(element).length));
 }
 
 /** Light children of an open component participate only through an assigned slot. */
@@ -57,7 +60,7 @@ function readShadowCode(pre, exclusions) {
   const slotted = [];
   const read = node => {
     if (node.nodeType === 3) return node.textContent || '';
-    if (node.nodeType !== 1 || node.matches('script,style,template,noscript,button,[role~="button"],[aria-hidden="true"],[hidden],[inert]') ||
+    if (node.nodeType !== 1 || node.matches(CODE_NON_TEXT_NODES + ',button,[role~="button"],[aria-hidden="true"],[hidden],[inert]') ||
         isSourceExcluded(node, exclusions)) return '';
     const style = safeGetComputedStyle(win, node);
     if (style?.display === 'none' || ['hidden', 'collapse'].includes(style?.visibility)) return '';
@@ -100,6 +103,11 @@ export function collectExplicitFlowRoots(roots) {
  * @returns {Element[]} - Filtered elements
  */
 export function filterCandidateElements(win, allElements, constants, debugInfo, readingRoots = [], tocRoots = [], selectedIllustrations = new Map()) {
+  if (!allElements.length) return [];
+  const batch = {
+    controlLabelIds: readControlLabelIds(win.document),
+    exclusionRules: compileClassExclusions(constants.EXCLUDED_CLASSES)
+  };
   let excludedImageCount = 0;
   let excludedByType = {};
   
@@ -107,7 +115,7 @@ export function filterCandidateElements(win, allElements, constants, debugInfo, 
     const tagName = el.tagName.toLowerCase();
     const isImageOrFigure = tagName === 'img' || tagName === 'figure';
     
-    if (!isComposedLightElement(el) || isExcluded(win, el, constants, readingRoots, tocRoots, selectedIllustrations.has(el))) {
+    if (!isComposedLightElement(el) || isExcluded(win, el, constants, readingRoots, tocRoots, selectedIllustrations.has(el), batch)) {
       if (isImageOrFigure) {
         excludedImageCount++;
         // Debug log for excluded images/figures
@@ -219,7 +227,7 @@ export function partitionCandidateElements(elements, graphics = new Map(), readi
       return;
     }
     const blockDescendants = Array.from(element.querySelectorAll(blockSelector)).filter(child =>
-      !child.matches('svg,canvas') || graphics.has(child));
+      !readInlineEmoji(child) && (!child.matches('svg,canvas') || graphics.has(child)));
     const descendants = [...new Set([...blockDescendants, ...shadowHosts.filter(host => host !== element && element.contains(host)),
       ...readingBoundaries.filter(child => child !== element && element.contains(child))])].sort(compareDomOrder);
     const originalText = element.getAttribute('data-original-text');
@@ -316,8 +324,11 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
     const selectedTitle = element === state.selectedTitleElement && (/^h[1-6]$/.test(tagName) ||
       isFlowContainer(element) && !element.querySelector(CANDIDATE_SELECTOR));
     // A matching H1 after authored material is a body heading unless the page declares its headline role.
+    const header = tagName === 'h1' && element.closest('header,[class*="__header"]');
+    const leadingHeader = header && !header.previousElementSibling &&
+      header.parentElement.matches('article,[role~="article"]');
     const declaredHeadline = tagName === 'h1' && (element.matches('[itemprop~="headline"],[data-type="document-title"]') ||
-      Array.from(element.classList).some(name => /(?:^|[-_])(?:page|article|post|entry)[-_](?:title|headline)$/i.test(name)));
+      leadingHeader || Array.from(element.classList).some(name => /(?:^|[-_])(?:page|article|post|entry)[-_](?:title|headline)$/i.test(name)));
     const inferredTitle = tagName === 'h1' && element === state.titleElement && ((declaredHeadline && isDocumentHeadline(element)) || content.every(item =>
       item.type === 'subtitle' || item.type === 'separator' || item.isStandfirst || item.isFeatured ||
       item.type === 'paragraph' && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || '')));
@@ -765,6 +776,8 @@ export function handleParagraph(win, element, state, constants) {
  * @returns {ContentItem|null} - Content item or null
  */
 export function handleImg(win, element, state, constants, baseUrl) {
+  const emoji = readInlineEmoji(element);
+  if (emoji) return { type: 'paragraph', text: emoji, format: 'text', ...(element.id ? { id: element.id } : {}) };
   const item = createImageItem(win, element, state, constants, baseUrl);
   if (item && !element.closest('figure')) item.caption = getImageCaption(/** @type {HTMLImageElement} */ (element), state.captionOwners, state.selectionExclusions, state.selectedIllustrations?.get(element));
   return item;
@@ -821,20 +834,15 @@ export function handleBlockquote(element, excludedSelectors = [], referenceRoots
  */
 export function handleCode(element, composedText = null) {
   let text = composedText;
-
-  if (text === null && element.tagName === 'PRE') {
-    // Replace <br> with newlines
-    const clone = element.cloneNode(true);
-    const brs = (/** @type {HTMLElement} */ (clone)).querySelectorAll('br');
-    for (const br of Array.from(brs)) {
-      br.replaceWith('\n');
-    }
-    text = (/** @type {HTMLElement} */ (clone)).textContent || '';
-  } else if (text === null) {
-    text = (element.textContent || '').trim();
+  if (text === null) {
+    const clone = /** @type {Element} */ (element.cloneNode(true));
+    for (const auxiliary of Array.from(clone.querySelectorAll(CODE_NON_TEXT_NODES))) auxiliary.remove();
+    for (const lineBreak of Array.from(clone.querySelectorAll('br'))) lineBreak.replaceWith('\n');
+    text = clone.textContent || '';
+    if (element.tagName !== 'PRE') text = text.trim();
   }
-  
-  if (!text) return null;
+
+  if (!text.trim()) return null;
   
   // Try to detect language from class
   const className = element.className || '';

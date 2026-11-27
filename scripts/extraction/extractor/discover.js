@@ -2,8 +2,8 @@
 // Content discovery functions for extraction
 // Finds the main content container using multiple strategies
 
-import { safeGetComputedStyle, INTERFACE_REGIONS } from './dom-utils.js';
-import { EDITORIAL_CONTAINERS, isEditorialOwner, isDocumentHeadline, linkedArticlePreview } from './reading-context.js';
+import { getDocumentFragmentTarget, readArticleMetadataText, safeGetComputedStyle, INTERFACE_REGIONS } from './dom-utils.js';
+import { DOCUMENT_CONTENTS, EDITORIAL_CONTAINERS, isEditorialOwner, isDocumentHeadline, linkedArticlePreview } from './reading-context.js';
 
 /**
  * Recognize a captioned illustration embedded in an article's prose body.
@@ -374,6 +374,52 @@ export function hasSubstantialContent(element) {
   return text.length > 100 && (paragraphs.length >= 1 || text.length > 300);
 }
 
+/** Find documents whose table of contents spans separately wrapped chapters. */
+function findContentsDocument(doc, isExcluded) {
+  const title = doc.title.trim().toLowerCase();
+  const headlines = Array.from(doc.querySelectorAll('h1')).filter(heading => {
+    if (heading.closest(INTERFACE_REGIONS)) return false;
+    const label = readArticleMetadataText(heading).trim().toLowerCase();
+    return isDocumentHeadline(heading) || (label.length > 0 && (title.endsWith(': ' + label) || title.startsWith(label + ' ')));
+  });
+  if (!headlines.length) return null;
+
+  for (const contents of doc.querySelectorAll(DOCUMENT_CONTENTS)) {
+    const destinations = new Set();
+    for (const link of contents.querySelectorAll('a[href*="#"]')) {
+      const target = getDocumentFragmentTarget(link);
+      if (!target || target.closest(INTERFACE_REGIONS) || contents.contains(target)) continue;
+      const section = target?.closest('section,[role~="doc-chapter"]');
+      if (section && !section.contains(contents) && !isExcluded(section) &&
+          section.querySelector('h2,h3,h4,h5,h6') && section.querySelector('p,pre,blockquote,table')) {
+        destinations.add(section);
+      } else if (target.matches('h2,h3') && contents.compareDocumentPosition(target) & target.DOCUMENT_POSITION_FOLLOWING &&
+          target.nextElementSibling?.matches('p,pre,blockquote,table,ul,ol,dl,div,section')) {
+        destinations.add(target);
+      }
+    }
+    const chapters = [...destinations].filter(destination => {
+      for (let parent = destination.parentElement; parent; parent = parent.parentElement) {
+        if (destinations.has(parent)) return false;
+      }
+      return true;
+    });
+    if (chapters.length < 2) continue;
+
+    // Start at the shared chapter boundary, then include the document headline.
+    let owner = chapters[0].parentElement;
+    while (owner && !chapters.every(chapter => owner.contains(chapter))) owner = owner.parentElement;
+    if (!owner) continue;
+    const commonChapterOwner = owner;
+    while (owner && !headlines.some(heading => owner.contains(heading))) owner = owner.parentElement;
+    // The document may label BODY for a layout variant (for example, a sidebar).
+    // The evidenced chapters still go through the normal per-element filters.
+    if (owner === doc.body && commonChapterOwner === doc.body) return owner;
+    if (owner && owner !== doc.body && owner !== doc.documentElement && !isExcluded(owner)) return owner;
+  }
+  return null;
+}
+
 /**
  * Find main content container using multiple strategies
  * @param {Window} win - Window object
@@ -497,6 +543,9 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
     }
   }
   
+  const contentsDocument = findContentsDocument(doc, isExcluded);
+  if (contentsDocument) return contentsDocument;
+
   // Strategy 2: Common content selectors
   const contentSelectors = [
     '[role="main"]',

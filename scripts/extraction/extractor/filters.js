@@ -4,24 +4,44 @@
 
 import { compareDomOrder, getDocumentFragmentTarget, safeGetComputedStyle, safeClosest, INTERFACE_REGIONS, isPublisherLinkAction } from './dom-utils.js';
 import { isArticleContentFigure } from './discover.js';
-import { isDocumentHeadline, isEditorialLayoutLabel, isReadingOwned, isReferencedReadingAside } from './reading-context.js';
+import { DOCUMENT_CONTENTS, isDocumentHeadline, isEditorialLayoutLabel, isReadingOwned, isReferencedReadingAside } from './reading-context.js';
 import { getGraphicReadingOwner } from './graphics.js';
 import { getAnnotationTarget } from './annotations.js';
+
+const LABELLED_CONTROLS = ':is(input,select,button,[role="radiogroup"],[role="listbox"],[role="tablist"],[role="menu"])[aria-labelledby]';
 
 /** Utility arguments are CSS values, not names for interface regions. */
 export function semanticClassNames(element) {
   return Array.from(element.classList).filter(name => !name.includes('[')).join(' ').toLowerCase();
 }
 
+/** Index the ARIA labels of controls once for a batch of reading candidates. */
+export function readControlLabelIds(document) {
+  const ids = new Set();
+  for (const control of document.querySelectorAll(LABELLED_CONTROLS)) {
+    for (const id of control.getAttribute('aria-labelledby').trim().split(/\s+/)) {
+      if (id) ids.add(id);
+    }
+  }
+  return ids;
+}
+
 /** Labels owned by interactive controls are not independent reading blocks. */
-export function isInteractiveControlLabel(element) {
+export function isInteractiveControlLabel(element, controlLabelIds = null) {
   const label = element.closest('label,[id]');
   if (!label) return false;
   if (label.tagName === 'LABEL' && label.getAttribute('for')) return true;
   if (!label.id || !label.contains(element)) return false;
-  return Array.from(element.ownerDocument.querySelectorAll('[aria-labelledby]')).some(control =>
-    (control.getAttribute('aria-labelledby') || '').split(/\s+/).includes(label.id) &&
-    control.matches('input,select,button,[role="radiogroup"],[role="listbox"],[role="tablist"],[role="menu"]'));
+  return (controlLabelIds ?? readControlLabelIds(element.ownerDocument)).has(label.id);
+}
+
+/** Compile the class rules shared by the candidates in one document scan. */
+export function compileClassExclusions(names) {
+  return names.map(name => ({
+    name,
+    word: new RegExp(`\\b${name}\\b`),
+    role: new RegExp(`(?:^|[\\s_-])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[\\s_-])`)
+  }));
 }
 
 // Optimized navigation pattern matching
@@ -306,6 +326,8 @@ function findPublisherWidgets(root, linkedTargets) {
     }
   }
 
+  regions.push(...findSearchPreviewLists(root, ownsFragment));
+
   const headline = Array.from(root.querySelectorAll('h1')).find(isDocumentHeadline);
   if (!headline) return regions;
 
@@ -348,6 +370,37 @@ function findPublisherWidgets(root, linkedTargets) {
   return regions;
 }
 
+/** A search widget's result rows navigate previews. Preserve adjacent document content. */
+function findSearchPreviewLists(root, ownsFragment) {
+  const boundary = 'section,[role~="region"]';
+  const searchField = 'input[type="search"],[role~="searchbox"]';
+  const controls = 'button[aria-pressed],[role~="tab"][aria-selected]';
+  const protectedList = 'blockquote,pre,figcaption,[role~="doc-bibliography"],[role~="doc-endnotes"]';
+  const regions = new Set(Array.from(root.querySelectorAll(searchField), input =>
+    input.closest(boundary)).filter(region => region && root.contains(region)));
+  const containingRegion = root.closest(boundary);
+  if (containingRegion && Array.from(containingRegion.querySelectorAll(searchField))
+      .some(input => input.closest(boundary) === containingRegion)) regions.add(containingRegion);
+  const lists = [];
+  for (const region of regions) {
+    for (const list of region.querySelectorAll('ul,ol')) {
+      if (list.closest(boundary) !== region || list.closest(protectedList) || ownsFragment(list)) continue;
+      const rows = Array.from(list.children).filter(child => child.matches('li'));
+      const previewRows = rows.filter(row => row.querySelector(controls));
+      if (previewRows.length < 3) continue;
+      const links = previewRows.map(row => Array.from(row.querySelectorAll('a[href]')).find(link =>
+        link.closest('li') === row && link.textContent?.trim() && !getDocumentFragmentTarget(link)));
+      if (links.some(link => !link) || new Set(links.map(link => link.href)).size < 3) continue;
+      if (rows.some(row => (row.firstElementChild || row.textContent?.trim()) && !previewRows.includes(row) &&
+          (!row.querySelector('button,[role~="button"]') || row.querySelector('a[href],p,figure')))) continue;
+      if (previewRows.some((row, index) => Array.from(row.querySelectorAll('p,blockquote,pre,table,figcaption'))
+        .some(block => !links[index].contains(block) && block.textContent?.trim()))) continue;
+      lists.push(list);
+    }
+  }
+  return lists;
+}
+
 /** Drop a skip link and its marker when they explicitly surround a removed panel. */
 function addPanelSkipControls(panel, label, regions) {
   const wrapper = panel.closest('figure,section');
@@ -377,7 +430,7 @@ function addPanelSkipControls(panel, label, regions) {
  * @param {string[]} constants.COURSE_AD_PATTERNS - Course ad patterns
  * @returns {boolean} - True if element should be excluded
  */
-export function isExcluded(win, element, constants, readingRoots = [], tocRoots = [], selectedIllustration = false) {
+export function isExcluded(win, element, constants, readingRoots = [], tocRoots = [], selectedIllustration = false, batch = null) {
   const {
     EXCLUDED_CLASSES,
     PAYWALL_CLASSES,
@@ -459,7 +512,7 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
   
   // Exclude form-owned subscription controls.
   if (isSubscriptionFormContent(element)) return true;
-  if (isInteractiveControlLabel(element)) return true;
+  if (isInteractiveControlLabel(element, batch?.controlLabelIds)) return true;
 
   // Exclude advertising frames
   if (tagName === 'iframe') {
@@ -562,11 +615,13 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
   }
   
   // Check excluded classes with word boundaries
-  for (const excluded of EXCLUDED_CLASSES) {
+  const exclusionRules = batch?.exclusionRules ?? compileClassExclusions(EXCLUDED_CLASSES);
+  for (const { name: excluded, word: pattern } of exclusionRules) {
     if ((authoredHeading || selectedMedia || selectedInline) && ['header', 'article-section-title'].includes(excluded)) continue;
     if (selectedMedia && excluded === 'overlay') continue;
-    const pattern = new RegExp(`\\b${excluded}\\b`);
-    if ((pattern.test(className) || (id === excluded || pattern.test(id) && !hasAuthoredAnchor(element)) ||
+    const exactPanelId = id === excluded && !(authoredHeading && Array.from(element.ownerDocument.querySelectorAll(DOCUMENT_CONTENTS)).some(contents =>
+      Array.from(contents.querySelectorAll('a[href*="#"]')).some(link => getDocumentFragmentTarget(link) === element)));
+    if ((pattern.test(className) || exactPanelId || (pattern.test(id) && !hasAuthoredAnchor(element)) ||
         className === excluded || className.startsWith(excluded + '-') || 
         className.endsWith('-' + excluded)) &&
         !isEditorialLayoutLabel(element, element, excluded) &&
@@ -589,15 +644,13 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
 
       if (parentTag === 'nav' || parentTag === 'footer' ||
           parent.getAttribute('role') === 'navigation') return true;
-      if (EXCLUDED_CLASSES.some(excluded => {
+      if (exclusionRules.some(({ name: excluded, role }) => {
         if ((authoredHeading || selectedMedia || selectedInline) && ['header', 'article-section-title'].includes(excluded)) return false;
         if (selectedMedia && excluded === 'overlay') return false;
         if (excluded === 'sidebar' && illustrationAside && parent.contains(illustrationAside)) return false;
         if (excluded === 'next' || excluded === 'prev' || excluded === 'previous') {
           return parentClass.split(/\s+/).includes(excluded) || parentId === excluded;
         }
-        const escaped = excluded.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const role = new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`);
         const matchingRole = role.test(parentClass) || parentId === excluded ||
           (role.test(parentId) && !hasAuthoredAnchor(parent));
         if (!matchingRole || isEditorialLayoutLabel(parent, element, excluded) ||

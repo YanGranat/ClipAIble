@@ -204,7 +204,7 @@ it.each(['file:///C:/samples/observations.pdf', 'file:///C:/samples/observations
   await processing.handleSavePdf();
   const packet = chrome.runtime.sendMessage.mock.calls.find(([value]) => value.action === 'processArticle')?.[0];
   expect(packet?.data).toMatchObject({ url, title: tab.title, tabId: 5, mode: 'automatic' });
-  expect(packet.data.html).toBe('<!doctype html><html><body></body></html>');
+  expect(packet.data.html).toBe('');
   expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
   expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
   expect(polling).toHaveBeenCalledOnce();
@@ -215,12 +215,20 @@ it.each([
   ['file:///C:/samples/observations.html?file=observations.pdf', 'PDF document'],
   ['file:///C:/samples/observations.html?type=pdf', 'PDF document'],
   ['https://example.org/observations.pdf', 'Independent observations']
-])('continues to acquire HTML for a nonlocal-PDF URL %s', async (url, title) => {
+])('identifies the live tab for an ordinary Automatic request to %s without forwarding the snapshot', async (url, title) => {
   chrome.tabs.query.mockResolvedValue([{ id: 5, url, title }]);
   chrome.tabs.sendMessage.mockResolvedValue({ ...page, url, title });
   await processing.handleSavePdf();
   expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(5, { action: 'extractContent' });
-  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'processArticle', data: expect.objectContaining({ url, html: page.html }) }));
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'processArticle', data: expect.objectContaining({ url, html: '' }) }));
+});
+
+it('preserves the Chrome viewer HTML marker for extensionless PDFs', async () => {
+  const html = '<head><link rel="stylesheet" href="chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_embedder.css"></head>';
+  chrome.tabs.sendMessage.mockResolvedValue({ ...page, html });
+  await processing.handleSavePdf();
+
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'processArticle', data: expect.objectContaining({ html }) }));
 });
 
 it.each(['navigated', 'closed'])('does not dispatch a captured local PDF after its tab has %s', async outcome => {
