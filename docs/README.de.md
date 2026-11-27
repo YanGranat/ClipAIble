@@ -15,9 +15,11 @@ Auch das Kontextmenü der Seite bietet Speicheraktionen. Für lokale PDFs den Da
 
 Bei Webartikeln verwendet **Automatisch** lokale Heuristiken und vorhandene zwischengespeicherte Selektoren. **AI Selector** lässt einen KI-Dienst CSS-Selektoren bestimmen und extrahiert anschließend die entsprechenden Seiteninhalte. **AI Extract** lässt den Dienst die Inhalte strukturieren. Bei PDFs liest Automatisch die Textebene; die KI-Modi verarbeiten gerenderte Seiten.
 
-Die Einstellungen umfassen Text- und Bildübersetzung, Dokumentstile und ein Inhaltsverzeichnis. Im Popup lassen sich außerdem eine Zusammenfassung oder Kernaussagen erzeugen. Audio nutzt einen eingerichteten TTS-Dienst oder die lokale Piper-Sprachausgabe nach dem Herunterladen eines Stimmenmodells.
+Für den Export von YouTube- und Vimeo-Videos sind Untertitel und ein API-Schlüssel des für Artikel ausgewählten KI-Anbieters erforderlich. Das gilt auch im Modus **Automatisch**.
 
-Die gewählten KI- und TTS-Funktionen benötigen die jeweiligen API-Schlüssel. Der Einstellungsexport enthält keine API-Schlüssel; Statistiken und der Selektor-Cache können optional eingeschlossen werden.
+In den Einstellungen finden Sie Text- und Bildübersetzung, Dokumentstile und ein Inhaltsverzeichnis. Im Popup lassen sich eine Zusammenfassung oder Kernaussagen erzeugen. Für die Audioausgabe stehen ein eingerichteter TTS-Dienst sowie die lokale Sprachausgabe mit Piper oder Supertonic nach dem Download des Modells zur Verfügung.
+
+Fügen Sie die API-Schlüssel für die gewählten KI- und TTS-Funktionen hinzu. Einstellungen und eigene Prompts lassen sich als JSON sichern. Statistik, Verlauf und Selektor-Cache können Sie zusätzlich aufnehmen. API-Schlüssel sind von der Sicherung ausgeschlossen. Beim Import können Sie fehlende Verlaufseinträge und Regeln für neue Websites hinzufügen oder die ausgewählten Datenbereiche ersetzen. Siehe [Einstellungen sichern](../README.md#back-up-settings).
 
 ## Entwicklung
 

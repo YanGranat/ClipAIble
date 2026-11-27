@@ -9,7 +9,7 @@ import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { getExtensionVersion } from '../utils/config.js';
 import { DOCUMENT_FONT_FAMILIES, isDocumentColor } from '../utils/styles-validation.js';
 import { GEMINI_IMAGE_MODELS, IMAGE_TRANSLATION_PROVIDERS, OPENROUTER_IMAGE_MODELS } from '../api/image-translation-catalog.js';
-import { PROMPT_IDS, PROMPT_STORAGE_KEYS, PROMPT_STORAGE_PREFIX, validatePrompt } from './prompt-catalog.js';
+import { PROMPT_IDS, PROMPT_STORAGE_KEYS, PROMPT_STORAGE_PREFIX, validatePrompt, withPromptStorageLock } from './prompt-catalog.js';
 import { OPENROUTER_TTS_MODELS, getOpenRouterTtsModel, findOpenRouterTtsVoice, resolveGoogleTtsModel } from '../api/tts-catalog.js';
 import { OPENROUTER_SPEECH_SETTINGS_KEY, readOpenRouterSpeechProfiles } from '../api/openrouter-speech-options.js';
 import { OPENROUTER_KEY_SLOTS } from '../utils/storage/openrouter-key-slots.js';
@@ -226,15 +226,15 @@ export async function exportSettings(includeStats = false, includeCache = false)
  * Import settings from JSON
  * @param {string} jsonData - JSON string
  * @param {{importStats?: boolean, importCache?: boolean, overwriteExisting?: boolean, dataMode?: 'add' | 'replace'}} [options={}] - Import options
- * @returns {Promise<{settingsCount: number, statsImported: boolean, cacheImported: boolean}>} Import result
  * @throws {Error} If JSON parsing fails
  * @throws {Error} If validation fails
  */
-/**
- * @param {any} jsonData
- * @param {any} options
- */
 export async function importSettings(jsonData, options = {}) {
+  return withPromptStorageLock(() => importSettingsLocked(jsonData, options));
+}
+
+/** @param {string} jsonData @param {{importStats?: boolean, importCache?: boolean, overwriteExisting?: boolean, dataMode?: 'add' | 'replace'}} options */
+async function importSettingsLocked(jsonData, options) {
   const {
     importStats = false,
     importCache = false,
@@ -249,8 +249,8 @@ export async function importSettings(jsonData, options = {}) {
     let data;
     try {
       data = JSON.parse(jsonData);
-    } catch (parseError) {
-      logError('Failed to parse import JSON', parseError);
+    } catch {
+      logError('Failed to parse import JSON');
       const uiLang = await getUILanguageCached();
       throw importError('errorImportJsonParseFailed', uiLang);
     }
@@ -601,9 +601,9 @@ export async function importSettings(jsonData, options = {}) {
         // Validate cache size
         const cacheSize = JSON.stringify(data.selectorCache).length;
         if (cacheSize > MAX_BACKUP_CACHE_LENGTH) {
-          const sizeMB = Math.round(cacheSize / 1024 / 1024);
-          const maxMB = Math.round(MAX_BACKUP_CACHE_LENGTH / 1024 / 1024);
-          throw importError('errorImportCacheTooLarge', uiLang, { size: sizeMB, max: maxMB });
+          throw importError('errorImportCacheTooLarge', uiLang, {
+            size: Math.ceil(cacheSize / 1024 / 1024), max: MAX_BACKUP_CACHE_LENGTH / 1024 / 1024
+          });
         }
         
         const cache = normalizeImportedCache(data.selectorCache);
@@ -612,7 +612,7 @@ export async function importSettings(jsonData, options = {}) {
           const oversized = await addToSelectorCache(cache, MAX_BACKUP_CACHE_LENGTH);
           if (oversized !== null) {
             throw importError('errorImportCacheTooLarge', uiLang, {
-              sizeMB: Math.ceil(oversized / 1024 / 1024), maxMB: MAX_BACKUP_CACHE_LENGTH / 1024 / 1024
+              size: Math.ceil(oversized / 1024 / 1024), max: MAX_BACKUP_CACHE_LENGTH / 1024 / 1024
             });
           }
         } else {

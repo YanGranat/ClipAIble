@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { deleteHistoryItem, getFormattedStats, loadStats, recordSave } from '../../scripts/stats/index.js';
-import { importSettings } from '../../scripts/settings/import-export.js';
+import { exportSettings, importSettings } from '../../scripts/settings/import-export.js';
 import { routeMessage } from '../../scripts/message-handlers/index.js';
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ getUILanguageCached: async () => 'en' }));
@@ -44,6 +44,18 @@ const historyRow = (id, date, format = 'pdf') => ({
   id, title: `Document ${id}`, url: 'https://example.net/', format, date, processingTime: 300
 });
 const addSnapshot = statistics => importSettings(JSON.stringify({ settings: {}, statistics }), { importStats: true, dataMode: 'add' });
+
+it('retains only history fields the extension uses when importing and exporting statistics', async () => {
+  const row = { ...historyRow('recent', 80), domain: 'example.net' };
+  const imported = { ...row, token: 'synthetic-unknown-value', notes: { privateText: 'Example free-form note.' } };
+  const statistics = { totalSaved: 1, history: [imported] };
+  await addSnapshot(statistics);
+  await addSnapshot(statistics);
+  expect(stored.extension_stats.history).toEqual([row]);
+  expect(JSON.parse((await exportSettings(true)).data).statistics.history).toEqual([row]);
+  await deleteHistoryItem(row);
+  expect(stored.extension_stats.history).toEqual([]);
+});
 
 it('adds unique recent saves without adding overlapping snapshot totals', async () => {
   const original = historyRow('original', new Date(2025, 2, 10).getTime());

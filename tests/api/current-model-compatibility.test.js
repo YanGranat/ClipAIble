@@ -14,6 +14,8 @@ vi.mock('../../scripts/utils/encryption.js', () => ({
 }));
 
 const image = 'data:image/png;base64,c2FtcGxl';
+const editedPng = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGPUCKhgYGBgYgADAAsaAPSWyA61AAAAAElFTkSuQmCC';
+const editedImage = `data:image/png;base64,${editedPng}`;
 const key = 'synthetic-key';
 const jsonResponse = payload => new Response(JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -89,10 +91,11 @@ describe('current first-party model requests', () => {
   it('uses the stable Pro image editor and selects the final image', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ candidates: [{ finishReason: 'STOP', content: { parts: [
       { thought: true, inlineData: { mimeType: 'image/png', data: 'aW50ZXJuYWw=' } },
-      { inlineData: { mimeType: 'image/png', data: 'ZmluYWw=' } }
+      { inlineData: { mimeType: 'image/png', data: editedPng } }
     ] } }] }));
     vi.stubGlobal('fetch', fetchMock);
-    expect(await translateImageWithGemini(image, 'French', key)).toBe('data:image/png;base64,ZmluYWw=');
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ close() {} })));
+    expect(await translateImageWithGemini(image, 'French', key)).toBe(editedImage);
     expect(GEMINI_IMAGE_MODEL).toBe('gemini-3-pro-image');
     expect(fetchMock.mock.calls[0][0]).toContain('/gemini-3-pro-image:generateContent');
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).generationConfig.responseModalities).toEqual(['TEXT', 'IMAGE']);
@@ -108,16 +111,17 @@ describe('current first-party model requests', () => {
       if (url === geminiEndpoint) {
         return jsonResponse({ candidates: [{ finishReason: 'STOP', content: { parts: [
           { thought: true, inlineData: { mimeType: 'image/png', data: 'aW50ZXJuYWw=' } },
-          { inlineData: { mimeType: 'image/png', data: 'ZmluYWw=' } }
+          { inlineData: { mimeType: 'image/png', data: editedPng } }
         ] } }] });
       }
       throw new Error('Unexpected provider request');
     });
     vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ close() {} })));
     const result = await translateImages([{ type: 'image', src: image }], 'en', 'fr', 'synthetic-article-key', 'synthetic-google-key',
       'deepseek-flash-no-thinking', undefined, { provider: 'deepseek', imageTranslationProvider: 'gemini', geminiImageModel, checkCancelled: async () => {} });
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([detectionEndpoint, geminiEndpoint]);
-    expect(result).toEqual([{ type: 'image', src: 'data:image/png;base64,ZmluYWw=', translated: true }]);
+    expect(result).toEqual([{ type: 'image', src: editedImage, translated: true }]);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).messages[1].content[1].image_url.url).toBe(image);
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-article-key');
     const [, edit] = fetchMock.mock.calls[1];
@@ -126,6 +130,36 @@ describe('current first-party model requests', () => {
     expect(body.generationConfig.responseModalities).toEqual(['TEXT', 'IMAGE']);
     expect(body.contents[0].parts[0].inline_data).toEqual({ mime_type: 'image/png', data: 'c2FtcGxl' });
     expect(body.contents[0].parts[1].text).toBe(createImageTranslationPrompt('French'));
+  });
+
+  it('ignores non-image and undecodable Gemini parts before returning a decoded edit', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      candidates: [{ finishReason: 'STOP', content: { parts: [
+        { inlineData: { mimeType: 'text/plain', data: 'c2FtcGxl' } },
+        { inlineData: { mimeType: 'image/png', data: editedPng } },
+        { inlineData: { mimeType: 'image/png', data: editedPng } }
+      ] } }]
+    })));
+    const close = vi.fn();
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ close })).mockRejectedValueOnce(new Error('Invalid image stream')));
+    await expect(translateImageWithGemini(image, 'French', key)).resolves.toBe(editedImage);
+    expect(createImageBitmap).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the original image when a Gemini edit contains no decodable image', async () => {
+    vi.stubGlobal('fetch', vi.fn(async url => url.startsWith('https://api.deepseek.com/')
+      ? jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: 'yes' } }] })
+      : jsonResponse({ candidates: [{ finishReason: 'STOP', content: {
+        parts: [{ inlineData: { mimeType: 'image/png', data: editedPng } }]
+      } }] })));
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => { throw new Error('Invalid image stream'); }));
+    const source = { type: 'image', src: image };
+    const updateState = vi.fn();
+    const result = await translateImages([source], 'en', 'fr', 'synthetic-article-key', 'synthetic-google-key',
+      'deepseek-flash-no-thinking', updateState, { provider: 'deepseek', imageTranslationProvider: 'gemini', checkCancelled: async () => {} });
+    expect(result).toEqual([{ type: 'image', src: image }]);
+    expect(updateState).toHaveBeenCalledWith({ imageTranslationFailureCount: 1 });
   });
 
   it('rejects a model outside the Google editor catalog without sending a request', async () => {

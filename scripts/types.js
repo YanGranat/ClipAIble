@@ -81,6 +81,7 @@
  * @property {number} [lastUpdate] - Last update timestamp (for state management)
  * @property {string} [outputFormat] - Output format (pdf, epub, fb2, markdown, audio) - used for UI display and polling intervals
  * @property {number} [imageTranslationFailureCount] - Images kept after a translation error in this run
+ * @property {boolean} [documentAbstractFailed] - The requested document TL;DR could not be generated
  */
 
 /**
@@ -329,6 +330,7 @@
  * @property {string} [id] - Stable save identity
  * @property {string} title - Item title
  * @property {string} url - Item URL
+ * @property {string} [domain] - Display domain
  * @property {string} format - Export format
  * @property {number} date - Save timestamp
  * @property {number} processingTime - Processing time in milliseconds
@@ -630,10 +632,10 @@
  * @property {AbortSignal} [signal] - Captured operation cancellation signal
  * @property {boolean} [returnBlob] - Return assembled audio as a Blob
  * @property {string} [processingRunId] - Processing run identity
- * @property {string} [provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'openrouter', or 'offline'
+ * @property {string} [provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'openrouter', 'offline' (Piper), or 'supertonic'
  * @property {string} [voice] - Voice to use
  * @property {number} [speed] - Speech speed (OpenAI: 0.25-1.5, default: 1.0, offline: 0.1-10.0)
- * @property {string} [format] - Output format (OpenAI/offline/Google/OpenRouter: always 'wav')
+ * @property {string} [format] - Output format (OpenAI, Piper, Supertonic, Google, and OpenRouter use WAV)
  * @property {string} [instructions] - Voice style instructions (OpenAI only)
  * @property {string} [openaiInstructions] - Alternative instructions property name (OpenAI only)
  * @property {string} [language] - Language code for Qwen/Offline (auto-detected if not provided)

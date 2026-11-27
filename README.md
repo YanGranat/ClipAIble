@@ -35,7 +35,13 @@ Settings include text translation, document styles, and a table of contents. The
 
 Open **Settings → Advanced settings** to review and edit AI prompts. Changes apply to new jobs.
 
-Add the API keys required by the AI and TTS features you select. Settings export excludes API keys and can optionally include statistics and selector cache.
+Add the API keys required by the AI and TTS features you select.
+
+### Back up settings
+
+In **Settings**, choose **Export Settings** to download a JSON backup of your preferences and custom prompts. The optional sections contain statistics with saved-item history and the selector cache. API keys are excluded from backups.
+
+Choose **Import Settings** to restore the backup. Enable **Overwrite existing settings** to replace preferences you already set. For the selected statistics and cache sections, **Add to current data** adds missing history entries and rules for new sites. Existing site rules take precedence, and statistics totals are not summed. **Replace selected data** restores each selected section in full.
 
 ## Development
 

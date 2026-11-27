@@ -1,5 +1,5 @@
 // @ts-check
-import { PROMPTS, PROMPT_IDS, PROMPT_STORAGE_KEYS, PROMPT_STORAGE_PREFIX, readPromptOverrides, validatePrompt } from '../scripts/settings/prompt-catalog.js';
+import { PROMPTS, PROMPT_IDS, PROMPT_STORAGE_KEYS, PROMPT_STORAGE_PREFIX, readPromptOverrides, validatePrompt, withPromptStorageLock } from '../scripts/settings/prompt-catalog.js';
 import { getUILanguage, getLocaleTag, tSync } from '../scripts/locales.js';
 import { getPromptDisplayName } from '../scripts/settings/advanced-locales.js';
 
@@ -33,7 +33,8 @@ let language = 'en';
 /** @type {unknown} */
 let theme = 'auto';
 let ready = false;
-let saving = false;
+/** @type {PromptId|null} */
+let savingPromptId = null;
 let initialized = false;
 const label = (key, args) => tSync(key, language, args);
 const promptName = (id) => getPromptDisplayName(id, language, PROMPTS[id].label);
@@ -53,6 +54,7 @@ function updateActions(clearFeedback = true) {
   const draft = drafts.get(selected);
   const invalid = draft && validatePrompt(selected, draft.value);
   const conflict = draft && draft.base !== current(selected);
+  const saving = savingPromptId !== null;
   input.setAttribute('aria-invalid', String(Boolean(invalid || conflict)));
   save.disabled = !ready || saving || !draft || Boolean(invalid || conflict);
   discard.disabled = !draft || saving;
@@ -142,7 +144,7 @@ function buildMenu() {
 }
 
 function edit(value) {
-  if (!ready || saving) return;
+  if (!ready || savingPromptId !== null) return;
   const base = drafts.get(selected)?.base ?? current(selected);
   if (value === current(selected)) drafts.delete(selected);
   else drafts.set(selected, { value, base });
@@ -165,36 +167,38 @@ select.addEventListener('change', () => {
 });
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (save.disabled || saving) return;
+  if (save.disabled || savingPromptId !== null) return;
   const id = selected;
   const draft = drafts.get(id);
   const key = keyFor(id);
-  saving = true;
+  savingPromptId = id;
   updateActions();
   try {
-    const latest = readPromptOverrides(await chrome.storage.local.get([key]))[id];
-    if ((latest ?? PROMPTS[id].template) !== draft.base) {
-      if (latest === undefined) delete saved[id];
-      else saved[id] = latest;
-      if (selected === id) render(id);
-      return;
-    }
-    if (draft.value === PROMPTS[id].template) {
-      await chrome.storage.local.remove(key);
-      delete saved[id];
-    } else {
-      await chrome.storage.local.set({ [key]: draft.value });
-      saved[id] = draft.value;
-    }
-    drafts.delete(id);
-    if (selected === id) {
-      render(id, false);
-      feedback('promptSaved', 'saved');
-    }
+    await withPromptStorageLock(async () => {
+      const latest = readPromptOverrides(await chrome.storage.local.get([key]))[id];
+      if ((latest ?? PROMPTS[id].template) !== draft.base) {
+        if (latest === undefined) delete saved[id];
+        else saved[id] = latest;
+        if (selected === id) render(id);
+        return;
+      }
+      if (draft.value === PROMPTS[id].template) {
+        await chrome.storage.local.remove(key);
+        delete saved[id];
+      } else {
+        await chrome.storage.local.set({ [key]: draft.value });
+        saved[id] = draft.value;
+      }
+      drafts.delete(id);
+      if (selected === id) {
+        render(id, false);
+        feedback('promptSaved', 'saved');
+      }
+    });
   } catch {
     if (selected === id) feedback('promptSaveFailed', 'error');
   } finally {
-    saving = false;
+    savingPromptId = null;
     updateActions(false);
   }
 });
@@ -240,7 +244,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     affected ||= id === selected && previous !== override;
   }
   if (changes.ui_language) void localize();
-  else if (affected && !saving) render(selected);
+  else if (affected && selected !== savingPromptId) render(selected);
 });
 themeQuery.addEventListener('change', applyTheme);
 applyTheme();

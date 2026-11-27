@@ -43,8 +43,8 @@ describe('Narration preparation', () => {
     callAI.mockRejectedValue(cancelled);
     await expect(prepare()).rejects.toBe(cancelled);
   });
-  it.each(['openai', 'google', 'openrouter', 'elevenlabs', 'qwen', 'respeecher', 'offline'])('does not ask a separate model to rewrite narration by default for %s', async provider => {
-    const text = 'Observed (possibly erroneous) readings rose from 0.05% to 0.5%.\nKeep the sign: −2.5 °C.';
+  it.each(['openai', 'google', 'openrouter', 'elevenlabs', 'qwen', 'respeecher', 'offline', 'supertonic'])('does not ask a separate model to rewrite narration by default for %s', async provider => {
+    const text = 'The filter (retained for calibration) passes 12.75% of the signal.\nIts offset is −1.25 V.';
     const chunks = await prepareContentForAudio([{ type: 'paragraph', format: 'text', text }], '', 'synthetic-key', 'synthetic-model', 'en', undefined, provider);
     expect(chunks).toEqual([{ index: 0, text }]);
     expect(callAI).not.toHaveBeenCalled();
@@ -53,8 +53,10 @@ describe('Narration preparation', () => {
     const content = [{ type: 'paragraph', format: 'text', text: original }];
     const options = { promptOverrides: { audioPreparation: 'Expand the abbreviation only. {{languageInstruction}}' } };
     callAI.mockResolvedValue('Custom narration.');
-    await expect(prepareContentForAudio(content, '', 'synthetic-key', 'synthetic-model', 'en', undefined, 'offline', undefined, options))
-      .resolves.toEqual([{ index: 0, text: original }]);
+    for (const provider of ['offline', 'supertonic']) {
+      await expect(prepareContentForAudio(content, '', 'synthetic-key', 'synthetic-model', 'en', undefined, provider, undefined, options))
+        .resolves.toEqual([{ index: 0, text: original }]);
+    }
     expect(callAI).not.toHaveBeenCalled();
     await expect(prepareContentForAudio(content, '', '', 'synthetic-model', 'en', undefined, 'google', undefined, options))
       .rejects.toMatchObject({ translationKey: 'errorNoApiKey' });

@@ -81,3 +81,18 @@ global.chrome.storage = { local: storage.local, onChanged: storage.onChanged };
 beforeEach(() => storage.reset());
 vi.stubGlobal('crypto', webcrypto);
 
+// Node versions without Web Locks still need to serialize extension storage writes.
+if (!globalThis.navigator?.locks) {
+  const pending = new Map();
+  globalThis.navigator ??= {};
+  Object.defineProperty(globalThis.navigator, 'locks', { configurable: true, value: {
+    request(name, callback) {
+      const result = (pending.get(name) ?? Promise.resolve()).then(callback);
+      const queued = result.catch(() => {});
+      pending.set(name, queued);
+      queued.then(() => { if (pending.get(name) === queued) pending.delete(name); });
+      return result;
+    }
+  } });
+}
+

@@ -342,7 +342,6 @@ log('[ClipAIble Background] Log collection system initialized', { timestamp: Dat
 log('[ClipAIble Background] ===== BACKGROUND SCRIPT RELOADED =====', {
   timestamp: Date.now(),
   date: new Date().toISOString(),
-  cacheBuster: '2026-01-23-new-logs-added',
   version: chrome.runtime.getManifest?.()?.version || 'unknown'
 });
 
@@ -476,7 +475,6 @@ try {
     // Only log important messages (processArticle, errors, etc.)
     if (request?.action === 'processArticle') {
       log('=== chrome.runtime.onMessage: processArticle ===', {
-        url: request?.data?.url,
         mode: request?.data?.mode,
         outputFormat: request?.data?.outputFormat,
         timestamp: Date.now()

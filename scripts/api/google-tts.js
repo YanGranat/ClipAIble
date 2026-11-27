@@ -1,5 +1,6 @@
 import { fetchBufferedResponse } from './fetch-buffered-response.js';
 import { isWavBuffer, pcmToWav } from './audio-format.js';
+import { createApiError } from './http-errors.js';
 // @ts-check
 // Google Gemini TTS API module
 
@@ -7,7 +8,7 @@ import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
-import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
 import { resolveGoogleTtsSelection } from './tts-catalog.js';
 
 /**
@@ -91,7 +92,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
 
       if (!fetchResponse.ok) {
         logWarn('Google TTS request rejected', { model, status: fetchResponse.status });
-        const error = await handleApiError(fetchResponse, 'Google Gemini TTS');
+        const error = await createApiError(fetchResponse, 'gemini');
         if (fetchResponse.status === 404) {
           Object.assign(error, { translationKey: 'errorModelNotFound', translationParams: { model } });
         }
@@ -115,52 +116,39 @@ export async function textToSpeech(text, apiKey, options = {}) {
   let responseData;
   try {
     responseData = await response.json();
-    log('Google TTS response received', { 
-      hasAudioContent: !!responseData.audioContent,
-      hasCandidates: !!(responseData.candidates && responseData.candidates.length > 0),
-      responseKeys: Object.keys(responseData)
-    });
-  } catch (e) {
-    logError('Failed to parse Google Gemini TTS response', e);
-    throw speechResponseError('Invalid response from Google Gemini TTS API', undefined, e);
+  } catch {
+    logError('Failed to parse Google Gemini TTS response');
+    throw speechResponseError('Invalid response from Google Gemini TTS API');
   }
   
   // Check for API errors
-  if (responseData.error) {
-    logError('Google Gemini TTS API error', responseData.error);
-    throw speechResponseError(responseData.error.message || 'Google Gemini TTS API error', 'errorAudioGenerationFailed');
+  if (responseData?.error) {
+    logError('Google Gemini TTS API error');
+    throw speechResponseError('Google Gemini TTS API error', 'errorAudioGenerationFailed');
   }
   
   // Extract audio data from response
   // Generative Language API returns candidates[0].content.parts[0].inlineData.data (base64-encoded PCM audio)
   let base64Data;
   let audioMimeType;
-  if (responseData.candidates && responseData.candidates[0]) {
+  if (responseData?.candidates?.[0]) {
     const candidate = responseData.candidates[0];
     if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-      throw speechResponseError(`Incomplete audio from Google Gemini TTS: ${candidate.finishReason}`);
+      throw speechResponseError('Incomplete audio from Google Gemini TTS');
     }
     if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
-      logError('Invalid candidate structure in Google Gemini TTS response', { 
-        candidate: JSON.stringify(candidate).substring(0, 500)
-      });
+      logError('Invalid candidate structure in Google Gemini TTS response');
       throw speechResponseError('Invalid response structure from Google Gemini TTS API');
     }
     const part = candidate.content.parts[0];
     if (!part.inlineData || !part.inlineData.data) {
-      logError('No inlineData in Google Gemini TTS response', { 
-        part: JSON.stringify(part).substring(0, 500),
-        responseKeys: Object.keys(responseData)
-      });
+      logError('No inlineData in Google Gemini TTS response');
       throw speechResponseError('No audio data in Google Gemini TTS API response', 'errorNoAudioDataReturned');
     }
     base64Data = part.inlineData.data;
     audioMimeType = part.inlineData.mimeType;
   } else {
-    logError('No candidates in Google Gemini TTS response', { 
-      responseData: JSON.stringify(responseData).substring(0, 500),
-      responseKeys: Object.keys(responseData)
-    });
+    logError('No candidates in Google Gemini TTS response');
     throw speechResponseError('No audio data received from Google Gemini TTS API', 'errorNoAudioDataReturned');
   }
   

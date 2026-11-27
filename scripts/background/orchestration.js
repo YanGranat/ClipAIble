@@ -4,7 +4,7 @@ import { AUDIO_PREPARATION_PROMPT_KEY, loadPromptOverrides, readPromptOverrides 
 // Uses dependency injection pattern for better testability and modularity
 
 import { validateDeps } from '../utils/di-validation.js';
-import { getScopedUpdateState, isCancelled, isCurrentProcessingRun } from '../state/processing.js';
+import { getScopedUpdateState, isCancelled } from '../state/processing.js';
 
 /**
  * Initialize orchestration module with dependencies
@@ -19,10 +19,7 @@ export function initOrchestration(deps) {
   const {
     log,
     logWarn,
-    CONFIG,
-    getProcessingState,
     setError,
-    updateState,
     ERROR_CODES,
     PROCESSING_STAGES,
     validateAndInitializeProcessing,
@@ -80,84 +77,16 @@ export function initOrchestration(deps) {
   if (isCancelled(data.processingRunId)) return false;
   const processingStartTime = Date.now();
   
-  // DETAILED LOGGING: All processing settings at start
-  const logData = {
-    // Basic data
-    url: data.url,
-    title: data.title,
-    tabId: data.tabId,
-    htmlLength: data.html?.length || 0,
-    htmlPreview: data.html ? data.html.substring(0, 500) + '...' : null,
-    
-    // Processing settings
+  log('Starting article processing', {
     mode: data.mode,
+    model: data.model,
     outputFormat: data.outputFormat,
     generateToc: data.generateToc,
     generateAbstract: data.generateAbstract,
-    
-    // AI settings
-    model: data.model,
-    hasApiKey: !!data.apiKey,
-    apiKeyLength: data.apiKey?.length || 0,
-    apiKeyPrefix: data.apiKey ? (data.apiKey.startsWith('sk-') ? 'sk-' : data.apiKey.startsWith('AIza') ? 'AIza' : data.apiKey.startsWith('xai-') ? 'xai-' : 'other') : null,
-    apiProvider: data.apiProvider,
-    
-    // Translation settings
-    targetLanguage: data.targetLanguage,
     translateImages: data.translateImages,
-    
-    // PDF settings
-    pageMode: data.pageMode,
-    fontFamily: data.fontFamily,
-    fontSize: data.fontSize,
-    bgColor: data.bgColor,
-    textColor: data.textColor,
-    headingColor: data.headingColor,
-    linkColor: data.linkColor,
-    
-    // Audio settings
-    audioProvider: data.audioProvider,
-    audioVoice: data.audioVoice,
-    audioSpeed: data.audioSpeed,
-    audioFormat: data.audioFormat,
-    
-    // Cache settings
     useCache: data.useCache,
-    
-    // Processing state
-    processingStartTime: processingStartTime,
-    timestamp: Date.now()
-  };
-  
-  log('=== START ARTICLE PROCESSING: ALL SETTINGS ===', logData);
-  
-  log('🚀 Starting article processing', {
-    mode: data.mode,
-    model: data.model,
-    outputFormat: data.outputFormat,
-    generateToc: data.generateToc,
-    generateAbstract: data.generateAbstract,
-    url: data.url,
     htmlLength: data.html?.length || 0
   });
-  
-  // CRITICAL: Log audio parameters if output format is audio
-  if (data.outputFormat === 'audio') {
-    log('[ClipAIble Background] ===== AUDIO PARAMETERS IN startArticleProcessing =====', {
-      timestamp: Date.now(),
-      audioProvider: data.audioProvider,
-      audioVoice: data.audioVoice,
-      audioVoiceType: typeof data.audioVoice,
-      googleTtsVoice: data.googleTtsVoice,
-      googleTtsVoiceType: typeof data.googleTtsVoice,
-      googleTtsModel: data.googleTtsModel,
-      googleTtsPrompt: data.googleTtsPrompt,
-      audioSpeed: data.audioSpeed,
-      audioFormat: data.audioFormat,
-      url: data.url,
-      willBeUsedForAudio: true
-    });
-  }
   
   const processingStartTimeRef = { current: processingStartTime };
   
@@ -362,51 +291,6 @@ export function initOrchestration(deps) {
     effectiveLanguage,
     contentItems: result.content?.length || 0
   });
-  
-  // DETAILED LOGGING: Log content before PDF generation
-  log('=== CONTENT BEFORE PDF GENERATION ===', {
-    title: result.title,
-    author: result.author,
-    publishDate: result.publishDate,
-    contentItemsCount: result.content?.length || 0,
-    outputFormat,
-    effectiveLanguage,
-    timestamp: Date.now()
-  });
-  
-  // Log ALL content items with FULL text - NO TRUNCATION
-  // Only log full content if verbose logging is enabled (prevents memory/performance issues)
-  if (result.content && Array.isArray(result.content)) {
-    if (CONFIG?.VERBOSE_LOGGING) {
-      log('=== CONTENT ITEMS BEFORE PDF (ALL - FULL TEXT) ===', {
-        totalItems: result.content.length
-      });
-      
-      // Log each item separately for full visibility (only in verbose mode)
-      result.content.forEach((item, idx) => {
-        log(`=== CONTENT ITEM BEFORE PDF [${idx}] ===`, {
-          index: idx,
-          type: item.type,
-          text: item.text || item.html || '', // FULL TEXT - NO TRUNCATION
-          textLength: (item.text || item.html || '').length,
-          html: item.html || null, // FULL HTML - NO TRUNCATION
-          htmlLength: item.html ? item.html.length : 0,
-          wasTranslated: item.translated || false,
-          hasGoogleTranslateText: (item.text || item.html || '').includes('Исходный текст') || (item.text || item.html || '').includes('Оцените этот перевод') || (item.text || item.html || '').includes('Google Переводчик')
-        });
-      });
-    } else {
-      // In non-verbose mode, only log summary
-      log('=== CONTENT ITEMS BEFORE PDF (SUMMARY) ===', {
-        totalItems: result.content.length,
-        itemsByType: result.content.reduce((acc, item) => {
-          acc[item.type] = (acc[item.type] || 0) + 1;
-          return acc;
-        }, {}),
-        note: 'Enable VERBOSE_LOGGING in CONFIG to see full content'
-      });
-    }
-  }
   
   // Prepare data for factory (add effectiveLanguage for audio generation)
   const factoryData = {

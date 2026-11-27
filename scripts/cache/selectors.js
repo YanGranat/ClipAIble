@@ -52,7 +52,6 @@ export function normalizeCachedSelectors(value) {
 // NOTE: Cache has NO TTL (time-to-live) - this is intentional!
 // Selectors invalidate on extraction failure via invalidateCache().
 // If selectors work, there's no reason to expire them.
-// User can clear cache manually if needed. See systemPatterns.md.
 
 /**
  * Extract domain from URL

@@ -375,3 +375,14 @@ button:disabled { cursor: default; }
   .prompt-content { padding-block-start: 22px; }
   #prompt-input { max-block-size: clamp(170px, 42dvh, 400px); }
 }
+
+@media (max-width: 480px) {
+  .prompt-picker select { padding-inline: 8px; }
+  .prompt-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+  #restore-prompt { grid-column: 1 / -1; justify-self: start; }
+  .prompt-actions button.primary { min-inline-size: 0; }
+}

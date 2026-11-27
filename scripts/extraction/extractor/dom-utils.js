@@ -20,9 +20,10 @@ export function isPublisherLinkAction(element) {
   if (sectionEdit?.querySelector('a[href]') && !sectionEdit.closest('pre,code,math')) return true;
   const link = element.closest('a[href]');
   if (!link) return false;
+  const readingContext = 'p,blockquote,pre,code,math,figure,figcaption,li,dd,dt,table';
   // Standalone icon-only identity links are profile controls, not illustrations.
   if (link.matches('[rel~="me"]') && link.querySelector('svg,img,picture') &&
-      !link.closest('p,blockquote,pre,code,math,figure,figcaption,li,dd,dt,table')) {
+      !link.closest(readingContext)) {
     const label = link.cloneNode(true);
     for (const graphic of /** @type {Element} */ (label).querySelectorAll('svg,img,picture')) graphic.remove();
     if (!label.textContent?.trim()) return true;
@@ -35,6 +36,17 @@ export function isPublisherLinkAction(element) {
   const doc = link.ownerDocument;
   try {
     const target = new URL(link.getAttribute('href'), doc.baseURI);
+    // A standalone jump to the document start is a page control.
+    if (link.matches('.button,.btn,[role~="button"]') && !link.closest(`${readingContext},h1,h2,h3,h4,h5,h6,[role~="heading"]`) &&
+        target.href.includes('#') && target.href.split('#')[0] === doc.URL.split('#')[0]) {
+      const rawFragment = target.hash.slice(1);
+      if (!rawFragment) return true;
+      const fragment = decodeURIComponent(rawFragment);
+      const findDestination = id => doc.getElementById(id) ||
+        Array.from(doc.getElementsByName(id)).find(node => node.matches('a'));
+      const destination = findDestination(rawFragment) || (fragment !== rawFragment ? findDestination(fragment) : null);
+      if (destination === doc.body || destination === doc.documentElement || (!destination && /^top$/i.test(fragment))) return true;
+    }
     if (link.closest('[data-preferred-source]') &&
         ['google.com', 'www.google.com'].includes(target.hostname) && target.pathname === '/preferences/source') return true;
     const marked = link.hasAttribute('data-social-service') ||

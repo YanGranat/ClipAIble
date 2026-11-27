@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { exportSettings, importSettings } from '../../scripts/settings/import-export.js';
+import { withPromptStorageLock } from '../../scripts/settings/prompt-catalog.js';
 import { addToSelectorCache, cacheSelectors, clearSelectorCache, getCachedSelectors, invalidateCache, markCacheSuccess } from '../../scripts/cache/selectors.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
@@ -85,6 +86,30 @@ it('round trips custom prompts and rejects an import that would drop required va
   });
 });
 
+it('waits for an active prompt writer before deciding which prompt to keep', async () => {
+  let started;
+  const editingStarted = new Promise(resolve => { started = resolve; });
+  let release;
+  const editingContinues = new Promise(resolve => { release = resolve; });
+  const editorPrompt = 'Keep details in {{targetLanguage}}.';
+  const editing = withPromptStorageLock(async () => {
+    started();
+    await editingContinues;
+    await chrome.storage.local.set({ prompt_override_summary: editorPrompt });
+  });
+  await editingStarted;
+  const importing = importSettings(JSON.stringify({ settings: { prompt_override_summary: 'Summarize in {{targetLanguage}}.' } }));
+  try {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(chrome.storage.local.get).not.toHaveBeenCalled();
+    expect(stored).not.toHaveProperty('prompt_override_summary');
+  } finally {
+    release();
+    await Promise.all([editing, importing]);
+  }
+  expect(stored.prompt_override_summary).toBe(editorPrompt);
+});
+
 async function holdCacheLookupWrite() {
   let release;
   const heldWrite = new Promise(resolve => { release = resolve; });
@@ -129,6 +154,17 @@ describe('selector cache storage transactions', () => {
     const maxLength = JSON.stringify(stored.selector_cache).length;
     await expect(addToSelectorCache(incoming, maxLength)).resolves.toBeGreaterThan(maxLength);
     expect(stored.selector_cache).toEqual({ 'current.example': { selectors: { content: 'main' } } });
+  });
+
+  it('provides the actual combined size and limit to the localized cache import error', async () => {
+    const entry = { selectors: { content: 'main', exclude: Array(64).fill(`.${'x'.repeat(4095)}`) } };
+    stored.selector_cache = Object.fromEntries(Array.from({ length: 39 }, (_, index) => [`site-${index}.example`, entry]));
+    const result = await importSettings(JSON.stringify({
+      settings: {}, selectorCache: { 'archive.example': entry }
+    }), { importCache: true });
+    expect(result.cacheImported).toBe(false);
+    expect(result.errorTranslations).toContainEqual({ key: 'errorImportCacheTooLarge', params: { size: 11, max: 10 } });
+    expect(stored.selector_cache).not.toHaveProperty('archive.example');
   });
 
   it('replaces only selected sections after explicit replacement confirmation', async () => {

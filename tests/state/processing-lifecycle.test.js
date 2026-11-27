@@ -163,7 +163,9 @@ describe('processing lifecycle', () => {
     await vi.advanceTimersByTimeAsync(0);
     await restoration;
     expect(getProcessingState()).toMatchObject({
-      isProcessing: false, outputFormat: 'markdown', error: 'statusProcessingInterrupted', progress: 82
+      isProcessing: false, outputFormat: 'markdown', progress: 82,
+      error: 'statusProcessingInterrupted', errorTranslationKey: 'statusProcessingInterrupted',
+      statusTranslationKey: 'statusProcessingInterrupted'
     });
     expect(getProcessingState()).not.toHaveProperty('result');
     expect(stored.processingState).not.toHaveProperty('result');
@@ -188,7 +190,7 @@ describe('processing lifecycle', () => {
     stored.processingState = {
       isProcessing: true, processingRunId: runId, outputFormat: 'pdf',
       pdfPrintTabId: 21, pdfPrintJobId: jobId, pdfDebuggerStarted: kind === 'debugger-started',
-      lastUpdate: Date.now(), startTime: Date.now(), progress: 95, imageTranslationFailureCount: 2
+      lastUpdate: Date.now(), startTime: Date.now(), progress: 95, imageTranslationFailureCount: 2, documentAbstractFailed: true
     };
     let url = `${chrome.runtime.getURL('print/print.html')}?job=${jobId}`;
     if (kind === 'foreign-extension') url = `chrome-extension://other-extension/print/print.html?job=${jobId}`;
@@ -200,10 +202,12 @@ describe('processing lifecycle', () => {
     await restoration;
     expect(getProcessingState()).toMatchObject({ isProcessing: kind === 'owned', outputFormat: 'pdf', processingRunId: runId });
     if (kind === 'owned') {
-      expect(getProcessingState()).toMatchObject({ pdfPrintTabId: 21, pdfPrintJobId: jobId, imageTranslationFailureCount: 2 });
+      expect(getProcessingState()).toMatchObject({ pdfPrintTabId: 21, pdfPrintJobId: jobId, imageTranslationFailureCount: 2,
+        statusTranslationKey: 'statusOpeningPdfGenerator', errorTranslationKey: null, documentAbstractFailed: true });
     } else {
       expect(getProcessingState().error).toBe('statusProcessingInterrupted');
       expect(getProcessingState()).not.toHaveProperty('imageTranslationFailureCount');
+      expect(getProcessingState()).not.toHaveProperty('documentAbstractFailed');
     }
   });
 
@@ -218,7 +222,8 @@ describe('processing lifecycle', () => {
     expect(getProcessingState().isProcessing).toBe(true);
     onRemoved(21);
     await vi.advanceTimersByTimeAsync(0);
-    expect(getProcessingState()).toMatchObject({ isProcessing: false, error: expect.stringContaining('print tab was closed') });
+    expect(getProcessingState()).toMatchObject({ isProcessing: false, error: 'errorPdfPrintTabClosed',
+      errorTranslationKey: 'errorPdfPrintTabClosed', errorTranslationParams: {} });
     expect(stop).toHaveBeenCalledTimes(1);
   });
 

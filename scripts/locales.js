@@ -266,6 +266,7 @@ export const UI_LOCALES = {
     statusCancelled: 'Cancelled',
     statusError: 'Error',
     statusProcessingInterrupted: 'Processing was interrupted. Please try again.',
+    errorPdfPrintTabClosed: 'PDF generation stopped because the print tab was closed.',
     statusLoadingStyles: 'Loading styles...',
     deleteFromHistory: 'Delete from history',
     openOriginalArticle: 'Open original article',
@@ -347,6 +348,7 @@ export const UI_LOCALES = {
     savedSuccessfully: 'saved successfully!',
     notificationReady: 'Ready: {format}',
     notificationReadyWithImageFailures: 'Ready: {format}. Image translation failures: {count}.',
+    notificationReadyWithoutAbstract: 'The TL;DR could not be generated.',
     notificationSummaryReady: 'Summary ready',
     pleaseEnterAtLeastOneApiKey: 'Please enter at least one API key',
     invalidOpenAiKeyFormat: 'Invalid OpenAI API key format (should start with sk-)',
@@ -564,7 +566,6 @@ export const UI_LOCALES = {
     // PDF generation errors
     errorPdfNoContent: 'No content to generate PDF',
     errorNoContentToConvert: 'No content to convert to audio',
-    errorNoApiKeyForTextPrep: 'No API key provided for text preparation',
     errorNoTtsApiKey: 'No {provider} API key provided for TTS',
     errorPdfLoadStylesFailed: 'Failed to load styles: {status}',
     errorPdfLoadStylesError: 'Failed to load PDF styles: {error}',
@@ -747,10 +748,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: 'Loading images: {current}/{total}...',
     imageTranslationProvider: 'Image translation provider',
     translateImagesOpenAiHint: 'Uses OpenAI to translate text in images.',
-    translateImagesOpenRouterHint: 'Uses the selected OpenRouter model to edit text on images',
+    translateImagesOpenRouterHint: 'Uses the selected OpenRouter model to translate text in images.',
     imageTranslationModelHint: 'Image model: {model}',
     imageTranslationModel: 'Image model',
-    errorImageModelUnsupported: 'Select a supported Google image model.',
+    errorImageModelUnsupported: 'Select a supported image model.',
     statusAnalyzingImage: 'Analyzing image {current}/{total}...',
     statusTranslatingImage: 'Translating image {current}/{total}...',
     errorApiKeyRead: 'Could not read the saved API key. Please try again.',
@@ -1030,6 +1031,7 @@ export const UI_LOCALES = {
     savedSuccessfully: 'успешно сохранён!',
     notificationReady: 'Готово: {format}',
     notificationReadyWithImageFailures: 'Готово: {format}. Не переведено изображений: {count}.',
+    notificationReadyWithoutAbstract: 'Не удалось создать TL;DR.',
     notificationSummaryReady: 'Краткое содержание готово',
     pleaseEnterAtLeastOneApiKey: 'Пожалуйста, введите хотя бы один API-ключ',
     invalidOpenAiKeyFormat: 'Неверный формат API-ключа OpenAI (должен начинаться с sk-)',
@@ -1148,7 +1150,6 @@ export const UI_LOCALES = {
     errorExecutePiperTTSNotFound: 'Функция executePiperTTS не найдена. Доступные ключи: {keys}',
     errorExecutePiperTTSNotPromise: 'executePiperTTS не вернул promise. Получено: {type}',
     errorNoContentToConvert: 'Нет контента для преобразования в аудио',
-    errorNoApiKeyForTextPrep: 'Не предоставлен API-ключ для подготовки текста',
     errorNoTtsApiKey: 'Не предоставлен API-ключ {provider} для TTS',
     
     // User-friendly error messages with actionable advice
@@ -1313,6 +1314,7 @@ export const UI_LOCALES = {
     statusCancelled: 'Отменено',
     statusError: 'Ошибка',
     statusProcessingInterrupted: 'Обработка была прервана. Пожалуйста, попробуйте снова.',
+    errorPdfPrintTabClosed: 'Создание PDF остановлено, потому что вкладка печати была закрыта.',
     statusLoadingStyles: 'Загрузка стилей...',
     deleteFromHistory: 'Удалить из истории',
     openOriginalArticle: 'Открыть оригинальную статью',
@@ -1484,10 +1486,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: 'Загрузка изображений: {current}/{total}…',
     imageTranslationProvider: 'Провайдер перевода изображений',
     translateImagesOpenAiHint: 'Использует OpenAI для перевода текста на изображениях.',
-    translateImagesOpenRouterHint: 'Использует выбранную модель OpenRouter для перевода текста на изображениях',
+    translateImagesOpenRouterHint: 'Использует выбранную модель OpenRouter для перевода текста на изображениях.',
     imageTranslationModelHint: 'Модель изображений: {model}',
     imageTranslationModel: 'Модель изображений',
-    errorImageModelUnsupported: 'Выберите поддерживаемую модель изображений Google.',
+    errorImageModelUnsupported: 'Выберите поддерживаемую модель изображений.',
     statusAnalyzingImage: 'Анализ изображения {current}/{total}…',
     statusTranslatingImage: 'Перевод изображения {current}/{total}…',
     errorApiKeyRead: 'Не удалось прочитать сохранённый API-ключ. Повторите попытку.',
@@ -1765,6 +1767,7 @@ export const UI_LOCALES = {
     savedSuccessfully: 'успішно збережено!',
     notificationReady: 'Готово: {format}',
     notificationReadyWithImageFailures: 'Готово: {format}. Помилки перекладу зображень: {count}.',
+    notificationReadyWithoutAbstract: 'Не вдалося створити TL;DR.',
     notificationSummaryReady: 'Стислий виклад готовий',
     pleaseEnterAtLeastOneApiKey: 'Будь ласка, введіть хоча б один API-ключ',
     invalidOpenAiKeyFormat: 'Невірний формат API-ключа OpenAI (має починатися з sk-)',
@@ -2016,6 +2019,7 @@ export const UI_LOCALES = {
     statusCancelled: 'Скасовано',
     statusError: 'Помилка',
     statusProcessingInterrupted: 'Обробка була перервана. Будь ласка, спробуйте ще раз.',
+    errorPdfPrintTabClosed: 'Створення PDF зупинено, оскільки вкладку друку закрито.',
     statusLoadingStyles: 'Завантаження стилів...',
     deleteFromHistory: 'Видалити з історії',
     openOriginalArticle: 'Відкрити оригінальну статтю',
@@ -2108,7 +2112,6 @@ export const UI_LOCALES = {
     errorAiEmptySelectors: 'ШІ повернув порожні селектори',
     errorContentEmpty: 'Витягнутий контент порожній.',
     errorNoContentToConvert: 'Немає контенту для перетворення в аудіо',
-    errorNoApiKeyForTextPrep: 'Не надано API-ключ для підготовки тексту',
     errorNoTtsApiKey: 'Не надано API-ключ {provider} для TTS',
     errorOpenaiVoiceUnavailable: 'Виберіть підтримуваний голос OpenAI в налаштуваннях аудіо. Збережений голос недоступний: {voice}.',
     voiceUnavailable: '{voice} (недоступний)',
@@ -2222,10 +2225,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: 'Завантаження зображень: {current}/{total}…',
     imageTranslationProvider: 'Провайдер перекладу зображень',
     translateImagesOpenAiHint: 'Використовує OpenAI для перекладу тексту на зображеннях.',
-    translateImagesOpenRouterHint: 'Використовує вибрану модель OpenRouter для перекладу тексту на зображеннях',
+    translateImagesOpenRouterHint: 'Використовує вибрану модель OpenRouter для перекладу тексту на зображеннях.',
     imageTranslationModelHint: 'Модель зображень: {model}',
     imageTranslationModel: 'Модель зображень',
-    errorImageModelUnsupported: 'Виберіть підтримувану модель зображень Google.',
+    errorImageModelUnsupported: 'Виберіть підтримувану модель зображень.',
     statusAnalyzingImage: 'Аналіз зображення {current}/{total}…',
     statusTranslatingImage: 'Переклад зображення {current}/{total}…',
     errorApiKeyRead: 'Не вдалося прочитати збережений API-ключ. Спробуйте ще раз.',
@@ -2502,6 +2505,7 @@ export const UI_LOCALES = {
     savedSuccessfully: 'erfolgreich gespeichert!',
     notificationReady: 'Fertig: {format}',
     notificationReadyWithImageFailures: 'Fertig: {format}. Fehler bei der Bildübersetzung: {count}.',
+    notificationReadyWithoutAbstract: 'Die Kurzzusammenfassung konnte nicht erstellt werden.',
     notificationSummaryReady: 'Zusammenfassung fertig',
     pleaseEnterAtLeastOneApiKey: 'Bitte geben Sie mindestens einen API-Schlüssel ein',
     invalidOpenAiKeyFormat: 'Ungültiges OpenAI API-Schlüsselformat (sollte mit sk- beginnen)',
@@ -2767,6 +2771,7 @@ export const UI_LOCALES = {
     statusCancelled: 'Abgebrochen',
     statusError: 'Fehler',
     statusProcessingInterrupted: 'Verarbeitung wurde unterbrochen. Bitte versuchen Sie es erneut.',
+    errorPdfPrintTabClosed: 'Die PDF-Erstellung wurde abgebrochen, weil der Druck-Tab geschlossen wurde.',
     statusLoadingStyles: 'Lade Stile...',
     deleteFromHistory: 'Aus Verlauf löschen',
     openOriginalArticle: 'Originalartikel öffnen',
@@ -2837,7 +2842,6 @@ export const UI_LOCALES = {
     errorAiEmptySelectors: 'KI hat leere Selektoren zurückgegeben',
     errorContentEmpty: 'Extrahierter Inhalt ist leer.',
     errorNoContentToConvert: 'Kein Inhalt zum Konvertieren in Audio',
-    errorNoApiKeyForTextPrep: 'Kein API-Schlüssel für die Textvorbereitung bereitgestellt',
     errorNoTtsApiKey: 'Kein {provider} API-Schlüssel für TTS bereitgestellt',
     errorOpenaiVoiceUnavailable: 'Wählen Sie in den Audioeinstellungen eine unterstützte OpenAI-Stimme. Diese gespeicherte Stimme ist nicht verfügbar: {voice}.',
     voiceUnavailable: '{voice} (nicht verfügbar)',
@@ -2958,10 +2962,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: 'Bilder werden geladen: {current}/{total}…',
     imageTranslationProvider: 'Anbieter für Bildübersetzung',
     translateImagesOpenAiHint: 'Übersetzt Text in Bildern mit OpenAI.',
-    translateImagesOpenRouterHint: 'Verwendet das ausgewählte OpenRouter-Modell zum Übersetzen von Text in Bildern',
+    translateImagesOpenRouterHint: 'Übersetzt Text in Bildern mit dem ausgewählten OpenRouter-Modell.',
     imageTranslationModelHint: 'Bildmodell: {model}',
     imageTranslationModel: 'Bildmodell',
-    errorImageModelUnsupported: 'Wählen Sie ein unterstütztes Google-Bildmodell aus.',
+    errorImageModelUnsupported: 'Wählen Sie ein unterstütztes Bildmodell aus.',
     statusAnalyzingImage: 'Bild {current}/{total} wird analysiert…',
     statusTranslatingImage: 'Bild {current}/{total} wird übersetzt…',
     errorApiKeyRead: 'Der gespeicherte API-Schlüssel konnte nicht gelesen werden. Bitte versuchen Sie es erneut.',
@@ -3238,6 +3242,7 @@ export const UI_LOCALES = {
     savedSuccessfully: 'enregistré avec succès!',
     notificationReady: 'Prêt : {format}',
     notificationReadyWithImageFailures: 'Prêt : {format}. Échecs de traduction d’images : {count}.',
+    notificationReadyWithoutAbstract: 'Le résumé court n’a pas pu être généré.',
     notificationSummaryReady: 'Résumé prêt',
     pleaseEnterAtLeastOneApiKey: 'Veuillez entrer au moins une clé API',
     invalidOpenAiKeyFormat: 'Format de clé API OpenAI invalide (doit commencer par sk-)',
@@ -3498,6 +3503,7 @@ export const UI_LOCALES = {
     statusCancelled: 'Annulé',
     statusError: 'Erreur',
     statusProcessingInterrupted: 'Le traitement a été interrompu. Veuillez réessayer.',
+    errorPdfPrintTabClosed: 'La création du PDF s’est arrêtée, car l’onglet d’impression a été fermé.',
     statusLoadingStyles: 'Chargement des styles...',
     deleteFromHistory: 'Supprimer de l\'historique',
     openOriginalArticle: 'Ouvrir l\'article original',
@@ -3585,7 +3591,6 @@ export const UI_LOCALES = {
 
     errorNoContentToConvert: 'Aucun contenu à convertir en audio',
 
-    errorNoApiKeyForTextPrep: 'Aucune clé API fournie pour la préparation du texte',
 
     errorNoTtsApiKey: 'Aucune clé API {provider} fournie pour TTS',
     errorOpenaiVoiceUnavailable: 'Sélectionnez une voix OpenAI prise en charge dans les paramètres audio. Cette voix enregistrée est indisponible : {voice}.',
@@ -3707,10 +3712,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: 'Chargement des images : {current}/{total}…',
     imageTranslationProvider: 'Fournisseur de traduction d’images',
     translateImagesOpenAiHint: 'Utilise OpenAI pour traduire le texte des images.',
-    translateImagesOpenRouterHint: 'Utilise le modèle OpenRouter sélectionné pour traduire le texte dans les images',
+    translateImagesOpenRouterHint: 'Utilise le modèle OpenRouter sélectionné pour traduire le texte dans les images.',
     imageTranslationModelHint: 'Modèle d’image : {model}',
     imageTranslationModel: 'Modèle d’image',
-    errorImageModelUnsupported: 'Sélectionnez un modèle d’image Google pris en charge.',
+    errorImageModelUnsupported: 'Sélectionnez un modèle d’image pris en charge.',
     statusAnalyzingImage: 'Analyse de l’image {current}/{total}…',
     statusTranslatingImage: 'Traduction de l’image {current}/{total}…',
     errorApiKeyRead: 'Impossible de lire la clé API enregistrée. Veuillez réessayer.',
@@ -3987,6 +3992,7 @@ export const UI_LOCALES = {
     savedSuccessfully: 'guardado exitosamente!',
     notificationReady: 'Listo: {format}',
     notificationReadyWithImageFailures: 'Listo: {format}. Errores al traducir imágenes: {count}.',
+    notificationReadyWithoutAbstract: 'No se pudo generar el resumen breve.',
     notificationSummaryReady: 'Resumen listo',
     pleaseEnterAtLeastOneApiKey: 'Por favor ingrese al menos una clave API',
     invalidOpenAiKeyFormat: 'Formato de clave API OpenAI inválido (debe comenzar con sk-)',
@@ -4246,6 +4252,7 @@ export const UI_LOCALES = {
     statusCancelled: 'Cancelado',
     statusError: 'Error',
     statusProcessingInterrupted: 'El procesamiento fue interrumpido. Por favor, inténtelo de nuevo.',
+    errorPdfPrintTabClosed: 'La generación del PDF se detuvo porque se cerró la pestaña de impresión.',
     statusLoadingStyles: 'Cargando estilos...',
     deleteFromHistory: 'Eliminar del historial',
     openOriginalArticle: 'Abrir artículo original',
@@ -4333,7 +4340,6 @@ export const UI_LOCALES = {
 
     errorNoContentToConvert: 'No hay contenido para convertir a audio',
 
-    errorNoApiKeyForTextPrep: 'No se proporcionó clave API para la preparación del texto',
 
     errorNoTtsApiKey: 'No se proporcionó clave API {provider} para TTS',
 
@@ -4457,10 +4463,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: 'Cargando imágenes: {current}/{total}…',
     imageTranslationProvider: 'Proveedor de traducción de imágenes',
     translateImagesOpenAiHint: 'Usa OpenAI para traducir el texto de las imágenes.',
-    translateImagesOpenRouterHint: 'Usa el modelo de OpenRouter seleccionado para traducir el texto de las imágenes',
+    translateImagesOpenRouterHint: 'Usa el modelo de OpenRouter seleccionado para traducir el texto de las imágenes.',
     imageTranslationModelHint: 'Modelo de imagen: {model}',
     imageTranslationModel: 'Modelo de imagen',
-    errorImageModelUnsupported: 'Elige un modelo de imagen de Google compatible.',
+    errorImageModelUnsupported: 'Elige un modelo de imagen compatible.',
     statusAnalyzingImage: 'Analizando imagen {current}/{total}…',
     statusTranslatingImage: 'Traduciendo imagen {current}/{total}…',
     errorApiKeyRead: 'No se pudo leer la clave API guardada. Inténtelo de nuevo.',
@@ -4737,6 +4743,7 @@ export const UI_LOCALES = {
     savedSuccessfully: 'salvato con successo!',
     notificationReady: 'Pronto: {format}',
     notificationReadyWithImageFailures: 'Pronto: {format}. Errori di traduzione delle immagini: {count}.',
+    notificationReadyWithoutAbstract: 'Impossibile generare il riepilogo breve.',
     notificationSummaryReady: 'Riassunto pronto',
     pleaseEnterAtLeastOneApiKey: 'Inserisci almeno una chiave API',
     invalidOpenAiKeyFormat: 'Formato chiave API OpenAI non valido (dovrebbe iniziare con sk-)',
@@ -4997,6 +5004,7 @@ export const UI_LOCALES = {
     statusCancelled: 'Annullato',
     statusError: 'Errore',
     statusProcessingInterrupted: 'Elaborazione interrotta. Si prega di riprovare.',
+    errorPdfPrintTabClosed: 'La generazione del PDF si è interrotta perché la scheda di stampa è stata chiusa.',
     statusLoadingStyles: 'Caricamento stili...',
     deleteFromHistory: 'Elimina dalla cronologia',
     openOriginalArticle: 'Apri articolo originale',
@@ -5084,7 +5092,6 @@ export const UI_LOCALES = {
 
     errorNoContentToConvert: 'Nessun contenuto da convertire in audio',
 
-    errorNoApiKeyForTextPrep: 'Nessuna chiave API fornita per la preparazione del testo',
 
     errorNoTtsApiKey: 'Nessuna chiave API {provider} fornita per TTS',
     errorOpenaiVoiceUnavailable: 'Seleziona una voce OpenAI supportata nelle impostazioni audio. Questa voce salvata non è disponibile: {voice}.',
@@ -5206,10 +5213,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: 'Caricamento immagini: {current}/{total}…',
     imageTranslationProvider: 'Fornitore per la traduzione delle immagini',
     translateImagesOpenAiHint: 'Usa OpenAI per tradurre il testo nelle immagini.',
-    translateImagesOpenRouterHint: 'Usa il modello OpenRouter selezionato per tradurre il testo nelle immagini',
+    translateImagesOpenRouterHint: 'Usa il modello OpenRouter selezionato per tradurre il testo nelle immagini.',
     imageTranslationModelHint: 'Modello immagini: {model}',
     imageTranslationModel: 'Modello per immagini',
-    errorImageModelUnsupported: 'Seleziona un modello Google per immagini supportato.',
+    errorImageModelUnsupported: 'Seleziona un modello per immagini supportato.',
     statusAnalyzingImage: 'Analisi dell’immagine {current}/{total}…',
     statusTranslatingImage: 'Traduzione dell’immagine {current}/{total}…',
     errorApiKeyRead: 'Impossibile leggere la chiave API salvata. Riprova.',
@@ -5486,6 +5493,7 @@ export const UI_LOCALES = {
     savedSuccessfully: 'salvo com sucesso!',
     notificationReady: 'Pronto: {format}',
     notificationReadyWithImageFailures: 'Pronto: {format}. Falhas na tradução de imagens: {count}.',
+    notificationReadyWithoutAbstract: 'Não foi possível gerar o resumo breve.',
     notificationSummaryReady: 'Resumo pronto',
     pleaseEnterAtLeastOneApiKey: 'Por favor insira pelo menos uma chave API',
     invalidOpenAiKeyFormat: 'Formato de chave API OpenAI inválido (deve começar com sk-)',
@@ -5746,6 +5754,7 @@ export const UI_LOCALES = {
     statusCancelled: 'Cancelado',
     statusError: 'Erro',
     statusProcessingInterrupted: 'Processamento foi interrompido. Por favor, tente novamente.',
+    errorPdfPrintTabClosed: 'A criação do PDF foi interrompida porque a aba de impressão foi fechada.',
     statusLoadingStyles: 'Carregando estilos...',
     deleteFromHistory: 'Excluir do histórico',
     openOriginalArticle: 'Abrir artigo original',
@@ -5833,7 +5842,6 @@ export const UI_LOCALES = {
 
     errorNoContentToConvert: 'Nenhum conteúdo para converter em áudio',
 
-    errorNoApiKeyForTextPrep: 'Nenhuma chave API fornecida para preparação do texto',
 
     errorNoTtsApiKey: 'Nenhuma chave API {provider} fornecida para TTS',
     errorOpenaiVoiceUnavailable: 'Selecione uma voz OpenAI compatível nas configurações de áudio. Esta voz salva está indisponível: {voice}.',
@@ -5955,10 +5963,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: 'Carregando imagens: {current}/{total}…',
     imageTranslationProvider: 'Provedor de tradução de imagens',
     translateImagesOpenAiHint: 'Usa a OpenAI para traduzir texto em imagens.',
-    translateImagesOpenRouterHint: 'Usa o modelo OpenRouter selecionado para traduzir o texto nas imagens',
+    translateImagesOpenRouterHint: 'Usa o modelo selecionado do OpenRouter para traduzir texto em imagens.',
     imageTranslationModelHint: 'Modelo de imagem: {model}',
     imageTranslationModel: 'Modelo de imagem',
-    errorImageModelUnsupported: 'Selecione um modelo de imagem do Google compatível.',
+    errorImageModelUnsupported: 'Selecione um modelo de imagem compatível.',
     statusAnalyzingImage: 'Analisando imagem {current}/{total}…',
     statusTranslatingImage: 'Traduzindo imagem {current}/{total}…',
     errorApiKeyRead: 'Não foi possível ler a chave API salva. Tente novamente.',
@@ -6228,6 +6236,7 @@ export const UI_LOCALES = {
     savedSuccessfully: '保存成功！',
     notificationReady: '已就绪：{format}',
     notificationReadyWithImageFailures: '已就绪：{format}。图片翻译失败：{count} 张。',
+    notificationReadyWithoutAbstract: '未能生成简短摘要。',
     notificationSummaryReady: '摘要已就绪',
     pleaseEnterAtLeastOneApiKey: '请输入至少一个API密钥',
     invalidOpenAiKeyFormat: '无效的OpenAI API密钥格式（应以sk-开头）',
@@ -6498,6 +6507,7 @@ export const UI_LOCALES = {
     statusCancelled: '已取消',
     statusError: '错误',
     statusProcessingInterrupted: '处理被中断。请重试。',
+    errorPdfPrintTabClosed: '打印标签页已关闭，PDF 生成已停止。',
     statusLoadingStyles: '正在加载样式...',
     deleteFromHistory: '从历史记录中删除',
     openOriginalArticle: '打开原文',
@@ -6573,7 +6583,6 @@ export const UI_LOCALES = {
 
     errorNoContentToConvert: '没有要转换为音频的内容',
 
-    errorNoApiKeyForTextPrep: '未提供用于文本准备的API密钥',
 
     errorNoTtsApiKey: '未提供{provider} TTS的API密钥',
     errorOpenaiVoiceUnavailable: '请在音频设置中选择受支持的 OpenAI 声音。已保存的声音不可用：{voice}。',
@@ -6695,10 +6704,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: '正在加载图片：{current}/{total}…',
     imageTranslationProvider: '图像翻译提供商',
     translateImagesOpenAiHint: '使用 OpenAI 翻译图片中的文字。',
-    translateImagesOpenRouterHint: '使用所选的 OpenRouter 模型翻译图像中的文字',
+    translateImagesOpenRouterHint: '使用所选的 OpenRouter 模型翻译图片中的文字。',
     imageTranslationModelHint: '图像模型：{model}',
     imageTranslationModel: '图像模型',
-    errorImageModelUnsupported: '请选择受支持的 Google 图像模型。',
+    errorImageModelUnsupported: '请选择受支持的图像模型。',
     statusAnalyzingImage: '正在分析图片 {current}/{total}…',
     statusTranslatingImage: '正在翻译图片 {current}/{total}…',
     errorApiKeyRead: '无法读取已保存的 API 密钥。请重试。',
@@ -6968,6 +6977,7 @@ export const UI_LOCALES = {
     savedSuccessfully: 'が正常に保存されました！',
     notificationReady: '準備完了: {format}',
     notificationReadyWithImageFailures: '準備完了: {format}。翻訳できなかった画像: {count} 枚。',
+    notificationReadyWithoutAbstract: '短い要約を生成できませんでした。',
     notificationSummaryReady: '要約の準備ができました',
     pleaseEnterAtLeastOneApiKey: '少なくとも1つのAPIキーを入力してください',
     invalidOpenAiKeyFormat: '無効なOpenAI APIキー形式（sk-で始まる必要があります）',
@@ -7235,6 +7245,7 @@ export const UI_LOCALES = {
     statusCancelled: 'キャンセル済み',
     statusError: 'エラー',
     statusProcessingInterrupted: '処理が中断されました。もう一度お試しください。',
+    errorPdfPrintTabClosed: '印刷タブが閉じられたため、PDF の生成が停止しました。',
     statusLoadingStyles: 'スタイルを読み込み中...',
     deleteFromHistory: '履歴から削除',
     openOriginalArticle: '元の記事を開く',
@@ -7317,7 +7328,6 @@ export const UI_LOCALES = {
 
     errorNoContentToConvert: 'オーディオに変換するコンテンツがありません',
 
-    errorNoApiKeyForTextPrep: 'テキスト準備用のAPIキーが提供されていません',
 
     errorNoTtsApiKey: 'TTS用の{provider} APIキーが提供されていません',
     errorOpenaiVoiceUnavailable: '音声設定で対応する OpenAI の声を選択してください。保存済みの声は利用できません：{voice}。',
@@ -7439,10 +7449,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: '画像を読み込み中：{current}/{total}…',
     imageTranslationProvider: '画像翻訳プロバイダー',
     translateImagesOpenAiHint: 'OpenAI で画像内のテキストを翻訳します。',
-    translateImagesOpenRouterHint: '選択した OpenRouter モデルで画像内のテキストを翻訳します',
+    translateImagesOpenRouterHint: '選択した OpenRouter モデルで画像内のテキストを翻訳します。',
     imageTranslationModelHint: '画像モデル：{model}',
     imageTranslationModel: '画像モデル',
-    errorImageModelUnsupported: '対応している Google の画像モデルを選択してください。',
+    errorImageModelUnsupported: '対応している画像モデルを選択してください。',
     statusAnalyzingImage: '画像 {current}/{total} を分析中…',
     statusTranslatingImage: '画像 {current}/{total} を翻訳中…',
     errorApiKeyRead: '保存した API キーを読み取れませんでした。再試行してください。',
@@ -7712,6 +7722,7 @@ export const UI_LOCALES = {
     savedSuccessfully: '가 성공적으로 저장되었습니다!',
     notificationReady: '준비됨: {format}',
     notificationReadyWithImageFailures: '준비됨: {format}. 번역하지 못한 이미지: {count}개.',
+    notificationReadyWithoutAbstract: '짧은 요약을 생성하지 못했습니다.',
     notificationSummaryReady: '요약 준비됨',
     pleaseEnterAtLeastOneApiKey: '최소한 하나의 API 키를 입력하세요',
     invalidOpenAiKeyFormat: '잘못된 OpenAI API 키 형식 (sk-로 시작해야 함)',
@@ -7979,6 +7990,7 @@ export const UI_LOCALES = {
     statusCancelled: '취소됨',
     statusError: '오류',
     statusProcessingInterrupted: '처리가 중단되었습니다. 다시 시도해 주세요.',
+    errorPdfPrintTabClosed: '인쇄 탭이 닫혀 PDF 생성이 중단되었습니다.',
     statusLoadingStyles: '스타일 로드 중...',
     deleteFromHistory: '기록에서 삭제',
     openOriginalArticle: '원본 기사 열기',
@@ -8062,7 +8074,6 @@ export const UI_LOCALES = {
 
     errorNoContentToConvert: '오디오로 변환할 콘텐츠가 없습니다',
 
-    errorNoApiKeyForTextPrep: '텍스트 준비를 위한 API 키가 제공되지 않았습니다',
 
     errorNoTtsApiKey: 'TTS용 {provider} API 키가 제공되지 않았습니다',
     errorOpenaiVoiceUnavailable: '오디오 설정에서 지원되는 OpenAI 음성을 선택하세요. 저장된 음성을 사용할 수 없습니다: {voice}.',
@@ -8184,10 +8195,10 @@ export const UI_LOCALES = {
     statusLoadingImagesProgress: '이미지 로드 중: {current}/{total}…',
     imageTranslationProvider: '이미지 번역 제공업체',
     translateImagesOpenAiHint: 'OpenAI를 사용해 이미지 속 텍스트를 번역합니다.',
-    translateImagesOpenRouterHint: '선택한 OpenRouter 모델을 사용하여 이미지의 텍스트를 번역합니다',
+    translateImagesOpenRouterHint: '선택한 OpenRouter 모델로 이미지 속 텍스트를 번역합니다.',
     imageTranslationModelHint: '이미지 모델: {model}',
     imageTranslationModel: '이미지 모델',
-    errorImageModelUnsupported: '지원되는 Google 이미지 모델을 선택하세요.',
+    errorImageModelUnsupported: '지원되는 이미지 모델을 선택하세요.',
     statusAnalyzingImage: '이미지 {current}/{total} 분석 중…',
     statusTranslatingImage: '이미지 {current}/{total} 번역 중…',
     errorApiKeyRead: '저장된 API 키를 읽을 수 없습니다. 다시 시도하세요.',
@@ -8254,11 +8265,12 @@ export function formatStatusUpdate(key, langCode, params = {}) {
   return { status: formatMessage(key, langCode, params), statusTranslationKey: key, statusTranslationParams: params };
 }
 
-/** @returns {import('./types.js').LocalizedMessage} */
-export function getDocumentReadyMessage(format, count = 0) {
-  return count > 0
+/** @returns {import('./types.js').LocalizedMessage & {detailKey?: string}} */
+export function getDocumentReadyMessage(format, count = 0, documentAbstractFailed = false) {
+  const message = count > 0
     ? { key: 'notificationReadyWithImageFailures', params: { format, count } }
     : { key: 'notificationReady', params: { format } };
+  return documentAbstractFailed ? { ...message, detailKey: 'notificationReadyWithoutAbstract' } : message;
 }
 
 /** @param {unknown} format */

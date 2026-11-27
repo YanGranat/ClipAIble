@@ -61,7 +61,6 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
     hasData: !!request.data,
     dataKeys: request.data ? Object.keys(request.data) : [],
     mode: request.data?.mode,
-    url: request.data?.url,
     hasTabId: !!request.data?.tabId,
     tabId: request.data?.tabId,
     hasHtml: !!request.data?.html,
@@ -73,11 +72,8 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
   // DETAILED LOGGING: All request data and settings
   log('=== ALL REQUEST DATA AND SETTINGS ===', {
     // Basic data
-    url: request.data?.url,
-    title: request.data?.title,
     tabId: request.data?.tabId,
     htmlLength: request.data?.html?.length || 0,
-    htmlPreview: request.data?.html ? request.data.html.substring(0, 500) + '...' : null,
     
     // Processing settings
     mode: request.data?.mode,
@@ -88,8 +84,6 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
     // AI settings
     model: request.data?.model,
     hasApiKey: !!request.data?.apiKey,
-    apiKeyLength: request.data?.apiKey?.length || 0,
-    apiKeyPrefix: request.data?.apiKey ? (request.data.apiKey.startsWith('sk-') ? 'sk-' : request.data.apiKey.startsWith('AIza') ? 'AIza' : request.data.apiKey.startsWith('xai-') ? 'xai-' : 'other') : null,
     apiProvider: request.data?.apiProvider,
     
     // Translation settings

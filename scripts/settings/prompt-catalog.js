@@ -61,7 +61,7 @@ Return JSON:
   "publishDate": "Date in ISO format (YYYY-MM-DD, YYYY-MM, or YYYY) or empty string if not found",
   "content": [
     {"type": "heading", "level": 1, "text": "Heading text"},
-    {"type": "subtitle", "text": "Subtitle/standfirst text below title (if present)", "html": "<p class="standfirst">Subtitle text</p>"},
+    {"type": "subtitle", "text": "Subtitle text", "html": "<p>Subtitle text</p>"},
     {"type": "paragraph", "text": "Text with <a href=\\"url\\">links</a> and <strong>formatting</strong>."},
     {"type": "image", "src": "https://full-url/image.jpg", "alt": "Description"},
     {"type": "quote", "text": "Quote text..."},
@@ -75,7 +75,7 @@ CRITICAL - SUBTITLE EXTRACTION:
 - Look for introductory text (standfirst/deck/subtitle) that appears AFTER the title but BEFORE the main article content
 - This is usually a short paragraph (50-300 characters) that summarizes or introduces the article
 - Common patterns: paragraph immediately after h1, text in elements with classes like "standfirst", "subtitle", "deck", "lede", "intro"
-- If you find such text, add it as {"type": "subtitle", "text": "...", "html": "<p class="standfirst">...</p>"} RIGHT AFTER the title heading
+- If you find such text, add a subtitle item right after the title heading, using the structure above.
 - If no subtitle/standfirst exists, do NOT add a subtitle item
 
 RULES FOR publishDate (CRITICAL - MUST FOLLOW):
@@ -124,7 +124,6 @@ CRITICAL - ABSOLUTE VERBATIM COPYING REQUIRED:
 - NEVER replace words with synonyms, even if they seem equivalent
 - NEVER paraphrase or rephrase any text, even if it seems clearer
 - Copy the exact words on the page without substituting synonyms.
-- If you see "Longevity Priority", write EXACTLY "Longevity Priority" - NOT "Life Extension Priority" or any translation
 - Preserve ALL original wording, terminology, and phrasing exactly as written
 - Do NOT "improve" or "clarify" the text - your job is to COPY, not to edit
 
@@ -278,7 +277,6 @@ HEADING HIERARCHY (CRITICAL FOR MULTI-PAGE DOCUMENTS):
   - A heading with a much smaller font than another heading should be a lower level (H2 vs H1, H3 vs H2, etc.)
   - Do NOT treat journal names, publication info, or small decorative text as H1 just because they appear at the top
   - The main document title is usually the LARGEST heading on the page - use it as H1
-  - If you see "Postmodern Openings" in small font and "Fear of Death..." in much larger font, "Postmodern Openings" is NOT H1
 - First page: Determine H1 based on the largest/most prominent heading (usually document title)
   - Compare ALL headings on the page by font size
   - The heading with the LARGEST font size is H1
@@ -317,7 +315,7 @@ OUTPUT FORMAT - JSON RESPONSE REQUIRED:
 You MUST return a JSON object with the following EXACT structure:
 {
   "text": "Markdown content of this page",
-  "mergeWithPrevious": "direct" | "newline" | "paragraph",
+  "mergeWithPrevious": "paragraph",
   "metadata": {
     "title": "...",
     "author": "...",
@@ -372,7 +370,7 @@ Before deciding, think: Does this page start with a NEW LINE, or does it continu
 
 SPECIAL CASE - HEADING ON PAGE BOUNDARY:
 When analyzing mergeWithPrevious, pay special attention to headings that appear at the end of the previous page:
-- If previous page ends with a heading (like "## Types of Black Holes") and this page starts with text that belongs under that heading, use "newline"
+- If the previous page ends with a heading and this page starts with text that belongs under it, use "newline".
 - The heading and its content are logically connected, but they appear on different pages due to page break
 - This ensures the heading stays on previous page, and text under it starts on this page with proper single line break
 - NEVER use "direct" in this case - it would incorrectly glue the heading and text together without any separator
@@ -542,11 +540,11 @@ OUTPUT FORMAT - JSON REQUIRED:
 Return a JSON object with this EXACT structure:
 {
   "text": "Markdown content of this page",
-  "mergeWithPrevious": "direct" | "newline" | "paragraph",
+  "mergeWithPrevious": "paragraph",
   "metadata": {
-    "title": "..." or "",
-    "author": "..." or "",
-    "date": "..." or ""
+    "title": "",
+    "author": "",
+    "date": ""
   }
 }
 
@@ -608,7 +606,7 @@ OUTPUT FORMAT - JSON REQUIRED:
 Return a JSON object with this EXACT structure:
 {
   "text": "Markdown content of this page",
-  "mergeWithPrevious": "direct" | "newline" | "paragraph",
+  "mergeWithPrevious": "paragraph",
   "metadata": {
     "title": "",
     "author": "",
@@ -641,8 +639,7 @@ CRITICAL - RESPONSE FORMAT:
 INPUT: Array of subtitle entries with timestamps:
 [
   {"start": 0.0, "duration": 3.5, "text": "Hello and welcome"},
-  {"start": 3.5, "duration": 2.0, "text": "to this video"},
-  ...
+  {"start": 3.5, "duration": 2.0, "text": "to this video"}
 ]
 
 YOUR TASK:
@@ -760,7 +757,7 @@ Instructions:
 1. Study the content carefully. Identify all key claims, theses, ideas, and thoughts that the content advances, argues for, or contains.
 2. Go through the content again; check for omissions; analyze and dissect it thoroughly.
 3. For each thesis provide:
-   - Short formulation: Self-contained assertion, ideally Subject–Predicate–Object. Avoid abstract nominalizations ("attraction", "formation") without concrete participants. Distilled essence, optionally slightly radicalized for clarity. No meta-markers ("the author believes", "the text states").
+   - Short formulation: Self-contained assertion, ideally Subject–Predicate–Object. State the claim with its original scope, strength, and qualifiers. Name the participants when known. No meta-markers ("the author believes", "the text states").
    - Expanded formulation: Full academic-style formulation: complete, unambiguous, every word necessary. No filler or bureaucratese.
 
 Output format: You must respond with valid JSON only. No preamble, no explanation, no markdown code fence. Exactly this structure:
@@ -835,6 +832,11 @@ export const PROMPT_IDS = /** @type {PromptId[]} */ (/* @__PURE__ */ Object.keys
 export const PROMPT_STORAGE_PREFIX = 'prompt_override_';
 export const AUDIO_PREPARATION_PROMPT_KEY = `${PROMPT_STORAGE_PREFIX}audioPreparation`;
 export const PROMPT_STORAGE_KEYS = /* @__PURE__ */ PROMPT_IDS.map(id => PROMPT_STORAGE_PREFIX + id);
+
+/** @template T @param {() => T | Promise<T>} operation @returns {Promise<T>} */
+export async function withPromptStorageLock(operation) {
+  return navigator.locks.request('clipaible-prompt-storage', operation);
+}
 
 /** @param {PromptId} id @param {unknown} value */
 export function validatePrompt(id, value) {

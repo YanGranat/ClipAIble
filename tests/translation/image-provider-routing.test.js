@@ -18,6 +18,7 @@ const run = (items, opts, status) => translateImages(items, 'en', 'fr', 'synthet
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ close: vi.fn() })));
   vi.stubGlobal('fetch', vi.fn(async url => url.endsWith('/images/edits')
     ? new Response(JSON.stringify({ data: [{ b64_json: EDITED_PNG }] }))
     : new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'yes' } }] }))));
@@ -29,6 +30,7 @@ it('uses the independent OpenAI key and dedicated high-detail classifier with a 
   const onRequestStart = vi.fn();
   expect(await run(items, { ...options(), onRequestStart })).toBe(items);
   expect(items[1]).toMatchObject({ src: `data:image/png;base64,${EDITED_PNG}`, translated: true });
+  expect(createImageBitmap).toHaveBeenCalledWith(expect.objectContaining({ type: 'image/png' }));
   expect(decryptApiKey).toHaveBeenCalledExactlyOnceWith('ENC:synthetic-image');
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(onRequestStart).toHaveBeenCalledTimes(2);

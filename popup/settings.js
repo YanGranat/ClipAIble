@@ -989,7 +989,10 @@ export function initSettings(deps) {
     
     // From models module
     updateModelList: modelsModule.updateModelList,
-    refreshLocalization: modelsModule.refreshModelLabels,
+    refreshLocalization(language) {
+      modelsModule.refreshModelLabels(language);
+      audioModule.refreshLocalization();
+    },
     selectModel: modelsModule.selectModel,
     showCustomModelDropdown: modelsModule.showCustomModelDropdown,
     showAddModelDialog: modelsModule.showAddModelDialog,

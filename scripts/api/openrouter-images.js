@@ -1,7 +1,7 @@
 // @ts-check
 import { CONFIG } from '../utils/config.js';
 import { fetchBufferedResponse } from './fetch-buffered-response.js';
-import { createImageTranslationPrompt, readRasterBase64, readRasterDataUrl } from './image-data.js';
+import { assertRasterDecodes, createImageTranslationPrompt, readRasterBase64, readRasterDataUrl } from './image-data.js';
 import { DEFAULT_OPENROUTER_IMAGE_MODEL, isOpenRouterImageModel } from './image-translation-catalog.js';
 
 function failure(status) {
@@ -59,15 +59,14 @@ export async function translateImageWithOpenRouter(imageData, targetLang, apiKey
     const result = await response.json();
     await check();
     if (result?.error || !Array.isArray(result?.data) || result.data.length !== 1 || result.data[0]?.error) throw failure();
-    const { format, bytes, dataUrl } = readRasterBase64(result.data[0]?.b64_json, { exported: true, limitLength: true });
-    if (result.output_format !== undefined && result.output_format !== format) throw failure();
-    if (editingOptions.output_format && editingOptions.output_format !== format) throw failure();
+    const raster = readRasterBase64(result.data[0]?.b64_json, { exported: true, limitLength: true });
+    if (result.output_format !== undefined && result.output_format !== raster.format) throw failure();
+    if (editingOptions.output_format && editingOptions.output_format !== raster.format) throw failure();
     await check();
-    if (dataUrl === source) return null;
-    const bitmap = await createImageBitmap(new Blob([bytes], { type: `image/${format}` }));
-    bitmap.close();
+    if (raster.dataUrl === source) return null;
+    await assertRasterDecodes(raster);
     await check();
-    return dataUrl;
+    return raster.dataUrl;
   } catch (error) {
     if (cancelled && error === cancellationError) throw error;
     if (requestOptions.signal?.aborted) throw requestOptions.signal.reason;

@@ -187,7 +187,6 @@ export function initCore(deps) {
     // From processing module
     handleCancel: processingModule.handleCancel,
     handleSavePdf: processingModule.handleSavePdf,
-    extractPageContent: processingModule.extractPageContent,
     
     // From summary module
     handleGenerateSummary: summaryModule.handleGenerateSummary,

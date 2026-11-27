@@ -317,6 +317,7 @@ export function initUI(deps) {
         ? { ...translation.params, format: formatMessage(translation.formatKey, currentLanguage) }
         : translation.params;
       text = formatMessage(translation.key, currentLanguage, params);
+      if (translation.detailKey) text += '\n' + formatMessage(translation.detailKey, currentLanguage);
     }
     elements.statusDot.className = 'status-dot';
     if (type === 'processing') {

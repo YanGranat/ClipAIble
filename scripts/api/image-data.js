@@ -104,6 +104,12 @@ export function readRasterDataUrl(imageData) {
   return readRasterBase64(match[2], { format: match[1] });
 }
 
+/** @param {ReturnType<typeof readRasterBase64>} raster */
+export async function assertRasterDecodes({ format, bytes }) {
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: `image/${format}` }));
+  bitmap.close();
+}
+
 export function createImageTranslationPrompt(targetLanguage, options = {}) {
   return renderPrompt('translateImage', options, { targetLanguage: JSON.stringify(targetLanguage.trim()) });
 }

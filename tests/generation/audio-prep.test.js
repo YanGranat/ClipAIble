@@ -47,10 +47,7 @@ describe('generation/audio-prep', () => {
 
       const result = contentToPlainText(content);
 
-      expect(result).toContain('Main Heading');
-      expect(result).toContain('Content after heading');
-      // Headings should have newlines for natural pauses
-      expect(result).toMatch(/Main Heading/);
+      expect(result).toContain('Main Heading\n\nContent after heading');
     });
 
     it('keeps the quote without adding an untranslated label', () => {

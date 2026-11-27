@@ -42,6 +42,27 @@ it('rejects an idle export with unmet requirements and restores Ready only once 
   expect(setStatus.mock.lastCall.slice(0, 2)).toEqual(['ready', 'ready']);
 });
 
+it('presents a slow export readiness result while unchanged idle polling continues', async () => {
+  vi.useFakeTimers();
+  try {
+    const getExportReadiness = vi.fn(() => new Promise(resolve => {
+      setTimeout(() => resolve({ key: 'pleaseEnterGeminiApiKey' }), 3000);
+    }));
+    const { state, savePdfBtn, setStatus } = createObserver({ getExportReadiness });
+    vi.stubGlobal('requestAnimationFrame', callback => setTimeout(callback, 0));
+    chrome.runtime.sendMessage.mockImplementation((_message, callback) => callback({ isProcessing: false, phase: 'idle' }));
+
+    state.startStatePolling();
+    await vi.advanceTimersByTimeAsync(3100);
+
+    expect(savePdfBtn.disabled).toBe(true);
+    expect(setStatus.mock.lastCall.slice(0, 2)).toEqual(['error', 'pleaseEnterGeminiApiKey']);
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
 it('does not reuse a prior successful audio export to admit a newly blocked export after reopening', async () => {
   const getExportReadiness = vi.fn(async () => ({ key: 'pleaseEnterOpenRouterApiKey' }));
   const { state, savePdfBtn, setStatus, paint } = createObserver({ getExportReadiness });
@@ -162,11 +183,13 @@ it.each(['cancelled', 'old error', 'connection failure'])('does not remove a new
 });
 
 it.each([
-  [2, 'Ready: PDF. Image translation failures: 2.', 'notificationReadyWithImageFailures'],
-  [undefined, 'Ready: PDF', 'notificationReady']
-])('displays the final document status for image failure count %s', async (imageTranslationFailureCount, text, key) => {
+  [2, false, 'Ready: PDF. Image translation failures: 2.', 'notificationReadyWithImageFailures'],
+  [undefined, false, 'Ready: PDF', 'notificationReady'],
+  [undefined, true, 'Ready: PDF\nThe TL;DR could not be generated.', 'notificationReady'],
+  [2, true, 'Ready: PDF. Image translation failures: 2.\nThe TL;DR could not be generated.', 'notificationReadyWithImageFailures']
+])('displays the final document status for image failure count %s and TL;DR failure %s', async (imageTranslationFailureCount, documentAbstractFailed, text, key) => {
   const terminalState = { isProcessing: false, status: 'Done!', statusTranslationKey: 'statusDone', outputFormat: 'pdf',
-    imageTranslationFailureCount };
+    imageTranslationFailureCount, documentAbstractFailed };
   chrome.runtime.sendMessage.mockImplementation((_message, callback) => callback(terminalState));
   chrome.storage.local.get.mockResolvedValue({ processingState: terminalState });
   let render;
@@ -183,7 +206,8 @@ it.each([
   await render();
 
   expect(setStatus).toHaveBeenCalledExactlyOnceWith('ready', text, null, {
-    key, formatKey: 'formatPdf', params: imageTranslationFailureCount ? { format: 'PDF', count: imageTranslationFailureCount } : { format: 'PDF' }
+    key, formatKey: 'formatPdf', params: imageTranslationFailureCount ? { format: 'PDF', count: imageTranslationFailureCount } : { format: 'PDF' },
+    ...(documentAbstractFailed ? { detailKey: 'notificationReadyWithoutAbstract' } : {})
   });
 });
 

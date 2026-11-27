@@ -4,7 +4,7 @@ import { isValidProcessingRunId, getProcessingPhase } from '../../scripts/state/
 // Handles PDF saving, cancellation, and content extraction
 
 import { DEFAULT_ELEVENLABS_TTS_MODEL } from '../../scripts/api/tts-catalog.js';
-import { getUILanguage, t, tSync } from '../../scripts/locales.js';
+import { t, tSync } from '../../scripts/locales.js';
 import { getUserFriendlyError, getUserFriendlyErrorDescriptor, createUserFriendlyError } from '../../scripts/utils/error-messages.js';
 import { getExportPageIssue, getExportSelectionIssue, inspectExportRequirements, readExportOptions } from './export-readiness.js';
 import { readOpenRouterSpeechControls } from '../settings/openrouter-speech.js';
@@ -218,46 +218,6 @@ export function initProcessing(deps) {
     
     // Default to script execution failed for unknown errors
     return 'scriptExecutionFailed';
-  }
-
-  // Function to inject into page to extract content
-  function extractPageContent() {
-    // Always use full HTML - let AI figure out what's important
-    // This ensures we don't accidentally miss content
-    const html = document.documentElement.outerHTML;
-    
-    // Get title from various sources
-    let pageTitle = document.title;
-    const h1 = document.querySelector('h1');
-    if (h1) {
-      // Clean title from Wikipedia edit section spans
-      const titleMain = h1.querySelector('.mw-page-title-main');
-      if (titleMain) {
-        pageTitle = titleMain.textContent.trim();
-      } else {
-        const clone = /** @type {Element} */ (h1.cloneNode(true));
-        clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
-        const cleanTitle = clone.textContent.trim();
-        // Only use h1 if it's not just numbers (avoid counters/views on some sites)
-        if (cleanTitle && !/^\d+$/.test(cleanTitle.trim())) {
-          pageTitle = cleanTitle;
-        }
-      }
-    }
-    
-    const images = Array.from(document.querySelectorAll('img')).map(img => ({
-      src: img.src,
-      alt: img.alt || '',
-      width: img.naturalWidth,
-      height: img.naturalHeight
-    }));
-
-    return {
-      html: html,
-      images: images,
-      url: window.location.href,
-      title: pageTitle
-    };
   }
 
   function sourcePageChanged() {
@@ -633,7 +593,7 @@ export function initProcessing(deps) {
       if (response?.started !== true || !isValidProcessingRunId(response.processingRunId) || response.success === false || (response.error && typeof response.error !== 'string')) {
         const translationKey = response?.translationKey || 'errorProcessingNotStarted';
         const translationParams = response?.translationParams || {};
-        throw Object.assign(new Error(response?.error && typeof response.error === 'string' ? response.error : await t(translationKey, translationParams)), { translationKey, translationParams });
+        throw Object.assign(new Error(response?.error && typeof response.error === 'string' ? response.error : await t(translationKey, undefined, translationParams)), { translationKey, translationParams });
       } else if (response.error && typeof response.error === 'string') {
         if (response.translationKey) {
           throw Object.assign(new Error(response.error), { translationKey: response.translationKey, translationParams: response.translationParams || {} });
@@ -746,8 +706,7 @@ export function initProcessing(deps) {
 
   return {
     handleCancel,
-    handleSavePdf,
-    extractPageContent
+    handleSavePdf
   };
 }
 

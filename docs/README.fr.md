@@ -15,9 +15,11 @@ Le menu contextuel de la page propose aussi des actions d’enregistrement. Pour
 
 Pour les articles web, **Automatique** utilise des heuristiques locales et les sélecteurs disponibles en cache. **AI Selector** demande à un service d’IA des sélecteurs CSS, puis extrait le contenu correspondant. **AI Extract** demande au service de structurer le contenu. Pour les PDF, Automatique extrait la couche de texte ; les modes IA traitent les pages rendues.
 
-Les paramètres comprennent la traduction du texte et des images, les styles du document et une table des matières. Le panneau permet aussi de générer un résumé ou des affirmations clés. L’audio utilise un service TTS configuré ou la synthèse locale Piper après le téléchargement d’un modèle de voix.
+L’exportation de vidéos YouTube et Vimeo nécessite des sous-titres et une clé API du fournisseur d’IA choisi pour les articles. Cela s’applique aussi au mode **Automatique**.
 
-Ajoutez les clés API nécessaires aux fonctions d’IA et de TTS choisies. L’exportation des paramètres exclut les clés API et peut inclure les statistiques et le cache des sélecteurs.
+Les paramètres comprennent la traduction du texte et des images, les styles du document et une table des matières. Le panneau permet aussi de générer un résumé ou des affirmations clés. Pour créer un fichier audio, utilisez un service de synthèse vocale configuré ou téléchargez le modèle de Piper ou de Supertonic pour l’utiliser en local.
+
+Ajoutez les clés API nécessaires aux fonctions d’IA et de synthèse vocale choisies. La sauvegarde JSON comprend les paramètres et les instructions personnalisées. Elle peut aussi inclure les statistiques, l’historique et le cache des sélecteurs. Les clés API sont exclues de la sauvegarde. À l’importation, vous pouvez ajouter les entrées manquantes de l’historique et les règles des nouveaux sites ou remplacer les sections sélectionnées. Voir [Sauvegarder les paramètres](../README.md#back-up-settings).
 
 ## Développement
 

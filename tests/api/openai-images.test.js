@@ -10,7 +10,11 @@ const WEBP = 'UklGRjQAAABXRUJQVlA4ICgAAACQAQCdASoCAAIAAUAmJZACdLoAA5gA/vSIh/VcnY
 const image = (mime = 'png', value = PNG) => `data:image/${mime};base64,${value}`;
 const response = (value = PNG) => new Response(JSON.stringify({ data: [{ b64_json: value }], output_format: 'png' }), { headers: { 'Content-Type': 'application/json' } });
 const mutatePng = change => { const bytes = Buffer.from(PNG, 'base64'); change(bytes); return bytes.toString('base64'); };
-beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal('fetch', vi.fn(async () => response())); });
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.stubGlobal('fetch', vi.fn(async () => response()));
+  vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ close() {} })));
+});
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('OpenAI image text translation', () => {
@@ -78,6 +82,14 @@ describe('OpenAI image text translation', () => {
     fetch.mockRejectedValueOnce(new TypeError('synthetic-secret-echo'));
     await expect(translateImageWithOpenAI(image(), 'French', 'synthetic-key')).rejects.toMatchObject({ message: 'OpenAI image translation failed' });
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not return a raster when its image stream cannot be decoded', async () => {
+    createImageBitmap.mockRejectedValueOnce(new Error('Invalid image stream'));
+    await expect(translateImageWithOpenAI(image(), 'French', 'synthetic-key')).rejects.toMatchObject({
+      message: 'OpenAI image translation failed', translationKey: 'errorImageTranslationFailed'
+    });
+    expect(createImageBitmap.mock.calls[0][0]).toMatchObject({ type: 'image/png' });
   });
 
   it('normalizes an empty network rejection into a typed failure', async () => {

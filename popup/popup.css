@@ -1190,6 +1190,7 @@ body[data-theme="light"] .section.status-section {
   justify-content: space-between;
   align-items: center;
   width: 100%;
+  white-space: pre-line;
 }
 
 body[data-theme="light"] .status-text {

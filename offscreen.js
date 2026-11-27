@@ -167,45 +167,6 @@ log('[ClipAIble Offscreen] TTS handler imported successfully', {
   hasHandlePiperTTS: typeof handlePiperTTS === 'function'
 });
 
-// CRITICAL: Log document load with version marker
-const offscreenVersion = 'CODE VERSION 2025-12-29-v6';
-// CRITICAL: Log bundle version IMMEDIATELY - FIRST THING IN FILE
-// Use log after imports are loaded
-// For now, use direct console methods before imports
-log('[ClipAIble Offscreen] === DOCUMENT LOADED V6 ===', {
-  timestamp: Date.now(),
-  version: offscreenVersion,
-  documentTitle: document.title,
-  documentReadyState: document.readyState
-});
-
-// Try localStorage immediately (before any imports)
-try {
-  const storageKey = 'clipaible_bundle_loaded';
-  localStorage.setItem(storageKey, JSON.stringify({
-    version: offscreenVersion,
-    timestamp: Date.now(),
-    url: window.location.href
-  }));
-} catch (e) {
-  // Ignore
-}
-
-// After imports are loaded, use log
-// This will be called after log import is available
-try {
-  log('[ClipAIble Offscreen] === DOCUMENT LOADED V6 ===', { marker: '=== OFFScreen_DOCUMENT_LOADED_V6 ===',
-    version: offscreenVersion,
-    timestamp: Date.now(),
-    url: window.location.href,
-    userAgent: navigator.userAgent.substring(0, 100)
-  });
-} catch (e) {
-  // Ignore if log is not available yet
-}
-
-// messageListenerRef and fallbackMessageListenerRef are now defined above (after minimal imports)
-
 // Register cleanup on page unload
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {

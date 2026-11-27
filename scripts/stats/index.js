@@ -57,7 +57,10 @@ function normalizeStats(value) {
   const history = Array.isArray(value.history) ? value.history.filter(item =>
     item && typeof item === 'object' && typeof item.title === 'string' &&
     typeof item.url === 'string' && typeof item.format === 'string' && nonnegative(item.date)
-  ).slice(0, HISTORY_LIMIT).map(item => ({ ...item, processingTime: count(item.processingTime) })) : [];
+  ).slice(0, HISTORY_LIMIT).map(({ id, title, url, domain, format, date, processingTime }) => ({
+    ...(typeof id === 'string' && id ? { id } : {}),
+    title, url, ...(typeof domain === 'string' ? { domain } : {}), format, date, processingTime: count(processingTime)
+  })) : [];
   const lastSaved = nonnegative(value.lastSaved) ? value.lastSaved : null;
   // Legacy totals can represent entries the backup no longer identifies.
   const historyCountedThrough = nonnegative(value.historyCountedThrough) ? value.historyCountedThrough

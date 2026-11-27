@@ -194,15 +194,17 @@ describe('utils/pipeline-helpers', () => {
     });
 
     it.each([
-      [2, false, 'Ready: PDF. Image translation failures: 2.'],
-      [undefined, false, 'Ready: PDF'],
-      [2, true, null]
-    ])('sends one completion message for image failure count %s with popup open %s', async (imageTranslationFailureCount, popupOpen, message) => {
+      [2, false, false, 'Ready: PDF. Image translation failures: 2.'],
+      [undefined, false, false, 'Ready: PDF'],
+      [undefined, true, false, 'Ready: PDF\nThe TL;DR could not be generated.'],
+      [2, true, false, 'Ready: PDF. Image translation failures: 2.\nThe TL;DR could not be generated.'],
+      [2, true, true, null]
+    ])('sends completion for image failure count %s, TL;DR failure %s, popup open %s', async (imageTranslationFailureCount, documentAbstractFailed, popupOpen, message) => {
       const { createNotification } = await import('../../scripts/background/notifications.js');
       const { isPopupOpen } = await import('../../scripts/background/popup-connection.js');
       isPopupOpen.mockReturnValueOnce(popupOpen);
       if (!popupOpen) isPopupOpen.mockReturnValueOnce(false);
-      mocks.mockGetProcessingState.mockReturnValueOnce({ outputFormat: 'pdf', imageTranslationFailureCount });
+      mocks.mockGetProcessingState.mockReturnValueOnce({ outputFormat: 'pdf', imageTranslationFailureCount, documentAbstractFailed });
 
       await finalizeProcessing({ title: 'Article', url: 'https://example.test', outputFormat: 'pdf' }, vi.fn(), null);
 
@@ -432,20 +434,38 @@ describe('utils/pipeline-helpers', () => {
       
       expect(generateAbstract).toHaveBeenCalled();
       expect(resultObj.abstract).toBe('Test abstract');
+      expect(mocks.mockUpdateState).not.toHaveBeenCalledWith({ documentAbstractFailed: true });
     });
 
-    it('should handle abstract generation errors', async () => {
-      const generateAbstract = vi.fn().mockRejectedValue(new Error('API error'));
-      const resultObj = { content: [{ type: 'paragraph', text: 'Text' }], title: 'Test' };
+    it.each(['provider error', 'blank response', 'empty response', 'no API key'])('preserves export and flags a missing TL;DR after %s', async (failure) => {
+      const generateAbstract = vi.fn();
+      if (failure === 'provider error') generateAbstract.mockRejectedValue(new Error('API error'));
+      else generateAbstract.mockResolvedValue(failure === 'blank response' ? '   ' : '');
+      const resultObj = { content: [{ type: 'paragraph', text: 'Text' }], title: 'Test', markdown: 'Text' };
       
       await handleAbstractGeneration(
-        { mode: 'extract', generateAbstract: true, apiKey: 'key', model: 'gpt-4', outputFormat: 'pdf' },
+        { mode: 'extract', generateAbstract: true, apiKey: failure === 'no API key' ? '' : 'key', model: 'gpt-4', outputFormat: 'pdf' },
         resultObj,
         generateAbstract,
         mocks.mockUpdateState
       );
       
       expect(resultObj.abstract).toBeUndefined();
+      expect(mocks.mockUpdateState).toHaveBeenCalledWith({ documentAbstractFailed: true });
+      expect(generateAbstract).toHaveBeenCalledTimes(failure === 'no API key' ? 0 : 1);
+    });
+
+    it('stops a cancelled export without marking the TL;DR as unavailable', async () => {
+      const generateAbstract = vi.fn(async () => {
+        mocks.mockIsCancelled.mockReturnValue(true);
+        throw new DOMException('Cancelled', 'AbortError');
+      });
+      await expect(handleAbstractGeneration(
+        { mode: 'selector', generateAbstract: true, apiKey: 'key', model: 'gpt-4', outputFormat: 'pdf' },
+        { title: 'Test', content: [{ type: 'paragraph', text: 'Text' }] },
+        generateAbstract, mocks.mockUpdateState
+      )).rejects.toMatchObject({ name: 'AbortError' });
+      expect(mocks.mockUpdateState).not.toHaveBeenCalledWith({ documentAbstractFailed: true });
     });
   });
 

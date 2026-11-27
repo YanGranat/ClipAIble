@@ -15,9 +15,11 @@ Anche il menu contestuale della pagina offre azioni di salvataggio. Per i PDF lo
 
 Per gli articoli web, **Automatico** usa euristiche locali e i selettori disponibili nella cache. **AI Selector** chiede a un servizio IA i selettori CSS, poi estrae il contenuto corrispondente. **AI Extract** chiede al servizio di strutturare il contenuto. Per i PDF, Automatico estrae il livello di testo; le modalità IA elaborano le pagine renderizzate.
 
-Le impostazioni includono la traduzione di testo e immagini, gli stili del documento e un indice. Il pannello consente anche di generare un riepilogo o affermazioni chiave. L’audio usa un servizio TTS configurato oppure la sintesi locale Piper dopo il download di un modello vocale.
+Per esportare video di YouTube e Vimeo servono i sottotitoli e una chiave API del servizio IA selezionato per gli articoli. Vale anche in modalità **Automatico**.
 
-Aggiungi le chiavi API richieste dalle funzioni IA e TTS selezionate. L’esportazione delle impostazioni esclude le chiavi API e può includere facoltativamente statistiche e cache dei selettori.
+Le impostazioni includono la traduzione di testo e immagini, gli stili del documento e un indice. Il pannello consente anche di generare un riepilogo o affermazioni chiave. Per l’audio puoi usare un servizio di sintesi vocale configurato oppure scaricare il modello di Piper o Supertonic per la sintesi locale.
+
+Aggiungi le chiavi API richieste dalle funzioni IA e di sintesi vocale selezionate. Il backup JSON salva impostazioni e prompt personalizzati. Può includere anche statistiche, cronologia e cache dei selettori. Le chiavi API sono escluse dal backup. Durante l’importazione puoi aggiungere le voci mancanti nella cronologia e le regole per i nuovi siti oppure sostituire le sezioni selezionate. Vedi [Backup delle impostazioni](../README.md#back-up-settings).
 
 ## Sviluppo
 

@@ -103,6 +103,20 @@ describe('Supertonic settings', () => {
     await vi.waitFor(() => expect(elements.supertonicModelAction.textContent).toBe('Скачать модель (401 МБ)'));
   });
 
+  it('reformats an unchanged download snapshot when the interface language changes', async () => {
+    document.documentElement.lang = 'fr';
+    getSupertonicModelStatus.mockResolvedValue({ state: 'downloading', loaded: 48, total: 100 });
+    selectProvider('supertonic');
+    await vi.waitFor(() => expect(elements.supertonicModelProgressText.textContent)
+      .toBe(new Intl.NumberFormat('fr', { style: 'percent' }).format(0.48)));
+
+    document.documentElement.lang = 'en';
+    audio.refreshLocalization();
+    expect(elements.supertonicModelProgressText.textContent).toBe('48%');
+    expect(elements.supertonicModelProgress.value).toBe(48);
+    expect(getSupertonicModelStatus).toHaveBeenCalledOnce();
+  });
+
   it('cancels one download, waits for admission, and exposes retry after a failure', async () => {
     getSupertonicModelStatus.mockResolvedValue({ state: 'downloading' });
     let complete;

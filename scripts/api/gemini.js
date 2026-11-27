@@ -6,7 +6,7 @@ import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { fetchBufferedResponse } from './fetch-buffered-response.js';
 import { assertCompleteAIResponse } from './response-validation.js';
-import { createImageTranslationPrompt, parseBase64Image } from './image-data.js';
+import { assertRasterDecodes, createImageTranslationPrompt, parseBase64Image, readRasterBase64 } from './image-data.js';
 import { callWithRetry } from '../utils/retry.js';
 import { decryptApiKey } from '../utils/encryption.js';
 import { tSync } from '../locales.js';
@@ -303,7 +303,7 @@ export async function translateImageWithGemini(imageBase64, targetLang, googleAp
     
     // Extract the generated image from response
     const parts = firstCandidate?.content?.parts;
-    if (!parts || parts.length === 0) {
+    if (!Array.isArray(parts) || parts.length === 0) {
       logWarn('No parts in Gemini response', {
         hasCandidates,
         candidatesLength,
@@ -318,25 +318,29 @@ export async function translateImageWithGemini(imageBase64, targetLang, googleAp
       return null;
     }
     
-    // Find the image part in response
+    // An inline part is not necessarily an image that the browser can render.
     for (const part of parts) {
-      if (!part.thought && part.inlineData?.data) {
-        const resultMimeType = part.inlineData.mimeType || 'image/png';
-        const resultBase64 = `data:${resultMimeType};base64,${part.inlineData.data}`;
-        log('translateImageWithGemini success', { resultLength: resultBase64.length });
-        return resultBase64;
+      if (part?.thought || !part?.inlineData?.data) continue;
+      const mimeType = part.inlineData.mimeType ?? 'image/png';
+      const match = typeof mimeType === 'string' && /^image\/(png|jpe?g|webp)$/i.exec(mimeType);
+      if (!match) continue;
+      const declaredFormat = match[1].toLowerCase().replace(/^jpg$/, 'jpeg');
+      let raster;
+      try {
+        raster = readRasterBase64(part.inlineData.data, { format: declaredFormat, exported: true });
+        await assertRasterDecodes(raster);
+      } catch {
+        await requestOptions.checkCancelled?.();
+        requestOptions.signal?.throwIfAborted();
+        continue;
       }
+      await requestOptions.checkCancelled?.();
+      requestOptions.signal?.throwIfAborted();
+      log('translateImageWithGemini success', { resultLength: raster.dataUrl.length });
+      return raster.dataUrl;
     }
     
-    // Parts exist but no image data found
-    logWarn('No image data in Gemini response', {
-      hasParts: !!parts,
-      partsLength: parts?.length || 0,
-      hasCandidates,
-      candidatesLength,
-      partTypes: parts?.map(p => Object.keys(p)).join(', ') || 'none',
-      note: 'Gemini returned parts but none contain inlineData. Response may contain text instead of image.'
-    });
+    logWarn('No decodable image in Gemini response', { partsLength });
     return null;
   } catch (error) {
     await requestOptions.checkCancelled?.();

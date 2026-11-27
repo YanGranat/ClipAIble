@@ -16,7 +16,7 @@ const modelViews = {
 
 /** @param {HTMLElement|null|undefined} group */
 export function initSupertonicControls(group) {
-  if (!group) return { setActive() {} };
+  if (!group) return { setActive() {}, refreshLocalization() {} };
   const statusText = group.querySelector('#supertonicModelStatus');
   const progressRow = /** @type {HTMLElement} */ (group.querySelector('#supertonicModelProgressRow'));
   const progress = /** @type {HTMLProgressElement} */ (group.querySelector('#supertonicModelProgress'));
@@ -137,6 +137,10 @@ export function initSupertonicControls(group) {
     }
   }
 
+  function refreshLocalization() {
+    if (active) render();
+  }
+
   group.ownerDocument.defaultView?.addEventListener('pagehide', () => setActive(false), { once: true });
-  return { setActive };
+  return { setActive, refreshLocalization };
 }

@@ -169,7 +169,8 @@ export function initPrintTabLifecycle(stopKeepAlive) {
     const ownerRunId = processingRunId;
     const jobId = processingState.pdfPrintJobId;
     if (jobId) void removePrintJob(jobId).catch(error => logWarn('Failed to release closed print job', error));
-    void setError('PDF generation was interrupted because the print tab was closed.', stopKeepAlive, ownerRunId)
+    const translationKey = 'errorPdfPrintTabClosed';
+    void setError({ message: tSync(translationKey, 'en'), translationKey, translationParams: {} }, stopKeepAlive, ownerRunId)
       .catch((error) => logWarn('Failed to save interrupted PDF state', error));
   });
 }
@@ -936,13 +937,16 @@ export function restoreStateFromStorage() {
               const uiLang = await getUILanguage();
               if (restorationRunId !== processingRunId || processingState.isProcessing || startingRunId !== null) return;
               if (hasRunId) processingRunId = savedState.processingRunId;
-              const interruptedMessage = tSync('statusProcessingInterrupted', uiLang);
+              const statusTranslationKey = resumablePdf ? 'statusOpeningPdfGenerator' : 'statusProcessingInterrupted';
+              const status = tSync(statusTranslationKey, uiLang);
               processingState = {
                 isProcessing: resumablePdf,
                 isCancelled: false,
                 progress: savedState.progress || 0,
-                status: resumablePdf ? (savedState.status || tSync('statusProcessing', uiLang)) : interruptedMessage,
-                error: resumablePdf ? null : interruptedMessage,
+                status, statusTranslationKey, statusTranslationParams: {},
+                error: resumablePdf ? null : status,
+                errorTranslationKey: resumablePdf ? null : statusTranslationKey,
+                errorTranslationParams: resumablePdf ? null : {},
                 startTime: savedState.startTime || null,
                 currentStage: savedState.currentStage || null,
                 completedStages: Array.isArray(savedState.completedStages) ? savedState.completedStages : [],
@@ -950,6 +954,7 @@ export function restoreStateFromStorage() {
                 ...(resumablePdf ? {
                   pdfPrintTabId: savedState.pdfPrintTabId,
                   pdfPrintJobId: savedState.pdfPrintJobId,
+                  documentAbstractFailed: savedState.documentAbstractFailed === true,
                   imageTranslationFailureCount: Number.isSafeInteger(savedState.imageTranslationFailureCount) &&
                     savedState.imageTranslationFailureCount > 0 ? savedState.imageTranslationFailureCount : undefined
                 } : {})

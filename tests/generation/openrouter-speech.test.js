@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 
-it('keeps the captured encrypted shared key and separate speech settings through the real factory and WAV download', async () => {
+it('keeps the captured encrypted speech key and speech settings through the real factory and WAV download', async () => {
   const data = { apiKey: 'synthetic-text-key', model: 'example-text-model', audioProvider: 'openrouter',
     openrouterTtsApiKey: 'ENC:v2:synthetic-router', audioVoice: 'marin', audioSpeed: 1.2, audioFormat: 'mp3',
     openrouterTtsModel: 'google/gemini-3.8-flash-lite-tts', openrouterTtsVoice: 'Kore',

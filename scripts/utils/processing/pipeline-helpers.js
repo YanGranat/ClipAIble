@@ -183,8 +183,9 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
     const formatKey = getExportFormatLabelKey(savedFormat) || 'formatPdf';
     const formatLabel = tSync(formatKey, uiLang);
 
-    const notice = getDocumentReadyMessage(formatLabel, state.imageTranslationFailureCount);
-    const message = tSync(notice.key, uiLang, notice.params);
+    const notice = getDocumentReadyMessage(formatLabel, state.imageTranslationFailureCount, state.documentAbstractFailed);
+    const ready = tSync(notice.key, uiLang, notice.params);
+    const message = notice.detailKey ? ready + '\n' + tSync(notice.detailKey, uiLang) : ready;
 
     log('Showing completion notification (popup is closed)', {
       timestamp: Date.now(),
@@ -426,146 +427,28 @@ export async function handleAbstractGeneration(
   // Check if processing was cancelled before abstract generation
   await checkCancellation('abstract generation', data.processingRunId);
   
-  // Generate abstract if enabled (but skip for audio format)
-  const shouldGenerateAbstract = data.generateAbstract &&
-                                 supportsDocumentAbstract(data.mode, data.outputFormat) &&
-                                 result.content && 
-                                 result.content.length > 0 && 
-                                 data.apiKey;
-  if (!shouldGenerateAbstract) {
-    log('⏭️  Abstract generation skipped (not enabled or audio format)');
-    return;
-  }
-  
-  log('📝 Starting abstract generation');
-  // CRITICAL: TLDR and article must always be in the same language
-  // - If user selected a specific target language (data.language !== 'auto'), use that language
-  //   (article is already translated to target language, so TLDR should be in target language too)
-  // - If language is 'auto', use UI language for better user experience
-  //   (article stays in source language, but TLDR should be in user's preferred language)
-  let abstractLang = data.language || 'auto';
-  
-  log('🌍 LANGUAGE DETECTION: Determining language for abstract generation', {
-    userSelectedLanguage: data.language || 'auto',
-    hasDetectedLanguage: !!result.detectedLanguage,
-    detectedLanguage: result.detectedLanguage,
-    currentAbstractLang: abstractLang
-  });
-  
-  // CRITICAL: If language is 'auto', use UI language instead of detected content language
-  // This ensures TLDR is generated in user's preferred language for better readability
-  if (abstractLang === 'auto') {
-    // Get UI language for abstract generation
-    const uiLang = await getUILanguageCached();
-    abstractLang = uiLang;
-    log('🌍 LANGUAGE DETECTION: Using UI language for abstract (auto mode)', { 
-      abstractLanguage: abstractLang,
-      source: 'UI language',
-      reason: 'Better user experience - TLDR in user\'s preferred language',
-      contentLanguage: result.detectedLanguage || 'unknown',
-      note: 'Content stays in original language, only TLDR uses UI language'
-    });
-  } else if (abstractLang !== 'auto') {
-    log('🌍 LANGUAGE DETECTION: Using target language for abstract', {
-      targetLanguage: abstractLang,
-      source: 'user selection',
-      reason: 'Article and TLDR must be in the same language (target language)',
-      method: 'user selected specific target language'
-    });
-  } else {
-    log('⚠️ LANGUAGE DETECTION: No language available for abstract, using auto', {
-      abstractLang: 'auto',
-      hasDetectedLanguage: !!result.detectedLanguage,
-      reason: 'No detected language and user selected auto'
-    });
-  }
-  
-  // CRITICAL: For PDF, use generateAbstract (TLDR 2-4 sentences) for PDF abstract/TLDR
-  // This is different from generateSummary which is used for full summary in popup
-  // PDF processing extracts text page by page in one chat, then we need to send
-  // the complete text to LLM in a NEW chat to generate abstract
-  // We can detect PDF by checking if result.markdown exists (PDF processing sets this)
-  const isPdfResult = result.markdown && typeof result.markdown === 'string' && result.markdown.length > 0;
-  
-  try {
-    await updateProgress(PROCESSING_STAGES.GENERATING, 'stageGeneratingAbstract', 62, { processingRunId: data.processingRunId });
-    
-    if (isPdfResult) {
-      // For PDF: use generateAbstract (TLDR 2-4 sentences) for PDF abstract/TLDR
-      // This is different from generateSummary which is used for full summary in popup
-      // CRITICAL: result.content should already be translated if translation was performed
-      // (handleTranslation is called before handleAbstractGeneration in continueProcessingPipeline)
-      const wasTranslated = data.language && data.language !== 'auto';
-      log('📝 ABSTRACT GENERATION: Starting PDF abstract generation', {
-        contentItemsCount: result.content?.length || 0,
-        markdownLength: result.markdown?.length || 0,
-        abstractLanguage: abstractLang,
-        userSelectedLanguage: data.language,
-        wasTranslated: wasTranslated,
-        contentLanguage: wasTranslated ? 'translated (target language)' : 'original (source language)',
-        functionName: 'generateAbstract',
-        expectedOutput: 'TLDR 2-4 sentences',
-        note: wasTranslated 
-          ? 'Content is TRANSLATED - abstract will be generated from translated content in target language'
-          : 'Content is ORIGINAL - abstract will be generated from original content in source language'
-      });
-      
-      // CRITICAL: Use generateAbstract (not generateSummary) for PDF TLDR
-      // generateAbstract generates TLDR 2-4 sentences
-      // generateSummary generates full summary for popup
-      const abstract = await generateAbstract(
-        result.content, 
-        result.title || data.title || 'PDF Document',
-        data.apiKey,
-        data.model,
-        abstractLang,
-        updateState,
-        getAIRequestOptions(data)
+  if (!data.generateAbstract || !supportsDocumentAbstract(data.mode, data.outputFormat)) return;
+
+  const abstractLang = data.language && data.language !== 'auto' ? data.language : await getUILanguageCached();
+  let abstract;
+  if (result.content?.length && data.apiKey) {
+    const options = getAIRequestOptions(data);
+    const fallbackTitle = result.markdown ? 'PDF Document' : 'Untitled';
+    try {
+      await updateProgress(PROCESSING_STAGES.GENERATING, 'stageGeneratingAbstract', 62, { processingRunId: data.processingRunId });
+      await options.checkCancelled();
+      abstract = await generateAbstract(
+        result.content, result.title || data.title || fallbackTitle,
+        data.apiKey, data.model, abstractLang, updateState, options
       );
-      
-      if (abstract) {
-        log('✅ Abstract (TLDR) generated successfully', { 
-          length: abstract.length,
-          preview: abstract.substring(0, 200),
-          sentenceCount: abstract.split(/[.!?]+/).filter(s => s.trim().length > 0).length
-        });
-        result.abstract = abstract;
-        return;
-      } else {
-        logWarn('PDF abstract generation returned empty result');
-      }
-    } else {
-      // For non-PDF: use generateAbstract as before
-      const wasTranslated = data.language && data.language !== 'auto';
-      log('📝 ABSTRACT GENERATION: Starting non-PDF abstract generation', {
-        contentItemsCount: result.content?.length || 0,
-        abstractLanguage: abstractLang,
-        userSelectedLanguage: data.language,
-        wasTranslated: wasTranslated,
-        contentLanguage: wasTranslated ? 'translated (target language)' : 'original (source language)',
-        note: wasTranslated 
-          ? 'Content is TRANSLATED - abstract will be generated from translated content in target language'
-          : 'Content is ORIGINAL - abstract will be generated from original content in source language'
-      });
-      
-      const abstract = await generateAbstract(
-        result.content, 
-        result.title || data.title || 'Untitled',
-        data.apiKey,
-        data.model,
-        abstractLang,
-        updateState,
-        getAIRequestOptions(data)
-      );
-      if (abstract) {
-        log('✅ Abstract generated successfully', { length: abstract.length });
-        result.abstract = abstract;
-        return;
-      }
+    } catch {
+      await options.checkCancelled();
+      logWarn('Abstract generation failed');
     }
-  } catch (error) {
-    logWarn('Abstract generation failed, continuing without abstract', error);
+    await options.checkCancelled();
   }
+  if (typeof abstract === 'string' && abstract.trim()) result.abstract = abstract;
+  else updateState({ documentAbstractFailed: true });
 }
 
 /**

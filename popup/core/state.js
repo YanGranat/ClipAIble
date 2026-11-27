@@ -111,6 +111,7 @@ export function initState(deps) {
   let localFailure = false;
   let lastIdleStatus = null;
   let paintedRevision = 0;
+  let idleRenderRevision = null;
 
   async function readReadinessIssue() {
     return getExportReadiness
@@ -158,8 +159,10 @@ export function initState(deps) {
       if (issue) return presentReadinessIssue(issue);
       const format = state.outputFormat || elements.mainFormatSelect?.value || elements.outputFormat?.value;
       const formatKey = getExportFormatLabelKey(format) || 'formatPdf';
-      const message = getDocumentReadyMessage(await translate(formatKey), state.imageTranslationFailureCount);
-      return { kind: 'ready', text: await translate(message.key, message.params), translation: { ...message, formatKey } };
+      const message = getDocumentReadyMessage(await translate(formatKey), state.imageTranslationFailureCount, state.documentAbstractFailed);
+      const ready = await translate(message.key, message.params);
+      const text = message.detailKey ? ready + '\n' + await translate(message.detailKey) : ready;
+      return { kind: 'ready', text, translation: { ...message, formatKey } };
     }
     if (phase === 'cancelled') {
       const readiness = await presentReadiness();
@@ -175,7 +178,10 @@ export function initState(deps) {
     const phase = state.phase ?? getProcessingPhase(state);
     if (preparingLocally && phase !== 'running') return;
     if (phase === 'idle' && localFailure) return;
-    const presentation = await preparePresentation(state);
+    if (phase === 'idle') idleRenderRevision = revision;
+    const presentation = await preparePresentation(state).finally(() => {
+      if (idleRenderRevision === revision) idleRenderRevision = null;
+    });
     if (revision !== renderRevision) return;
     paintedRevision = revision;
 
@@ -296,6 +302,7 @@ export function initState(deps) {
       newState.isCancelled !== oldState.isCancelled ||
       newState.outputFormat !== oldState.outputFormat ||
       newState.imageTranslationFailureCount !== oldState.imageTranslationFailureCount ||
+      newState.documentAbstractFailed !== oldState.documentAbstractFailed ||
       newState.startTime !== oldState.startTime
     );
   }
@@ -314,7 +321,8 @@ export function initState(deps) {
     acceptedRead = read;
     const changed = stateChanged(state, lastScheduledState);
     lastScheduledState = state;
-    if (!changed && !forceRender && (!getExportReadiness || getProcessingPhase(state) !== 'idle')) return false;
+    if (!changed && !forceRender && (!getExportReadiness || getProcessingPhase(state) !== 'idle' ||
+        idleRenderRevision === renderRevision)) return false;
     scheduledRenderRevision = ++renderRevision;
 
     if (pendingUIUpdate === null) {

@@ -1,7 +1,7 @@
 import { CONFIG } from '../utils/config.js';
 import { fetchBufferedResponse } from './fetch-buffered-response.js';
 import { OPENAI_IMAGE_TRANSLATION_MODEL } from './image-translation-catalog.js';
-import { createImageTranslationPrompt, readRasterBase64, readRasterDataUrl } from './image-data.js';
+import { assertRasterDecodes, createImageTranslationPrompt, readRasterBase64, readRasterDataUrl } from './image-data.js';
 
 function failure(status) {
   return Object.assign(new Error('OpenAI image translation failed'), {
@@ -53,9 +53,10 @@ export async function translateImageWithOpenAI(imageData, targetLang, apiKey, re
     await check();
     if (!Array.isArray(result?.data) || result.data.length !== 1 ||
       (result.output_format !== undefined && result.output_format !== 'png')) throw failure();
-    const { dataUrl } = readRasterBase64(result.data[0]?.b64_json, { format: 'png', exported: true });
+    const raster = readRasterBase64(result.data[0]?.b64_json, { format: 'png', exported: true });
+    await assertRasterDecodes(raster);
     await check();
-    return dataUrl;
+    return raster.dataUrl;
   } catch (error) {
     if (cancelled && error === cancellationError) throw error;
     if (requestOptions.signal?.aborted) throw requestOptions.signal.reason;

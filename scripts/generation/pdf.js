@@ -189,26 +189,6 @@ export async function generatePdf(data, updateState) {
       timestamp: Date.now()
     });
     
-    // Log ALL content items with FULL text - NO TRUNCATION
-    // Log each item separately to ensure full visibility in console
-    if (filteredContent && Array.isArray(filteredContent)) {
-      log('=== CONTENT ITEMS FOR HTML (ALL - FULL TEXT) ===', {
-        totalItems: filteredContent.length
-      });
-      
-      // Log each item separately for full visibility
-      filteredContent.forEach((item, idx) => {
-        log(`=== CONTENT ITEM FOR HTML [${idx}] ===`, {
-          index: idx,
-          type: item.type,
-          text: item.text || item.html || '', // FULL TEXT - NO TRUNCATION
-          textLength: (item.text || item.html || '').length,
-          html: item.html || null, // FULL HTML - NO TRUNCATION
-          hasGoogleTranslateText: (item.text || item.html || '').includes('Исходный текст') || (item.text || item.html || '').includes('Оцените этот перевод') || (item.text || item.html || '').includes('Google Переводчик')
-        });
-      });
-    }
-    
     const cleanedTitle = cleanTitle(title || '');
     const htmlContent = buildHtmlForPdf(
       filteredContent,
@@ -225,41 +205,7 @@ export async function generatePdf(data, updateState) {
     );
     log('HTML built', { length: htmlContent.length, tocEnabled: generateToc });
 
-    // DETAILED LOGGING: Log FULL HTML content - NO TRUNCATION
-    log('=== HTML CONTENT (FULL - NO TRUNCATION) ===', {
-      htmlFull: htmlContent, // FULL HTML - NO TRUNCATION
-      totalLength: htmlContent.length,
-      hasGoogleTranslateWidget: htmlContent.includes('Исходный текст') || htmlContent.includes('Оцените этот перевод') || htmlContent.includes('Google Переводчик')
-    });
-    
-    // Check for Google Translate widget text in final HTML
-    const googleTranslateWidgetText = "Исходный текст Оцените этот перевод Ваш отзыв поможет нам улучшить Google Переводчик";
-    if (htmlContent.includes(googleTranslateWidgetText)) {
-      logWarn('!!! Google Translate widget text DETECTED in final HTML !!!', {
-        widgetText: googleTranslateWidgetText,
-        htmlContainsWidget: true
-      });
-    }
-    
-    // Check for Google Translate widget text in HTML
-    const hasGoogleTranslateText = htmlContent.includes('Исходный текст') || 
-                                   htmlContent.includes('Оцените этот перевод') ||
-                                   htmlContent.includes('Ваш отзыв поможет нам улучшить Google') ||
-                                   htmlContent.includes('Original text') ||
-                                   htmlContent.includes('Rate this translation');
-    
-    if (hasGoogleTranslateText) {
-      logWarn('=== GOOGLE TRANSLATE WIDGET TEXT DETECTED IN HTML ===', {
-        hasRussianText: htmlContent.includes('Исходный текст'),
-        hasEnglishText: htmlContent.includes('Original text'),
-        htmlLength: htmlContent.length
-      });
-    }
-    
     if (updateState) {
-      // Get localized status
-      const uiLang = await getUILanguage();
-      const loadingStatus = tSync('stageLoadingImages', uiLang);
       updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, ...formatStatusUpdate('stageLoadingImages', await getUILanguage()), progress: 82 });
     }
     

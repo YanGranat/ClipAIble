@@ -116,6 +116,25 @@ describe('Reading ownership', () => {
     expect(result.plain).not.toContain('discussion panel');
   });
 
+  it.each([null, { content: 'main' }])('keeps authored fragments and tables while removing controls that return to the document start (%j)', async selectors => {
+    const introduction = 'The report documents each station and explains how the readings can be independently verified. ';
+    const html = '<body id="document-start"><main><h1>Field report</h1><p>' + introduction.repeat(5) +
+      '<a class="button" href="#document-start">the beginning of the original report</a> contains a short summary.</p>' +
+      '<div><a class="button" href="#top">Read the calibration notes</a></div>' +
+      '<h2 id="top">Calibration notes</h2><p>The table gives the recorded output after the instrument was calibrated.</p>' +
+      '<aside><table><caption>District readings</caption><tr><th>Region</th><th>Total</th></tr>' +
+      '<tr><td>Central</td><td>42</td></tr></table></aside>' +
+      '<div><a class="button" href="#document-start"><svg aria-hidden="true"></svg>Page start control</a></div>' +
+      '<div><a class="btn" href="#">Return to start control</a></div></main></body>';
+    const result = await extract(html, selectors);
+    const table = result.content.find(item => item.type === 'table');
+    expect(table).toMatchObject({ headers: ['Region', 'Total'], rows: [['Central', '42']] });
+    expect(result.plain).toContain('District readings');
+    expect(result.plain).toContain('the beginning of the original report');
+    expect(result.plain).toContain('Read the calibration notes');
+    expect(result.plain).not.toMatch(/Page start control|Return to start control/);
+  });
+
   it('keeps document-owned linked articles that carry separately authored prose', async () => {
     const result = await extract('<main><h1>Field report</h1><p>The group recorded the observations in two linked notes.</p><section>' +
       '<article><h2><a href="/work/a">Observations</a></h2><p>The first intersection exceeded the threshold in the repeat measurement.</p>' +
