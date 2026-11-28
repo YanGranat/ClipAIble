@@ -490,7 +490,7 @@ export async function captureReadingGraphics(win, elements, state, constants) {
       const src = canvas.toDataURL('image/png');
       const bytes = imageDataUrlBytes(src);
       if (detectImageMime(bytes) !== 'image/png' || bytes.byteLength > MAX_IMAGE_BYTES) throw failure();
-      result.set(owner, { type: 'image', isGraphic: true, src, alt, caption });
+      result.set(owner, { type: 'image', isGraphic: true, src, alt, caption, captionFormat: 'text' });
     }
     return result;
   } catch (error) {

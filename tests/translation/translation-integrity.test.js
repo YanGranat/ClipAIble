@@ -68,6 +68,27 @@ it('updates rich and plain text together and keeps the input intact', async () =
   expect(input).toEqual(before);
 });
 
+it('translates visible labels while preserving literal, HTML and Markdown caption representations', async () => {
+  const input = { content: [
+    { type: 'image', alt: 'Original & <field id="alpha">', caption: 'Original: a < b &lt;name&gt;', captionFormat: 'text' },
+    { type: 'image', caption: '<em>Original</em> &lt;name&gt;', captionFormat: 'html' },
+    { type: 'image', caption: '**Original** and `tag`', captionFormat: 'markdown' }
+  ] };
+  let values;
+  vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+    values = JSON.parse(JSON.parse(init.body).messages[1].content.split('\n').at(-1));
+    return reply(JSON.stringify({ translations: values.map(value => value.replace('Original', 'Translated')) }));
+  }));
+  const { content } = await translateContent(input, 'fr', 'synthetic-key', 'gpt-example', undefined, options);
+  expect(values).toEqual([
+    'Original &amp; &lt;field id=&quot;alpha&quot;&gt;', 'Original: a &lt; b &amp;lt;name&amp;gt;',
+    '<em>Original</em> &lt;name&gt;', '**Original** and `tag`'
+  ]);
+  expect(content).toEqual(input.content.map(({ alt, caption, ...item }) => ({ ...item,
+    ...(alt ? { alt: alt.replace('Original', 'Translated') } : {}), caption: caption.replace('Original', 'Translated')
+  })));
+});
+
 it('bounds indexed batches and preserves source order across batch boundaries', async () => {
   const inputs = Array.from({ length: CONFIG.TRANSLATION_BATCH_MAX_FIELDS + 2 }, (_, i) => 'Record ' + i);
   const sizes = [];

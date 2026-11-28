@@ -417,6 +417,7 @@
 
     return {
       html: html,
+      sourceContentType: document.contentType,
       metadata: metadata,
       images: images
     };

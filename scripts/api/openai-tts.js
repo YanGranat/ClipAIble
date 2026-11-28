@@ -1,7 +1,7 @@
 // @ts-check
 import { renderPrompt } from '../settings/prompt-catalog.js';
 import { fetchBufferedResponse } from './fetch-buffered-response.js';
-import { isApiQuotaCode } from './http-errors.js';
+import { createApiError, isApiQuotaCode } from './http-errors.js';
 import { pcmToWav } from './audio-format.js';
 import { OPENAI_TTS_MODEL, OPENAI_TTS_VOICES, DEFAULT_OPENAI_TTS_VOICE, OPENAI_TTS_MIN_SPEED, OPENAI_TTS_MAX_SPEED, OPENAI_TTS_MAX_INPUT } from './tts-catalog.js';
 import { CONFIG } from '../utils/config.js';
@@ -13,6 +13,11 @@ const SAMPLE_RATE = 24000;;
 /** @returns {import('../types.js').ExtendedError} */
 function localizedError(key, language, params = {}) {
   return Object.assign(new Error(tSync(key, language, params)), { translationKey: key, translationParams: params });
+}
+
+function realtimeQuotaError(details, language) {
+  if (!isApiQuotaCode(details?.code) && !isApiQuotaCode(details?.type)) return null;
+  return Object.assign(localizedError('errorApiQuotaExceeded', language), { status: 429, retryable: false });
 }
 
 function findAudioPart(event, outputs, create) {
@@ -105,8 +110,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
   }
   await checkCancelled();
   if (!response.ok) {
-    const error = Object.assign(localizedError('errorTtsApiError', language, { status: response.status }), { status: response.status, response });
-    throw error;
+    const error = await createApiError(response, 'openai');
+    await checkCancelled();
+    if (error.translationKey === 'errorApiQuotaExceeded') {
+      throw Object.assign(localizedError(error.translationKey, language), { status: error.status, retryable: false });
+    }
+    throw Object.assign(localizedError('errorTtsApiError', language, { status: error.status }), {
+      status: error.status, response: error.response
+    });
   }
   let credentials;
   try { credentials = await response.json(); } catch { throw localizedError('errorTtsInvalidAudio', language); }
@@ -198,7 +209,11 @@ export async function textToSpeech(text, apiKey, options = {}) {
             part.done = true;
           } else if (data.type === 'response.done') {
             const response = data.response;
-            const parts = responseId && response?.id === responseId && response.status === 'completed'
+            const ownsResponse = responseId && response?.id === responseId;
+            const quota = ownsResponse && response.status === 'failed'
+              ? realtimeQuotaError(response.status_details?.error, language) : null;
+            if (quota) { finish(quota); return; }
+            const parts = ownsResponse && response.status === 'completed'
               ? getCompletedAudioParts(outputs, response.output) : null;
             if (!parts) {
               fail('errorTtsIncomplete');
@@ -211,11 +226,9 @@ export async function textToSpeech(text, apiKey, options = {}) {
             }
             finish(null, pcmToWav(pcm.buffer, SAMPLE_RATE));
           } else if (data.type === 'error') {
+            const quota = realtimeQuotaError(data.error, language);
+            if (quota) { finish(quota); return; }
             const code = data.error?.code;
-            if (isApiQuotaCode(code) || isApiQuotaCode(data.error?.type)) {
-              finish(Object.assign(localizedError('errorApiQuotaExceeded', language), { status: 429, retryable: false }));
-              return;
-            }
             const status = code === 'rate_limit_exceeded' ? 429 : code === 'server_error' ? 500 : 400;
             finish(Object.assign(localizedError('errorTtsApiError', language, { status }), { status }));
           }

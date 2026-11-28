@@ -6,7 +6,18 @@ import { callAI } from '../api/index.js';
 import { log, logError } from '../utils/logging.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
 
-
+/** Both subtitle prompts return the same ordered sequence of readable blocks. */
+function readSubtitleContent(response) {
+  const content = response?.content;
+  if (!Array.isArray(content) || content.length === 0) {
+    throw new SyntaxError('AI response missing content array');
+  }
+  if (content.some(item => (item?.type !== 'paragraph' && item?.type !== 'heading') ||
+      typeof item.text !== 'string' || !item.text.trim())) {
+    throw new SyntaxError('AI response contains an invalid subtitle block');
+  }
+  return content;
+}
 
 /**
  * Build user prompt for subtitle processing
@@ -53,23 +64,7 @@ async function processSubtitlesSingleChunk(subtitles, apiKey, model, processingR
   );
   await checkCancellation('subtitle response', processingRunId);
   
-  if (!parsed) {
-    throw new Error('AI returned empty response');
-  }
-  
-  // callAI with jsonResponse=true returns parsed JSON object
-  // Type guard: ensure parsed is an object (not string)
-  if (typeof parsed !== 'object' || parsed === null) {
-    logError('AI response is not an object', parsed);
-    throw new Error('AI response is not an object');
-  }
-  
-  if (!Array.isArray(parsed.content) || parsed.content.length === 0) {
-    logError('AI response missing content array', parsed);
-    throw new Error('AI response missing content array');
-  }
-  
-  return parsed.content;
+  return readSubtitleContent(parsed);
 }
 
 /**
@@ -128,23 +123,7 @@ Remember:
   );
   await checkCancellation('subtitle context response', processingRunId);
   
-  if (!parsed) {
-    throw new Error('AI returned empty response');
-  }
-  
-  // callAI with jsonResponse=true returns parsed JSON object
-  // Type guard: ensure parsed is an object (not string)
-  if (typeof parsed !== 'object' || parsed === null) {
-    logError('AI response is not an object', parsed);
-    throw new Error('AI response is not an object');
-  }
-  
-  if (!Array.isArray(parsed.content) || parsed.content.length === 0) {
-    logError('AI response missing content array', parsed);
-    throw new Error('AI response missing content array');
-  }
-  
-  return parsed.content;
+  return readSubtitleContent(parsed);
 }
 
 /** @param {{text?: string}[]} subtitles */

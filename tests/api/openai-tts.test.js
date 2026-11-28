@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { textToSpeech } from '../../scripts/api/openai-tts.js';
 import { CONFIG } from '../../scripts/utils/config.js';
+import { callWithRetry } from '../../scripts/utils/retry.js';
 import { realtimeWebSocket } from '../helpers/realtime-websocket.js';
 
 const owner = vi.hoisted(() => ({ cancelled: false }));
@@ -81,6 +82,30 @@ describe('OpenAI Realtime narration', () => {
     await expect(textToSpeech('Article.', 'synthetic-key')).rejects.toMatchObject({
       status: 429, translationKey: 'errorApiQuotaExceeded', retryable: false
     });
+    expect(WebSocket.instances[0].closed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    ['owned failed response', 'r', 'failed', 'errorApiQuotaExceeded'],
+    ['foreign failed response', 'other', 'failed', 'errorTtsIncomplete'],
+    ['incomplete response', 'r', 'incomplete', 'errorTtsIncomplete'],
+    ['cancelled response', 'r', 'cancelled', 'errorTtsIncomplete']
+  ])('protects provider text for %s and preserves the response status', async (_case, id, status, key) => {
+    const providerMessage = 'A private narration passage returned in the provider message';
+    vi.stubGlobal('WebSocket', realtimeWebSocket(socket => {
+      socket.emit({ type: 'response.created', response: { id: 'r' } });
+      socket.audio('delta', 'r', { delta: 'AQA=' });
+      socket.audio('done', 'r');
+      socket.emit({ type: 'response.done', response: { id, status, status_details: {
+        type: status, error: { code: 'organization_spend_limit_exceeded', message: providerMessage }
+      } } });
+    }));
+    const error = await textToSpeech('Article.', 'synthetic-key').catch(failure => failure);
+    expect(error).toMatchObject({ translationKey: key, retryable: false });
+    if (key === 'errorApiQuotaExceeded') expect(error.status).toBe(429);
+    expect(error.stack).not.toContain(providerMessage);
+    expect(JSON.stringify(error)).not.toContain(providerMessage);
     expect(WebSocket.instances[0].closed).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -210,6 +235,42 @@ describe('OpenAI Realtime narration', () => {
     expect(error.message).not.toContain('synthetic-private-provider-content');
     expect(WebSocket.instances).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    { code: 'organization_spend_limit_exceeded' },
+    { type: 'insufficient_quota' }
+  ])('stops at a single credential request when the billing quota is exhausted', async details => {
+    vi.useRealTimers();
+    const privateDetails = 'Provider echoed request content';
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      error: { ...details, message: privateDetails }
+    }), { status: 429 })));
+
+    const error = await callWithRetry(() => textToSpeech('Article.', 'synthetic-key'), {
+      maxRetries: 1, delays: [0]
+    }).catch(error => error);
+
+    expect(error).toMatchObject({ status: 429, translationKey: 'errorApiQuotaExceeded', retryable: false });
+    expect(error.message).not.toContain(privateDetails);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(WebSocket.instances).toHaveLength(0);
+  });
+
+  it('retries a temporary rate limit on the credential request before opening the socket', async () => {
+    vi.useRealTimers();
+    fetch.mockImplementationOnce(async () => new Response(JSON.stringify({
+      error: { code: 'rate_limit_exceeded' }
+    }), { status: 429 }));
+
+    const result = await callWithRetry(() => textToSpeech('Article.', 'synthetic-key'), {
+      maxRetries: 1, delays: [0]
+    });
+
+    expect(result).toBeInstanceOf(ArrayBuffer);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(WebSocket.instances).toHaveLength(1);
+    expect(WebSocket.instances[0].closed).toBe(true);
   });
 
   it('does not copy WebSocket constructor errors containing credentials into diagnostics', async () => {

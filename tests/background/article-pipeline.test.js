@@ -195,13 +195,19 @@ it('reports the image preflight reason before any selector request starts', asyn
 });
 
 it.each(['pdf', 'video'])('routes a %s input before any article extraction mode', async kind => {
-  if (kind === 'pdf') deps.detectPdfPage.mockReturnValue({ isPdf: true, originalUrl: 'https://example.org/document.pdf' });
+  const pdfUrl = 'https://example.org/document.pdf';
+  if (kind === 'pdf') deps.detectPdfPage.mockReturnValue({ isPdf: true, originalUrl: pdfUrl });
   else deps.detectVideoPlatform.mockReturnValue({ platform: 'youtube', videoId: 'synthetic-id' });
   const { reply, data } = request('extract');
   expect(await reply).toEqual({ started: true, processingRunId: getProcessingRunId() });
   const selected = kind === 'pdf' ? deps.handlePdfPageProcessing : deps.handleVideoPageProcessing;
   expect(selected).toHaveBeenCalledOnce();
-  expect(selected.mock.calls[0][0]).toBe(data);
+  if (kind === 'pdf') {
+    expect(selected.mock.calls[0].slice(0, 2)).toEqual([{ ...data, url: pdfUrl }, pdfUrl]);
+    expect(data.url).toBe('https://example.org/article');
+  } else {
+    expect(selected.mock.calls[0][0]).toBe(data);
+  }
   for (const process of [processWithoutAI, processWithSelectorMode, processWithExtractMode]) expect(process).not.toHaveBeenCalled();
   expect(generate).not.toHaveBeenCalled();
 });

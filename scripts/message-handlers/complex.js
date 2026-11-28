@@ -37,7 +37,7 @@ export function handleExtractContentOnly(request, sender, sendResponse, processW
     return true;
   }
   const { html, url, title, apiKey, model, mode, useCache, tabId, autoGenerateSummary, autoGenerateKeyTheses, language } = data;
-  const pdfInfo = detectPdfPage(url, url, html, data.sourceContentType);
+  const pdfInfo = detectPdfPage(url, url, data.sourceContentType);
   const isPdf = Boolean(pdfInfo?.isPdf);
   if (!url || !apiKey || !model || (!isPdf && !html)) {
     respond({ error: 'Missing required parameters' });

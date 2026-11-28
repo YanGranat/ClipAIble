@@ -33,6 +33,7 @@
  * @property {string} [src] - Image source URL (for images) - alias for url
  * @property {string} [base64] - Embedded image data
  * @property {string} [caption] - Image caption text (for images)
+ * @property {'text'|'html'|'markdown'} [captionFormat] - Representation of the image caption
  * @property {boolean} [isFeatured] - Whether the media or its fallback precedes article content
  * @property {boolean} [isGraphic] - Whether image alt text contains authored graphic labels
  * @property {boolean} [tableMedia] - Image projected from an authored table cell

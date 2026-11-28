@@ -3,11 +3,12 @@ import { fetchBufferedResponse } from './fetch-buffered-response.js';
 // Qwen TTS Text-to-Speech API module for ClipAIble extension
 // Uses workspace synthesis or the legacy multimodal endpoint.
 
-import { log, logError } from '../utils/logging.js';
+import { log } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
-import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { createApiError } from './http-errors.js';
 import { DEFAULT_QWEN_TTS_MODEL, DEFAULT_QWEN_TTS_VOICE, QWEN_AUDIO_VOICES, QWEN_LEGACY_VOICES, getDefaultTtsVoice, getQwenTtsEndpoint, isQwenAudioModel, isQwenVoiceCompatible } from './tts-catalog.js';
 import { isValidExternalUrl } from '../utils/security.js';
 
@@ -142,26 +143,15 @@ export async function textToSpeech(text, apiKey, options = {}) {
       async ({ signal }) => {
         await checkCancellation('Qwen TTS request', options.processingRunId);
         
-        try {
-          const fetchResponse = await fetchBufferedResponse(apiUrl, {
-            signal,
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey.trim()}`
-            },
-            body: JSON.stringify(requestBody)
-          }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
-          
-          if (!fetchResponse.ok) {
-            const error = await handleApiError(fetchResponse, 'Qwen TTS');
-            throw error;
-          }
-          
-          return fetchResponse;
-        } catch (e) {
-          throw e;
-        }
+        const fetchResponse = await fetchBufferedResponse(apiUrl, {
+          signal,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey.trim()}` },
+          body: JSON.stringify(requestBody)
+        }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
+
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'Qwen TTS');
+        return fetchResponse;
       },
       {
         signal: options.signal,
@@ -177,153 +167,69 @@ export async function textToSpeech(text, apiKey, options = {}) {
     if (fetchError.name === 'AbortError') {
       throw await handleTimeoutError('Qwen TTS');
     }
-    if (fetchError.status) {
-      throw fetchError; // Already handled by handleApiError
+    if (fetchError.status || fetchError.translationKey) {
+      throw fetchError;
     }
     throw await handleNetworkError(fetchError, 'Qwen TTS');
   }
   
-  // Parse JSON response
   let responseData;
-  try {
-    responseData = await response.json();
-  } catch (e) {
-    logError('Failed to parse Qwen TTS response', e);
-    throw new Error('Invalid response from Qwen TTS API');
-  }
-  
-  log('Qwen TTS response received', { code: responseData.code, hasOutput: !!responseData.output });
+  try { responseData = await response.json(); }
+  catch { throw invalidSpeechAudio('Invalid Qwen TTS response'); }
+  options.signal?.throwIfAborted();
   await checkCancellation('Qwen audio download', options.processingRunId);
-  
-  // Check for API errors
-  if (responseData.code && responseData.code !== 'Success' && responseData.code !== '200') {
-    logError('Qwen TTS API error', responseData);
-    throw new Error(responseData.message || `Qwen TTS API error: ${responseData.code}`);
+  if (responseData?.error || (responseData?.code && !['Success', '200'].includes(String(responseData.code)))) {
+    throw await createApiError(response, 'Qwen TTS', responseData);
   }
-  
-  // Extract audio data from response
-  // Qwen TTS returns audio URL that needs to be fetched
-  let audioBuffer;
-  
-  if (responseData.output?.audio) {
-    const audioData = responseData.output.audio;
-    
-    // If audio contains URL, fetch it
-    if (audioData.url) {
-      // SECURITY: Validate URL before fetching
-      if (!isValidExternalUrl(audioData.url)) {
-        logError('Invalid audio URL from Qwen API', { url: audioData.url?.substring(0, 100) });
-        throw new Error('Invalid audio URL received from API');
-      }
-      
-      try {
-        const audioResponse = await fetchBufferedResponse(audioData.url, { signal: options.signal }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('Qwen audio download', options.processingRunId) });
-        if (!audioResponse.ok) {
-          throw new Error(`Failed to fetch audio: ${audioResponse.status}`);
-        }
-        audioBuffer = await audioResponse.arrayBuffer();
-      } catch (e) {
-        options.signal?.throwIfAborted();
-        await checkCancellation('Qwen audio download', options.processingRunId);
-        logError('Failed to fetch audio from URL', e);
-        throw new Error(`Failed to download audio: ${e.message}`);
-      }
-    }
-    // If audio is base64 string
-    else if (typeof audioData === 'string') {
-      audioBuffer = base64ToArrayBuffer(audioData);
-    }
-    // If audio has data field with base64
-    else if (audioData.data && typeof audioData.data === 'string') {
-      audioBuffer = base64ToArrayBuffer(audioData.data);
-    }
-    else {
-      logError('Unknown audio format', { audioData });
-      throw new Error('Unknown audio format in Qwen TTS response');
-    }
-  }
-  // Check for audio_url at output level
-  else if (responseData.output?.audio_url) {
-    log('Fetching audio from audio_url', { url: responseData.output.audio_url.substring(0, 100) + '...' });
-    
-    // SECURITY: Validate URL before fetching
-    if (!isValidExternalUrl(responseData.output.audio_url)) {
-      logError('Invalid audio URL from Qwen API', { url: responseData.output.audio_url?.substring(0, 100) });
-      throw new Error('Invalid audio URL received from API');
-    }
-    
-    try {
-      const audioResponse = await fetchBufferedResponse(responseData.output.audio_url, { signal: options.signal }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('Qwen audio download', options.processingRunId) });
-      if (!audioResponse.ok) {
-        throw new Error(`Failed to fetch audio: ${audioResponse.status}`);
-      }
-      audioBuffer = await audioResponse.arrayBuffer();
-    } catch (e) {
-      options.signal?.throwIfAborted();
-      await checkCancellation('Qwen audio download', options.processingRunId);
-      logError('Failed to fetch audio from audio_url', e);
-      throw new Error(`Failed to download audio: ${e.message}`);
-    }
-  }
-  else {
-    logError('No audio data in Qwen TTS response', {
-      responseKeys: Object.keys(responseData),
-      outputKeys: responseData.output ? Object.keys(responseData.output) : [],
-      output: responseData.output
-    });
-    throw new Error('No audio data received from Qwen TTS API');
-  }
-  
-  if (!audioBuffer || audioBuffer.byteLength === 0) {
-    throw new Error('Empty audio data from Qwen TTS API');
-  }
-  
-  log('Qwen TTS audio ready', { audioSize: audioBuffer.byteLength });
-  
-  return audioBuffer;
+
+  const audio = responseData?.output?.audio;
+  const url = audio ? audio.url : responseData?.output?.audio_url;
+  const encoded = typeof audio === 'string' ? audio : audio?.data;
+  const buffer = url
+    ? await downloadSpeechAudio(url, options)
+    : decodeSpeechAudio(encoded);
+  if (!buffer.byteLength) throw invalidSpeechAudio('Empty Qwen TTS audio');
+  log('Qwen TTS audio ready', { audioSize: buffer.byteLength });
+  return buffer;
 }
 
-/**
- * Convert base64 string to ArrayBuffer
- * @param {string|object} base64 - Base64 encoded string or object with data
- * @returns {ArrayBuffer} Decoded ArrayBuffer
- */
-function base64ToArrayBuffer(base64) {
-  // Handle different input types
-  let base64String;
-  
-  if (typeof base64 === 'string') {
-    base64String = base64;
-  } else if (base64 && typeof base64 === 'object') {
-    // If it's an object, try to extract string data
-    base64String = base64.data || base64.content || base64.audio || JSON.stringify(base64);
-    log('base64ToArrayBuffer received object, extracted string', { 
-      originalType: typeof base64,
-      extractedLength: base64String?.length 
-    });
-  } else {
-    throw new Error(`Invalid audio data type: ${typeof base64}`);
+function invalidSpeechAudio(message) {
+  return Object.assign(new Error(message), {
+    translationKey: 'errorTtsInvalidAudio', translationParams: {}, retryable: false
+  });
+}
+
+/** @param {string} url @param {Partial<import('../types.js').TTSOptions>} options */
+async function downloadSpeechAudio(url, options) {
+  let address;
+  try { address = new URL(url); }
+  catch { throw invalidSpeechAudio('Invalid Qwen TTS audio URL'); }
+  if (!['http:', 'https:'].includes(address.protocol) || address.username || address.password || !isValidExternalUrl(address.origin)) {
+    throw invalidSpeechAudio('Invalid Qwen TTS audio URL');
   }
-  
-  if (!base64String || typeof base64String !== 'string') {
-    throw new Error('Could not extract base64 string from audio data');
-  }
-  
-  // Remove data URL prefix if present
-  const base64Data = base64String.includes(',') ? base64String.split(',')[1] : base64String;
-  
-  // Decode base64
+
+  const checkCancelled = () => checkCancellation('Qwen audio download', options.processingRunId);
   try {
-    const binaryString = atob(base64Data);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes.buffer;
-  } catch (e) {
-    logError('Failed to decode base64', { error: e.message, dataPreview: base64Data.substring(0, 100) });
-    throw new Error(`Failed to decode base64 audio: ${e.message}`);
+    const response = await fetchBufferedResponse(url, { signal: options.signal }, CONFIG.API_TIMEOUT_MS, { checkCancelled });
+    if (!response.ok) throw invalidSpeechAudio('Qwen TTS audio not available');
+    const audio = await response.arrayBuffer();
+    options.signal?.throwIfAborted();
+    await checkCancelled();
+    return audio;
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    await checkCancelled();
+    if (error.translationKey) throw error;
+    throw invalidSpeechAudio('Qwen TTS audio download failed');
   }
+}
+
+/** @param {unknown} encoded */
+function decodeSpeechAudio(encoded) {
+  if (typeof encoded !== 'string' || !encoded) throw invalidSpeechAudio('Missing Qwen TTS audio');
+  const base64 = encoded.startsWith('data:') ? encoded.slice(encoded.indexOf(',') + 1) : encoded;
+  try { return Uint8Array.from(atob(base64), byte => byte.charCodeAt(0)).buffer; }
+  catch { throw invalidSpeechAudio('Invalid Qwen TTS audio encoding'); }
 }
 
 /**

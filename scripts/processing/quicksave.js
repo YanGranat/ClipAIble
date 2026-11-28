@@ -64,7 +64,7 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
   
   // Determine provider and model
   const { provider, model } = determineProviderAndModel(settingsObj);
-  const useOcr = settings.pdf_ocr === true && detectPdfPage(url, url, html, sourceContentType);
+  const useOcr = settings.pdf_ocr === true && detectPdfPage(url, url, sourceContentType);
   const mode = useOcr ? 'ocr' : settings.extraction_mode || 'automatic';
   const language = settings.pdf_language || 'auto';
   const audioProvider = String(settingsObj.audio_provider || 'openai');

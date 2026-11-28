@@ -24,6 +24,25 @@ beforeEach(() => {
 afterEach(() => { dom.window.close(); vi.unstubAllGlobals(); });
 
 describe('settings load generation ownership', () => {
+  it('restores Automatic when OCR is turned off with no saved web extraction mode', async () => {
+    await chrome.storage.local.set({ pdf_ocr: true });
+    vi.stubGlobal('chrome', { ...chrome, tabs: { query: vi.fn(async () => [{ id: 5, url: 'https://example.org/report.pdf' }]) } });
+    const elements = {};
+    initializeDOMElements(elements);
+    const noop = vi.fn();
+    const settings = initSettings({ elements, STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS,
+      showToast: noop, setCustomSelectValue: noop, getElement: id => document.getElementById(id),
+      setElementDisplay: noop, setElementGroupDisplay: noop, setDisplayForIds: noop, applyTheme: noop,
+      markdownToHtml: value => value, audioVoiceMap: {}, t: async key => key, getUILanguage: async () => 'en' });
+
+    await settings.loadSettings();
+    expect(elements.modeSelect.value).toBe('ocr');
+    await importSettings(JSON.stringify({ settings: { pdf_ocr: false } }), { overwriteExisting: true });
+    expect((await chrome.storage.local.get(['pdf_ocr'])).pdf_ocr).toBe(false);
+    await settings.loadSettings();
+    expect(elements.modeSelect.value).toBe('automatic');
+  });
+
   it.each(['ENC:v2:unavailable-ciphertext', '****stored-mask'])('retains unreadable speech key settings %s', async value => {
     const fields = [['elevenlabs_api_key', 'elevenlabsApiKey'], ['qwen_api_key', 'qwenApiKey'], ['respeecher_api_key', 'respeecherApiKey']];
     const stored = Object.fromEntries(fields.map(([key]) => [key, value]));

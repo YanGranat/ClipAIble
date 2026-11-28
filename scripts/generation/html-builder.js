@@ -1,5 +1,5 @@
 import { buildTocStructure, renderTocAsHtml } from './toc-builder.js';
-import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, prepareDocumentContent, localDocumentName } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, imageCaptionItem, renderTableHtml, listHtml, prepareDocumentContent, localDocumentName } from './document-content.js';
 // @ts-check
 // HTML builder for PDF generation
 
@@ -247,19 +247,13 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
           };
           
           const altTitle = cleanTitle(item.alt || '').trim().replace(/\s+/g, ' ').toLowerCase();
-          const captionText = item.caption || (!item.isGraphic && item.alt && altTitle !== normalizedTitle && !isGenericAltText(item.alt) ? item.alt : '');
-          // CRITICAL: If caption already contains HTML (from getFormattedHtml), use sanitizeHtml directly
-          // Otherwise, convert markdown to HTML first
+          const altFallback = !item.isGraphic && item.alt && altTitle !== normalizedTitle && !isGenericAltText(item.alt) ? item.alt : '';
+          const captionText = item.caption || altFallback;
           let caption = '';
           if (captionText && !isGenericCaption(captionText)) {
-            // Check if caption already contains HTML tags
-            if (captionText.includes('<') && captionText.includes('>')) {
-              // Already HTML - sanitize directly to preserve links
-              caption = sanitizeHtml(captionText, sourceUrl, { allowFileProtocol: true });
-            } else {
-              // Markdown - convert first, then sanitize
-              caption = sanitizeHtml(markdownToHtml(captionText), sourceUrl, { allowFileProtocol: true });
-            }
+            const captionItem = imageCaptionItem(item, altFallback);
+            caption = captionItem.format === 'text' ? escapeHtml(captionItem.text)
+              : sanitizeHtml(captionItem.html ?? markdownToHtml(captionItem.text), sourceUrl, { allowFileProtocol: true });
           }
           const altText = (item.alt || '').replace(/<[^>]*>/g, '');
           return `${anchorTag}<figure class="article-image"${idAttr}${item.tableMedia ? ' data-table-media' : ''}>

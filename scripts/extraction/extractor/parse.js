@@ -298,7 +298,10 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
   for (const [owner, graphic] of state.readingGraphics || []) {
     if (graphic.type !== 'image') continue;
     const caption = Array.from(owner.querySelectorAll('figcaption')).find(node => node.closest('figure') === owner);
-    if (caption) graphic.caption = serializeReadingHtml(caption, state.selectionExclusions, state.referenceRoots);
+    if (caption) {
+      graphic.caption = serializeReadingHtml(caption, state.selectionExclusions, state.referenceRoots);
+      graphic.captionFormat = 'html';
+    }
   }
   for (const element of elements) {
     if (element.tagName !== 'IMG') continue;
@@ -376,7 +379,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
         content.push(graphic);
       } else if (graphic) {
         content.push({ ...graphic, ...(element.id ? { id: element.id } : {}),
-          ...(caption ? { caption: captionHtml } : {}),
+          ...(caption ? { caption: captionHtml, captionFormat: 'html' } : {}),
           ...(state.featuredMediaRoots?.some(root => root === element || root.contains(element)) ? { isFeatured: true } : {}) });
       } else {
         const html = originalFigureContent(element, baseUrl, originalLayers, captionHtml);
@@ -597,6 +600,9 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
       return { target, label, items, citation };
     });
     if (projected.length) reuseAnnotationCitations(content, projected, document);
+  }
+  for (const item of content) {
+    if (item.type === 'image' && item.caption && !item.captionFormat) item.captionFormat = 'html';
   }
   return omitInitialArticleTitle(content, state);
 }

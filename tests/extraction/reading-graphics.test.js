@@ -4,6 +4,7 @@ import { toSvg } from 'html-to-image';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 import { captureReadingGraphics, getGraphicReadingOwner } from '../../scripts/extraction/extractor/graphics.js';
 import { parseElements } from '../../scripts/extraction/extractor/parse.js';
+import { buildHtmlForPdf } from '../../scripts/generation/html-builder.js';
 
 vi.mock('html-to-image', { spy: true });
 
@@ -53,6 +54,21 @@ function layeredFigure(extra = '') {
 }
 
 describe('Reading graphic ownership', () => {
+  it('preserves the source spelling and authored emphasis of a captured figure caption in PDF', () => {
+    const { win, doc, root } = page('<figure><svg><path/></svg><figcaption>' +
+      'The *marker* is &lt;name&gt; &amp; <em>case sensitive</em>.</figcaption></figure>');
+    const figure = doc.querySelector('figure');
+    const state = { referenceRoots: [root], processedImages: new Set(), addedHeadings: new Set(),
+      readingGraphics: new Map([[figure, {
+        type: 'image', isGraphic: true, src: 'data:image/png;base64,AA==', alt: '', captionFormat: 'text',
+        caption: 'The *marker* is <name> & case sensitive.'
+      }]]) };
+    const items = parseElements(win, [figure, ...figure.children], state, CONSTANTS, doc.URL);
+    expect(items[0]).toMatchObject({ type: 'image', captionFormat: 'html' });
+    const caption = JSDOM.fragment(buildHtmlForPdf(items, 'Report', '', {}, doc.URL)).querySelector('figcaption');
+    expect(caption.textContent).toBe('The *marker* is <name> & case sensitive.');
+    expect([...caption.querySelectorAll('em')].map(element => element.textContent)).toEqual(['case sensitive']);
+  });
   it('keeps a decorative arrow with its labelled link, including inside a prose figure', () => {
     const { doc, root, owner } = page('<figure><p>Review <a href="/entry">this entry<svg aria-hidden="true"><path d="M0 0L3 2"/></svg></a>.</p></figure>');
     expect(owner('svg')).toBeNull();

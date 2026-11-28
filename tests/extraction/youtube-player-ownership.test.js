@@ -41,9 +41,9 @@ describe('YouTube player response ownership', () => {
   afterEach(() => {
     vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); dom.window.close();
   });
-  async function settle() {
+  async function settle(targetLanguage, sourceLanguage) {
     let settled = false;
-    const result = extractYouTubeSubtitles(7).then(value => { settled = true; return { value }; }, error => { settled = true; return { error }; });
+    const result = extractYouTubeSubtitles(7, targetLanguage, sourceLanguage).then(value => { settled = true; return { value }; }, error => { settled = true; return { error }; });
     await vi.advanceTimersByTimeAsync(10000);
     expect(settled).toBe(true);
     return result;
@@ -61,6 +61,23 @@ describe('YouTube player response ownership', () => {
     dom.window.ytInitialPlayerResponse = player('current-video');
     expect((await settle()).value).toMatchObject({ subtitles: [{ start: 1, duration: 2, text: 'Current transcript' }] });
     expect(pageFetch.mock.calls.some(([url]) => String(url).includes('v=current-video&source=cached'))).toBe(true);
+  });
+
+  it.each([
+    [undefined, false, 'ja-asr'],
+    ['fr', false, 'fr-manual'],
+    [undefined, true, 'fr-manual']
+  ])('selects the requested or best supported caption track (%s, second ASR=%s)', async (language, secondAutomaticTrack, expected) => {
+    const response = player('current-video');
+    const captions = response.captions.playerCaptionsTracklistRenderer.captionTracks;
+    const track = (languageCode, name, kind) => ({ languageCode, kind, baseUrl: `https://www.youtube.com/api/timedtext?v=current-video&source=cached&track=${name}` });
+    captions.splice(0, captions.length, track('fr', 'fr-manual'), track('ja', 'ja-asr', 'asr'));
+    if (secondAutomaticTrack) captions.push(track('en', 'en-asr', 'asr'));
+    dom.window.ytInitialPlayerResponse = response;
+
+    expect((await settle(language)).value?.subtitles).toEqual([{ start: 1, duration: 2, text: 'Current transcript' }]);
+    const captionRequest = pageFetch.mock.calls.find(([url]) => String(url).includes('source=cached'))?.[0];
+    expect(new URL(captionRequest).searchParams.get('track')).toBe(expected);
   });
 
   it('waits for the current player response after a navigation', async () => {

@@ -4547,7 +4547,7 @@ var clipaibleArticleExtractor = (() => {
         const src = canvas.toDataURL("image/png");
         const bytes = imageDataUrlBytes(src);
         if (detectImageMime(bytes) !== "image/png" || bytes.byteLength > MAX_IMAGE_BYTES) throw failure();
-        result.set(owner, { type: "image", isGraphic: true, src, alt, caption });
+        result.set(owner, { type: "image", isGraphic: true, src, alt, caption, captionFormat: "text" });
       }
       return result;
     } catch (error) {
@@ -6772,7 +6772,10 @@ var clipaibleArticleExtractor = (() => {
     for (const [owner, graphic] of state.readingGraphics || []) {
       if (graphic.type !== "image") continue;
       const caption = Array.from(owner.querySelectorAll("figcaption")).find((node) => node.closest("figure") === owner);
-      if (caption) graphic.caption = serializeReadingHtml(caption, state.selectionExclusions, state.referenceRoots);
+      if (caption) {
+        graphic.caption = serializeReadingHtml(caption, state.selectionExclusions, state.referenceRoots);
+        graphic.captionFormat = "html";
+      }
     }
     for (const element of elements) {
       if (element.tagName !== "IMG") continue;
@@ -6842,7 +6845,7 @@ var clipaibleArticleExtractor = (() => {
           content.push({
             ...graphic,
             ...element.id ? { id: element.id } : {},
-            ...caption ? { caption: captionHtml } : {},
+            ...caption ? { caption: captionHtml, captionFormat: "html" } : {},
             ...state.featuredMediaRoots?.some((root) => root === element || root.contains(element)) ? { isFeatured: true } : {}
           });
         } else {
@@ -7079,6 +7082,9 @@ var clipaibleArticleExtractor = (() => {
         return { target, label, items, citation };
       });
       if (projected.length) reuseAnnotationCitations(content, projected, document2);
+    }
+    for (const item of content) {
+      if (item.type === "image" && item.caption && !item.captionFormat) item.captionFormat = "html";
     }
     return omitInitialArticleTitle(content, state);
   }
@@ -7487,7 +7493,13 @@ var clipaibleArticleExtractor = (() => {
       /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|\.([\w-]+(?::[\w-]+)+)/g,
       (token, name) => name && doc.getElementsByClassName(name).length ? `[class~="${name}"]` : token
     );
-    if (corrected !== selector && doc.querySelector(corrected)) return corrected;
+    if (corrected !== selector) {
+      try {
+        if (doc.querySelector(corrected)) return corrected;
+      } catch (error) {
+        if (error?.name !== "SyntaxError") throw error;
+      }
+    }
     if (syntaxError) throw syntaxError;
     return selector;
   }

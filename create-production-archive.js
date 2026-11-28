@@ -8,6 +8,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { createHash } from 'node:crypto';
 import JSZip from './lib/jszip-wrapper.js';
+import { OCR_RUNTIME_ASSETS } from './build-offscreen.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -46,6 +47,7 @@ export function isRuntimeFile(relativePath) {
   if (!isSourceFile(normalized) || buildOnlyFiles.has(normalized)) return false;
   if (buildOnlyDirectories.some(directory => normalized === directory.slice(0, -1) || normalized.startsWith(directory))) return false;
   if (/^lib\/ort[.-]/.test(normalized)) return ORT_RUNTIME_FILES.includes(normalized.slice(4));
+  if (normalized.startsWith('dist/ocr/')) return Object.hasOwn(OCR_RUNTIME_ASSETS, normalized.slice('dist/ocr/'.length));
   return true;
 }
 
@@ -153,7 +155,7 @@ async function createArchive() {
     for (const filename of [
       'manifest.json', 'scripts/background.js', 'popup/popup.html', 'print/print.html',
       'dist/offscreen-bundle.js', 'dist/tts-worker-bundle.js', ...ORT_RUNTIME_FILES.map(filename => 'lib/' + filename),
-      'dist/ocr/worker.min.js', 'dist/ocr/tesseract-core-simd-lstm.wasm.js',
+      ...Object.keys(OCR_RUNTIME_ASSETS).map(filename => 'dist/ocr/' + filename),
       'lib/ocr/eng.traineddata.gz', 'lib/ocr/rus.traineddata.gz', 'lib/ocr/ukr.traineddata.gz',
       'lib/piper-wasm/piper_phonemize.data', 'lib/piper-wasm/piper_phonemize.wasm'
     ]) await fs.access(path.join(stagingDirectory, filename));

@@ -103,7 +103,7 @@ export function initOrchestration(deps) {
   }
   if (isCancelled(data.processingRunId)) return false;
   
-  const pdfInfo = detectPdfPage(data.url, tabUrl, data.html, data.sourceContentType);
+  const pdfInfo = detectPdfPage(data.url, tabUrl, data.sourceContentType);
   if (pdfInfo && pdfInfo.isPdf) {
     log('📄 Detected PDF page - processing as PDF document');
     // Process as PDF page - skip selector/extract modes
@@ -113,6 +113,7 @@ export function initOrchestration(deps) {
     if (!pdfUrl && data.tabId) {
       pdfUrl = await getOriginalPdfUrl(data.tabId);
     }
+    if (isCancelled(data.processingRunId)) return false;
     
     if (!pdfUrl) {
       const uiLang = await getUILanguageCached();
@@ -126,7 +127,7 @@ export function initOrchestration(deps) {
     }
     
     return await handlePdfPageProcessing(
-      data,
+      { ...data, url: pdfUrl },
       pdfUrl,
       stopKeepAlive,
       continueProcessingPipeline,

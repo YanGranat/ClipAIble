@@ -6,7 +6,7 @@ import { isValidProcessingRunId, getProcessingPhase } from '../../scripts/state/
 import { DEFAULT_ELEVENLABS_TTS_MODEL } from '../../scripts/api/tts-catalog.js';
 import { t, tSync } from '../../scripts/locales.js';
 import { getUserFriendlyError, getUserFriendlyErrorDescriptor, createUserFriendlyError } from '../../scripts/utils/error-messages.js';
-import { isPdfHtml } from '../../scripts/utils/pdf.js';
+import { isChromePdfViewer, isDirectLocalPdf, isPdfTabWithoutContent } from '../../scripts/utils/pdf.js';
 import { getExportPageIssue, getExportSelectionIssue, inspectExportRequirements, readExportOptions } from './export-readiness.js';
 import { readOpenRouterSpeechControls } from '../settings/openrouter-speech.js';
 
@@ -296,16 +296,11 @@ export function initProcessing(deps) {
       
       // Try to get HTML via content script message first (faster and more reliable)
       let pageData = null;
-      let localPdfUrl = null;
-      try {
-        const source = new URL(tab.url);
-        if (source.protocol === 'file:' && /\.pdf$/i.test(source.pathname)) localPdfUrl = tab.url;
-      } catch { /* Other pages use the existing content acquisition path. */ }
-      if (localPdfUrl) {
+      if (isDirectLocalPdf(tab.url) || isChromePdfViewer(tab.url)) {
         const currentTab = await chrome.tabs.get(tab.id);
-        if (currentTab.url !== localPdfUrl) throw sourcePageChanged();
+        if (currentTab.url !== tab.url) throw sourcePageChanged();
         // PDF processing acquires its own bytes, including file selection when needed.
-        pageData = { html: '<!doctype html><html><body></body></html>', images: [], url: localPdfUrl, title: tab.title || '' };
+        pageData = { html: '', images: [], url: tab.url, title: tab.title || '', sourceContentType: 'application/pdf' };
       }
       if (!pageData) {
         try {
@@ -339,7 +334,7 @@ export function initProcessing(deps) {
 
         // Inject content script and get page HTML with timeout
         // Use inline function to ensure proper serialization
-        let htmlResult;
+        let htmlResult, captureError;
         try {
           let timeoutId = null;
           const timeoutPromise = new Promise((_, reject) => {
@@ -390,6 +385,7 @@ export function initProcessing(deps) {
                   images: [],
                   url: window.location.href,
                   title: document.title,
+                  sourceContentType: document.contentType,
                   error: e.message
                 };
               }
@@ -422,22 +418,26 @@ export function initProcessing(deps) {
             pageData = htmlResult[0].result;
           }
         } catch (scriptError) {
+          captureError = scriptError;
+        }
+        if (!pageData?.sourceContentType && !pageData?.html && await isPdfTabWithoutContent(tab)) {
+          const currentTab = await chrome.tabs.get(tab.id);
+          if (currentTab.url !== tab.url) throw sourcePageChanged();
+          pageData = { html: '', images: [], url: tab.url, title: tab.title || '', sourceContentType: 'application/pdf' };
+        } else if (captureError) {
           logError('=== handleSavePdf: extractPageContent script FAILED ===', {
-            error: scriptError?.message || String(scriptError),
-            errorStack: scriptError?.stack,
+            error: captureError?.message || String(captureError),
+            errorStack: captureError?.stack,
             tabId: tab.id,
             chromeRuntimeLastError: chrome.runtime.lastError?.message,
             timestamp: Date.now()
           });
-          // Use user-friendly error message
-          const friendly = await createUserFriendlyError('scriptExecutionFailed', {
-            error: scriptError
-          });
-        throw Object.assign(new Error(friendly.message), friendly);
+          const friendly = await createUserFriendlyError('scriptExecutionFailed', { error: captureError });
+          throw Object.assign(new Error(friendly.message), friendly);
         }
       }
       
-      if (!pageData || !pageData.html) {
+      if (!pageData?.html && pageData?.sourceContentType !== 'application/pdf') {
         const friendly = await createUserFriendlyError('noContentExtracted', {
           error: { message: 'No HTML data received from page' }
         });
@@ -468,7 +468,7 @@ export function initProcessing(deps) {
         throw Object.assign(new Error(friendly.message), friendly);
       }
       
-      if (actualUrl.startsWith('chrome://') || actualUrl.startsWith('chrome-extension://') || actualUrl.startsWith('edge://') || actualUrl.startsWith('about:')) {
+      if (!isChromePdfViewer(actualUrl) && /^(?:chrome|chrome-extension|edge|about):/.test(actualUrl)) {
         log('handleSavePdf: pageNotReady - actual URL is restricted', { actualUrl });
         const friendly = await createUserFriendlyError('pageNotReady', {
           blockedPage: true,
@@ -494,9 +494,9 @@ export function initProcessing(deps) {
       const response = await chrome.runtime.sendMessage({
         action: 'processArticle',
         data: {
-          // Automatic extraction reads the live tab. Keep the snapshot only when it identifies an inline PDF.
-          html: mode === 'automatic' && !isPdfHtml(pageData.html) ? '' : pageData.html,
-          ...(mode === 'automatic' ? { sourceHtmlLength: pageData.html.length } : {}),
+          // Automatic extraction reads the live tab; PDF processing acquires its own file bytes.
+          html: mode === 'automatic' ? '' : pageData.html,
+          ...(mode === 'automatic' ? { sourceHtmlLength: pageData.html?.length ?? 0 } : {}),
           sourceContentType: pageData.sourceContentType,
           url: actualUrl,
           title: pageData.title || tab.title,

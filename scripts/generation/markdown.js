@@ -1,4 +1,4 @@
-import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, prepareDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, imageCaptionItem, tableCellHtml, listHtml, prepareDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
 import { downloadBlob } from '../api/blob-download.js';
 // @ts-check
 // Markdown generation module for ClipAIble extension
@@ -224,7 +224,7 @@ export async function generateMarkdown(data, updateState) {
   const blocks = [markdown.trimEnd()];
   for (const item of filteredContent) {
     if (item.type === 'subtitle') continue;
-    const body = contentItemToMarkdown(item).replace(/^\n+/, '').trimEnd();
+    const body = contentItemToMarkdown(item, sourceUrl).replace(/^\n+/, '').trimEnd();
     if (body) blocks.push(body);
   }
   markdown = blocks.filter(Boolean).join('\n\n') + '\n';
@@ -295,7 +295,7 @@ export async function generateMarkdown(data, updateState) {
  * @param {import('../types.js').ContentItem} item - Content item
  * @returns {string} Markdown text
  */
-function contentItemToMarkdown(item) {
+function contentItemToMarkdown(item, sourceUrl = '') {
   if (!item || !item.type) return '';
   const normalizeFragmentText = text => text.replace(/\s+/g, ' ').trim();
   const fragmentsMatchText = typeof item.text !== 'string' || !Array.isArray(item.lines) ||
@@ -649,7 +649,10 @@ function contentItemToMarkdown(item) {
       const alt = String(item.alt || '').replace(/([\\\[\]])/g, '\\$1');
       const src = String(item.src || item.base64 || '').replace(/[<>\s]/g, char => encodeURIComponent(char));
       const anchor = item.id ? htmlToMarkdown(`<a id="${escapeAttr(item.id)}"></a>`) + '\n' : '';
-      return src ? `${anchor}![${alt}](<${src}>)\n\n${item.caption ? htmlToMarkdown(item.caption) + '\n\n' : ''}` : '';
+      const captionItem = imageCaptionItem(item);
+      const caption = captionItem.format === 'text' ? documentMarkdown(captionItem)
+        : htmlToMarkdown(documentText(captionItem, sourceUrl), sourceUrl);
+      return src ? `${anchor}![${alt}](<${src}>)\n\n${caption ? caption + '\n\n' : ''}` : '';
     }
     
     case 'hr':

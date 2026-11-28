@@ -172,7 +172,7 @@ it.each([new ArrayBuffer(0), new Uint8Array([1, 0, 2, 0]).buffer,
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
-it.each([[401, 'errorApiKeyInvalid'], [403, 'errorApiAccessForbidden'], [402, 'errorApiError'], [404, 'errorApiError']])(
+it.each([[401, 'errorApiKeyInvalid'], [403, 'errorApiAccessForbidden'], [402, 'errorApiQuotaExceeded'], [404, 'errorApiError']])(
   'preserves the localized HTTP %s failure without retrying or exposing a response message', async (status, translationKey) => {
     fetch.mockResolvedValue(new Response(JSON.stringify({ error: { message: 'Untrusted diagnostic content.' } }), { status }));
     const error = await textToSpeech('Article.', key).catch(error => error);

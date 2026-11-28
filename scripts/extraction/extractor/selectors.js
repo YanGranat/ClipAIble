@@ -19,7 +19,13 @@ function matchableSelector(doc, selector) {
   // An unescaped utility class can look like a pseudo-class in a model response.
   const corrected = selector.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|\.([\w-]+(?::[\w-]+)+)/g,
     (token, name) => name && doc.getElementsByClassName(name).length ? `[class~="${name}"]` : token);
-  if (corrected !== selector && doc.querySelector(corrected)) return corrected;
+  if (corrected !== selector) {
+    try {
+      if (doc.querySelector(corrected)) return corrected;
+    } catch (error) {
+      if (error?.name !== 'SyntaxError') throw error;
+    }
+  }
   if (syntaxError) throw syntaxError;
   return selector;
 }

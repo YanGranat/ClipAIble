@@ -72,24 +72,35 @@ describe('figure paragraph conservation', () => {
     expect(output).toContain('Prose after.');
   });
 
-  it('preserves linked HTML, Markdown, and literal text in embedded EPUB captions', async () => {
+  it.each([['PDF', generatePdf], ['EPUB', generateEpub], ['FB2', generateFb2], ['Markdown', generateMarkdown]])(
+    '%s preserves linked HTML, Markdown, and literal text in image captions', async (name, generate) => {
     const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII=';
     vi.mocked(imageToBase64).mockResolvedValueOnce(png).mockResolvedValueOnce(png).mockResolvedValueOnce(png);
     vi.mocked(processImagesInBatches).mockImplementationOnce((items, _limit, _state, process) => Promise.all(items.map(process)));
     const content = [
       { type: 'image', src: png, caption: '<a href="/field_sensor_data">Field readings</a> from the <em>first trial</em>.' },
-      { type: 'image', src: png, caption: 'Follow the [reading log](/log) for *details*.' },
-      { type: 'image', src: png, format: 'text', caption: 'Preserve a < b & <mark>literal text</mark>.' }
+      { type: 'image', src: png, format: 'markdown', caption: 'Follow the [reading log](/log) for *details*.' },
+      { type: 'image', src: png, format: 'text', caption: 'Preserve a < b & <em>literal text</em>.' },
+      { type: 'image', src: png, alt: 'List element: <li>' }
     ];
-    const epub = await generateEpub({ content, title: 'Measurement report', sourceUrl: 'https://example.org/report' });
-    const chapter = readZipEntries(await epub.arrayBuffer())['OEBPS/content.xhtml'].toString('utf8');
-    const doc = JSDOM.fragment(chapter);
-    const [html, markdown, literal] = doc.querySelectorAll('figcaption');
-    expect(html.querySelector('a').getAttribute('href')).toBe('https://example.org/field_sensor_data');
-    expect(html.querySelector('em').textContent).toBe('first trial');
-    expect(markdown.querySelector('a').getAttribute('href')).toBe('https://example.org/log');
-    expect(markdown.querySelector('em').textContent).toBe('details');
+    const result = await generate({ content, title: 'Measurement report', sourceUrl: 'https://example.org/report' });
+    if (name === 'Markdown') {
+      expect(result).toContain('[Field readings](https://example.org/field_sensor_data)');
+      expect(result).toContain('[reading log](https://example.org/log)');
+      expect(result).toContain(String.raw`Preserve a \< b & \<em\>literal text\</em\>.`);
+      return;
+    }
+    const output = name === 'EPUB' ? readZipEntries(await result.arrayBuffer())['OEBPS/content.xhtml'].toString('utf8')
+      : name === 'PDF' ? putPrintJob.mock.calls[0][1].html : await result.text();
+    const doc = name === 'FB2' ? new JSDOM(output, { contentType: 'text/xml' }).window.document : JSDOM.fragment(output);
+    const [html, markdown, literal, fallback] = doc.querySelectorAll(name === 'FB2' ? 'image + p > emphasis' : 'figcaption');
+    const linkAttribute = name === 'FB2' ? 'l:href' : 'href';
+    expect(html.querySelector('a').getAttribute(linkAttribute)).toBe('https://example.org/field_sensor_data');
+    expect(html.querySelector('em, emphasis').textContent).toBe('first trial');
+    expect(markdown.querySelector('a').getAttribute(linkAttribute)).toBe('https://example.org/log');
+    expect(markdown.querySelector('em, emphasis').textContent).toBe('details');
     expect(literal.textContent).toBe(content[2].caption);
     expect(literal.childElementCount).toBe(0);
+    if (name === 'PDF') expect(fallback.textContent).toBe(content[3].alt);
   });
 });

@@ -22,6 +22,12 @@ function contentMarkup(result) {
 }
 
 describe('selector page extraction', () => {
+  it('keeps a valid optional selector when a utility class only resembles part of its syntax', async () => {
+    const result = await extract('<!doctype html><main><p>Article paragraph selected for export.</p><div class="panel:not">Separate layout label.</div></main>',
+      undefined, { content: 'p', exclude: '.panel:not(.visible)' });
+    expect(result.content).toEqual([expect.objectContaining({ type: 'paragraph', text: 'Article paragraph selected for export.' })]);
+  });
+
   it('removes a clipped copy-excluded link hint and keeps visible and referenced text', () => {
     const style = 'position:absolute;clip-path:inset(50%);width:1px;height:1px';
     const dom = new JSDOM(`<p><a href="/data" target="_blank">Survey data

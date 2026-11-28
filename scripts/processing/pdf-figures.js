@@ -64,7 +64,7 @@ export async function preservePdfFigures(markdown, imageData, pageNum, figures, 
         binary += String.fromCharCode(...cropped.subarray(offset, offset + 32768));
       }
       const id = '[[pdf-crop:' + crypto.randomUUID() + ']]';
-      figures.items.set(id, { type: 'image', src: 'data:image/jpeg;base64,' + btoa(binary), alt: '', caption });
+      figures.items.set(id, { type: 'image', src: 'data:image/jpeg;base64,' + btoa(binary), alt: '', caption, captionFormat: 'markdown' });
       figures.bytes += blob.size;
       lines[i] = id;
       if (caption) lines[captionIndex] = '';

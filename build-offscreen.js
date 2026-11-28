@@ -14,6 +14,14 @@ const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+export const OCR_RUNTIME_ASSETS = Object.freeze({
+  'worker.min.js': 'tesseract.js/dist/worker.min.js',
+  'worker.min.js.LICENSE.txt': 'tesseract.js/dist/worker.min.js.LICENSE.txt',
+  'TESSERACT-JS-LICENSE': 'tesseract.js/LICENSE.md',
+  'tesseract-core-simd-lstm.wasm.js': 'tesseract.js-core/tesseract-core-simd-lstm.wasm.js',
+  'TESSERACT-CORE-LICENSE': 'tesseract.js-core/LICENSE'
+});
+
 async function build() {
   try {
     console.log('🔨 Building offscreen bundle...');
@@ -117,14 +125,7 @@ async function build() {
 
     const ocrDir = path.join(outdir, 'ocr');
     await fs.mkdir(ocrDir, { recursive: true });
-    const ocrFiles = [
-      ['tesseract.js/dist/worker.min.js', 'worker.min.js'],
-      ['tesseract.js/dist/worker.min.js.LICENSE.txt', 'worker.min.js.LICENSE.txt'],
-      ['tesseract.js/LICENSE.md', 'TESSERACT-JS-LICENSE'],
-      ['tesseract.js-core/tesseract-core-simd-lstm.wasm.js', 'tesseract-core-simd-lstm.wasm.js'],
-      ['tesseract.js-core/LICENSE', 'TESSERACT-CORE-LICENSE']
-    ];
-    await Promise.all(ocrFiles.map(([source, target]) =>
+    await Promise.all(Object.entries(OCR_RUNTIME_ASSETS).map(([target, source]) =>
       fs.copyFile(require.resolve(source), path.join(ocrDir, target))
     ));
     
@@ -146,5 +147,7 @@ async function build() {
   }
 }
 
-build();
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  build();
+}
 

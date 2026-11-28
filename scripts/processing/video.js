@@ -36,7 +36,7 @@ export async function processVideoPage(data, videoInfo) {
   await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingSubtitles', 5, { processingRunId: data.processingRunId });
 
   let subtitles, metadata;
-  let detectedVideoLanguage = 'en'; // Default to English
+  let detectedVideoLanguage = 'unknown';
 
   // Only YouTube uses the detected source language to choose a caption track.
   if (platform === 'youtube') {
@@ -72,18 +72,20 @@ export async function processVideoPage(data, videoInfo) {
         log('Video source language detected', { detectedVideoLanguage });
       }
     } catch (error) {
-      logWarn('Failed to detect video language via AI, using default', error);
+      logWarn('Could not detect the language of the video metadata', error);
     }
   }
 
   await checkCancellation('subtitle extraction', data.processingRunId);
   const targetLanguage = data.language === 'ua' ? 'uk' : (data.language || 'auto');
   const captionSourceLanguage = detectedVideoLanguage === 'ua' ? 'uk' : detectedVideoLanguage;
+  const requestOptions = getAIRequestOptions(data);
   log('Extracting subtitles', { platform, tabId, targetLanguage, detectedVideoLanguage: captionSourceLanguage });
   try {
     const subtitlesData = platform === 'youtube'
       ? await extractYouTubeSubtitles(tabId, targetLanguage, captionSourceLanguage)
-      : await extractVimeoSubtitles(tabId, targetLanguage);
+      : await extractVimeoSubtitles(tabId, targetLanguage, requestOptions.signal);
+    await checkCancellation('subtitle extraction result', data.processingRunId);
 
     subtitles = subtitlesData.subtitles;
     metadata = subtitlesData.metadata;
@@ -91,6 +93,8 @@ export async function processVideoPage(data, videoInfo) {
 
     log(`✅ Subtitles extracted: ${subtitles.length} entries`, { title: metadata.title });
   } catch (error) {
+    requestOptions.signal?.throwIfAborted();
+    await checkCancellation('subtitle extraction result', data.processingRunId);
     logError('Failed to extract subtitles', error);
     throw Object.assign(new Error('No subtitles found.', { cause: error }), {
       code: ERROR_CODES.VALIDATION_ERROR,
@@ -122,7 +126,7 @@ export async function processVideoPage(data, videoInfo) {
     };
     
     log('🤖 Processing subtitles with AI');
-    content = await processSubtitlesWithAI(subtitles, apiKey, model, progressCallback, data.processingRunId, getAIRequestOptions(data));
+    content = await processSubtitlesWithAI(subtitles, apiKey, model, progressCallback, data.processingRunId, requestOptions);
     log(`✅ Subtitles processed: ${content.length} content items created`);
   } catch (error) {
     logError('Failed to process subtitles', error);
@@ -141,11 +145,11 @@ export async function processVideoPage(data, videoInfo) {
   updateState({ progress: 40 });
   
   // Detect language from subtitles content
-  let detectedLanguage = 'en'; // Default to English for YouTube
+  let detectedLanguage = 'unknown';
   try {
     // Extract text from first few subtitles for language detection
     const textSample = subtitles.slice(0, 10).map(s => s.text).join(' ');
-    if (textSample.length > 50) {
+    if (textSample.trim()) {
       detectedLanguage = detectSourceLanguage([{ type: 'text', text: textSample }]);
       log('🌍 Video language detected', { 
         detectedLanguage,
@@ -154,7 +158,7 @@ export async function processVideoPage(data, videoInfo) {
       });
     }
   } catch (error) {
-    logWarn('Failed to detect video language, using default', error);
+    logWarn('Could not detect the language of the subtitles', error);
   }
 
   // Return result in standard format for continueProcessingPipeline

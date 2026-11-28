@@ -61,6 +61,14 @@ it('packages only the supported ONNX WASM runtime while preserving vendored sour
   expect(isRuntimeFile('lib/piper-wasm/piper_phonemize.wasm')).toBe(true);
 });
 
+it('includes only the packaged OCR worker, core, and license files from the build directory', () => {
+  for (const name of ['worker.min.js', 'tesseract-core-simd-lstm.wasm.js', 'worker.min.js.LICENSE.txt', 'TESSERACT-CORE-LICENSE', 'TESSERACT-JS-LICENSE']) {
+    expect(isRuntimeFile('dist/ocr/' + name), name).toBe(true);
+  }
+  expect(isRuntimeFile('dist/ocr/unused-worker.js')).toBe(false);
+  expect(isRuntimeFile('dist/ocr/archive/worker.min.js')).toBe(false);
+});
+
 it('creates deterministic compressed ZIP bytes through the portable Node entry point', async () => {
   await fs.mkdir(temporaryRoot, { recursive: true });
   const directory = await fs.mkdtemp(path.join(temporaryRoot, 'zip-test-'));

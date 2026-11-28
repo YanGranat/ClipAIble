@@ -91,6 +91,18 @@ describe('Subtitle processing run ownership', () => {
     expect(dependencies.callAI).toHaveBeenCalledOnce();
   });
 
+  it.each([['null item', [null]], ['blank paragraph', [{ type: 'paragraph', text: ' ' }]]])(
+    'rejects a %s in a later chunk before returning a partial transcript', async (_label, invalidContent) => {
+      dependencies.callAI.mockResolvedValueOnce({ content: [{ type: 'paragraph', text: 'Earlier part.' }] })
+        .mockResolvedValueOnce({ content: invalidContent });
+      const subtitles = Array.from({ length: 1001 }, () => ({ text: 'Sample text' }));
+      const progress = vi.fn();
+      await expect(processSubtitlesWithAI(subtitles, 'placeholder', 'model', progress, 'current')).rejects.toThrow(SyntaxError);
+      expect(progress).toHaveBeenLastCalledWith(1, 3);
+      expect(dependencies.callAI).toHaveBeenCalledTimes(2);
+    }
+  );
+
   it('preserves the original provider error after exhausting a chunk', async () => {
     const cause = Object.assign(new Error('Provider declined the request.'), { status: 429, code: 'rate_limit' });
     dependencies.callAI.mockRejectedValueOnce(cause);

@@ -22,7 +22,8 @@ import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
-import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { createApiError } from './http-errors.js';
 
 /**
  * Respeecher TTS API configuration
@@ -307,7 +308,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
   let apiUrl = getApiUrl(validVoice, detectedLang);
   
   const isUkrainianEndpoint = apiUrl.includes('ua-rt');
-  const isUkrainianVoice = RESPEECHER_CONFIG.VOICE_LANGUAGE[validVoice] === 'ua';
   
   // Respeecher request body format
   // According to https://space.respeecher.com/docs/api/tts/sampling-params-guide:
@@ -327,12 +327,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
       ...(Object.keys(samplingParams).length > 0 ? { sampling_params: samplingParams } : {})
     }
   };
-  
-  // Store these for error handling
-  const storedApiUrl = apiUrl;
-  const storedIsUkrainianEndpoint = isUkrainianEndpoint;
-  const storedIsUkrainianVoice = isUkrainianVoice;
-  const storedValidVoice = validVoice;
   
   // For Ukrainian endpoint, try to get available voices first
   // Note: Documentation only shows example for en-rt/voices, but we try ua-rt/voices
@@ -361,7 +355,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
     } catch (error) {
       options.signal?.throwIfAborted();
       await checkCancellation('Respeecher voice list', options.processingRunId);
-      logWarn('Voice list fetch failed for Ukrainian endpoint, using defaults', { error: error.message });
+      logWarn('Voice list fetch failed for the Ukrainian endpoint; using defaults');
     }
   }
   
@@ -372,101 +366,15 @@ export async function textToSpeech(text, apiKey, options = {}) {
       async ({ signal }) => {
         await checkCancellation('Respeecher TTS request', options.processingRunId);
         
-          try {
-          // Respeecher supports both header and query parameter auth
-          // Try header first (preferred method)
-          const apiKeyParam = apiKey.trim();
-          // According to https://space.respeecher.com/docs/quickstart:
-          // "In browsers, the JavaScript API for WebSockets may not allow custom headers,
-          // so the query string option is preferred there."
-          // We're in a Chrome Extension service worker, but let's use query parameter as primary method
-          // since it's recommended for browser environments
-          
-          // Method: X-API-Key header (as required by OpenAPI spec)
-          let fetchResponse = await fetchBufferedResponse(apiUrl, {
-            signal,
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-API-Key': apiKeyParam
-            },
-            body: JSON.stringify(requestBody)
-          }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
-          
-          if (!fetchResponse.ok) {
-            // Log full response details for debugging
-            const responseHeaders = {};
-            fetchResponse.headers.forEach((value, key) => {
-              responseHeaders[key] = value;
-            });
-            
-            const error = await handleApiError(fetchResponse, 'Respeecher', {
-              customErrorHandler: (errorData, errorText, response) => {
-                // Log error details
-                log('Respeecher API error response', {
-                  status: response.status,
-                  statusText: response.statusText,
-                  errorData,
-                  errorText: errorText?.substring(0, 500),
-                  responseHeaders,
-                  url: apiUrl,
-                  method: 'POST',
-                  hasApiKey: !!apiKeyParam,
-                  // Security: Don't log key prefix/suffix
-                  keyLength: apiKeyParam?.length || 0
-                });
-                
-                const baseErrorMsg = errorData.error?.message || errorData.message || errorData.detail || errorText || `Respeecher API error: ${response.status}`;
-                
-                // Make error message more user-friendly
-                if (response.status === 402) {
-                  return `Respeecher API insufficient balance (402 Payment Required).\n\n` +
-                         `Your Respeecher account doesn't have enough credits to generate audio.\n\n` +
-                         `How to fix:\n` +
-                         `1. Go to https://space.respeecher.com/\n` +
-                         `2. Check your account balance\n` +
-                         `3. Add credits to your account\n` +
-                         `4. Try again\n\n` +
-                         `Original error: ${baseErrorMsg}`;
-                } else if (response.status === 401) {
-                  return `Respeecher API authentication failed (401 Unauthorized).\n\n` +
-                         `Possible causes:\n` +
-                         `1. API key is incorrect or expired\n` +
-                         `2. API key doesn't have access to TTS API\n` +
-                         `3. API key format is wrong\n\n` +
-                         `How to fix:\n` +
-                         `1. Go to https://space.respeecher.com/api-keys\n` +
-                         `2. Make sure you're logged in\n` +
-                         `3. Create a new API key\n` +
-                         `4. Copy the FULL key (it should be longer than 20 characters)\n` +
-                         `5. Paste it in the extension settings\n\n` +
-                         `Note: You need to be registered and logged in to get an API key.\n` +
-                         `Original error: ${baseErrorMsg}`;
-                } else if (response.status === 400 && baseErrorMsg.includes('voice not found')) {
-                  // Voice not found error
-                  const endpointName = storedApiUrl.includes('ua-rt') ? 'Ukrainian' : 'English';
-                  return `Respeecher voice not found (400 Bad Request).\n\n` +
-                         `The voice "${storedValidVoice}" is not available for the ${endpointName} endpoint.\n\n` +
-                         `Possible causes:\n` +
-                         `1. Voice ID is incorrect for this endpoint\n` +
-                         `2. Voice may not be available for your API key\n` +
-                         `3. API key may not have access to this voice\n\n` +
-                         `How to fix:\n` +
-                         `1. Check available voices for ${endpointName} endpoint at https://space.respeecher.com/docs\n` +
-                         `2. Try using a different voice from the list\n` +
-                         `3. Verify your API key has access to TTS API\n\n` +
-                         `Original error: ${baseErrorMsg}`;
-                }
-                return null; // Use default extraction
-              }
-            });
-            throw error;
-          }
-          
-          return fetchResponse;
-        } catch (e) {
-          throw e;
-        }
+        const fetchResponse = await fetchBufferedResponse(apiUrl, {
+          signal,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey.trim() },
+          body: JSON.stringify(requestBody)
+        }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
+
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'Respeecher');
+        return fetchResponse;
       },
       {
         signal: options.signal,
@@ -482,8 +390,8 @@ export async function textToSpeech(text, apiKey, options = {}) {
     if (fetchError.name === 'AbortError') {
       throw await handleTimeoutError('Respeecher');
     }
-    if (fetchError.status) {
-      throw fetchError; // Already handled by handleApiError
+    if (fetchError.status || fetchError.translationKey) {
+      throw fetchError;
     }
     throw await handleNetworkError(fetchError, 'Respeecher');
   }
@@ -510,17 +418,13 @@ export async function textToSpeech(text, apiKey, options = {}) {
   const isWav = header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46; // "RIFF"
   
   if (!isWav) {
-    log('WARN: Respeecher response does not appear to be WAV format', {
-      headerBytes: Array.from(header).map(b => b.toString(16).padStart(2, '0')).join(' '),
-      expected: '52 49 46 46 (RIFF)'
-    });
+    logWarn('Respeecher response does not appear to be WAV format');
   }
   
   log('Respeecher response received', { 
     audioSize: audioBuffer.byteLength,
     audioSizeMB: (audioBuffer.byteLength / (1024 * 1024)).toFixed(2),
     isWav,
-    headerBytes: Array.from(header).map(b => b.toString(16).padStart(2, '0')).join(' '),
     withinLimit: audioBuffer.byteLength < RESPEECHER_CONFIG.MAX_RESPONSE_SIZE
   });
   
@@ -575,22 +479,15 @@ export async function getVoicesFromAPI(apiKey, language = 'en') {
       }
     });
     
-    if (!response.ok) {
-      let errorText = 'Unknown error';
-      try {
-        errorText = await response.text();
-      } catch (e) {
-        // If text extraction fails, use default message
-        errorText = 'Unknown error';
-      }
-      throw new Error(`Failed to fetch voices: ${response.status} ${errorText}`);
-    }
-    
-    const voices = await response.json();
+    if (!response.ok) throw await createApiError(response, 'Respeecher');
+
+    let voices;
+    try { voices = await response.json(); }
+    catch { throw new Error('Invalid Respeecher voice list response'); }
     log('Voices fetched from API', { count: voices?.length, language });
     return voices;
   } catch (error) {
-    logError('Failed to fetch voices from API', error);
+    logError('Failed to fetch Respeecher voices', { status: error?.status });
     throw error;
   }
 }

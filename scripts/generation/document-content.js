@@ -25,6 +25,18 @@ export function documentMarkdown(item, sourceUrl = '') {
   if (item?.format === 'text' || isNativePdfContent(item)) return String(item.text || '').replace(/[\\`*_{}\[\]<>]/g, '\\$&');
   return typeof item?.html === 'string' ? htmlToMarkdown(item.html, sourceUrl) : String(item?.text || '');
 }
+
+/** Project caption text into the same formats as document prose. Alternative text is always literal. */
+export function imageCaptionItem(item, fallback = '') {
+  const text = item.caption || fallback;
+  if (!item.caption || item.captionFormat === 'text') return { format: 'text', text };
+  if (item.captionFormat === 'html') return { html: text };
+  if (item.captionFormat === 'markdown') return { format: 'markdown', text };
+  if (item.format === 'text' || isNativePdfContent(item)) return { format: 'text', text };
+  if (item.format !== 'markdown' && /<[a-z][^>]*>/i.test(text)) return { html: text };
+  return { format: 'markdown', text };
+}
+
 export function tableCellHtml(item, value, sourceUrl = '') {
   if (item.cellFormat === 'text' || isNativePdfContent(item)) return escapeHtml(String(value ?? ''));
   if (item.cellFormat === 'html') return sanitizeHtml(String(value ?? ''), sourceUrl);
@@ -219,8 +231,8 @@ function fragmentViews(content, sourceUrl, tableCellFragmentTargets) {
         else addView(rendered, value, typeof value.html === 'string' ? 'html' : 'text', typeof value.html === 'string');
       }
     } else if (item.type === 'image' && !literal && typeof item.caption === 'string') {
-      const html = /<[a-z][^>]*>/i.test(item.caption);
-      addView(html ? sanitizeHtml(item.caption, sourceUrl) : markdownToHtml(item.caption, sourceUrl), item, 'caption', html, false);
+      const caption = imageCaptionItem(item);
+      addView(documentText(caption, sourceUrl), item, 'caption', typeof caption.html === 'string', false);
     } else if (item.type === 'table') {
       if (tableCellFragmentTargets) {
         addId(item.id);

@@ -322,8 +322,9 @@ export function initSettings(deps) {
         }
       }
       
-      if (result[STORAGE_KEYS.MODE]) {
-        elements.modeSelect.value = String(result[STORAGE_KEYS.MODE]);
+      const savedMode = result[STORAGE_KEYS.MODE];
+      if (elements.modeSelect) {
+        elements.modeSelect.value = savedMode === 'selector' || savedMode === 'extract' ? savedMode : 'automatic';
       }
       const pdfOcrOption = elements.modeSelect?.querySelector('option[value="ocr"]');
       if (pdfOcrOption) {

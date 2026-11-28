@@ -53,20 +53,36 @@ it('starts PDF key theses only when their existing request flag is enabled', asy
   expect(generateSummary).not.toHaveBeenCalled();
 });
 
-it('shares document PDF routing when independent extraction receives the inline PDF viewer', async () => {
+it('shares document PDF routing when independent extraction receives the native document MIME', async () => {
   const respond = vi.fn();
   const articleExtract = vi.fn();
   processPdfDocument.mockResolvedValue(result);
   const pdfData = {
     ...data,
     url: 'https://example.org/file',
-    html: '<link href="chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_embedder.css">',
+    html: '',
+    sourceContentType: 'application/pdf',
     mode: 'extract'
   };
   handleExtractContentOnly({ data: pdfData }, {}, respond, vi.fn(), articleExtract, vi.fn(), vi.fn(), vi.fn());
   await vi.waitFor(() => expect(respond).toHaveBeenCalledWith({ success: true, result }));
   expect(processPdfDocument).toHaveBeenCalledWith(expect.objectContaining({ mode: 'extract', extractionOnly: true }), pdfData.url);
   expect(articleExtract).not.toHaveBeenCalled();
+});
+
+it('reads article prose normally when it mentions the built-in PDF viewer address', async () => {
+  const respond = vi.fn();
+  const articleExtract = vi.fn().mockResolvedValue(result);
+  processPdfDocument.mockResolvedValue({ ...result, title: 'Unrelated PDF' });
+  const article = {
+    ...data, sourceContentType: 'text/html',
+    html: '<article><p>The viewer is <code>chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/</code>.</p></article>'
+  };
+  handleExtractContentOnly({ data: article }, {}, respond, articleExtract, vi.fn(), vi.fn(), vi.fn(), vi.fn());
+  await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+  expect(respond).toHaveBeenCalledWith({ success: true, result });
+  expect(articleExtract).toHaveBeenCalledWith(expect.objectContaining({ html: article.html }));
+  expect(processPdfDocument).not.toHaveBeenCalled();
 });
 
 it('returns pure extraction without starting generation', async () => {

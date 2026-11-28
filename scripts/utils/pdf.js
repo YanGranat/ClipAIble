@@ -29,23 +29,8 @@ export function isPdfUrl(url) {
   return false;
 }
 
-/**
- * Chrome PDF viewer extension ID.
- * Used for both URL-based and HTML-based detection.
- */
 const CHROME_PDF_VIEWER_EXTENSION_ID = 'mhjfbmdgcfjbbpaeojofohoefgiehjai';
-
-/**
- * Detect PDF from HTML content by checking for Chrome PDF viewer markers.
- * When Chrome renders a PDF inline (without redirecting to the viewer extension URL),
- * it injects pdf_embedder.css from the built-in PDF viewer extension.
- * @param {string} html - Page HTML content
- * @returns {boolean} True if HTML contains Chrome PDF viewer markers
- */
-export function isPdfHtml(html) {
-  if (!html) return false;
-  return html.includes(`chrome-extension://${CHROME_PDF_VIEWER_EXTENSION_ID}/`);
-}
+const isSupportedPdfSource = url => /^(https?|file):\/\//i.test(url);
 
 /**
  * Check if tab URL is Chrome PDF viewer
@@ -58,71 +43,55 @@ export function isChromePdfViewer(tabUrl) {
   return tabUrl.startsWith(`chrome-extension://${CHROME_PDF_VIEWER_EXTENSION_ID}/`);
 }
 
+/** Recognize a local file even when Chrome requires the user to pick it again. */
+export function isDirectLocalPdf(url) {
+  return /^file:\/\/[^?#]*\.pdf(?:[?#]|$)/i.test(url);
+}
+
 /**
  * Detect if current page is a PDF page
  * @param {string} url - Page URL
  * @param {string} [tabUrl] - Tab URL (optional, for Chrome PDF viewer detection)
- * @param {string} [html] - Page HTML content (optional, for inline PDF detection)
  * @param {string} [sourceContentType] - Browser-reported document MIME type
  * @returns {Object|null} {isPdf: true, originalUrl: string} or null
  */
-export function detectPdfPage(url, tabUrl, html, sourceContentType) {
-  if (sourceContentType === 'application/pdf' && /^(https?|file):\/\//i.test(url)) {
-    return { isPdf: true, originalUrl: url };
+export function detectPdfPage(url, tabUrl, sourceContentType) {
+  if (isSupportedPdfSource(url)) {
+    const isPdf = sourceContentType ? sourceContentType === 'application/pdf' : isPdfUrl(url);
+    if (isPdf) return { isPdf: true, originalUrl: url };
+    if (sourceContentType) return null;
   }
-
-  // Check if URL is directly a PDF
-  if (isPdfUrl(url)) {
-    return { isPdf: true, originalUrl: url };
-  }
-  
-  // Check if tab is Chrome PDF viewer
-  if (tabUrl && isChromePdfViewer(tabUrl)) {
-    // Try to extract original URL from viewer URL
-    // Chrome PDF viewer URL format: chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?file=...
-    const fileMatch = tabUrl.match(/[?&]file=([^&]+)/);
-    if (fileMatch) {
-      try {
-        const originalUrl = decodeURIComponent(fileMatch[1]);
-        if (isPdfUrl(originalUrl)) {
-          return { isPdf: true, originalUrl };
-        }
-      } catch (e) {
-        // Invalid URL encoding, continue
-      }
-    }
-    
-    // If we're in PDF viewer but can't extract URL, still return PDF detection
-    // The actual URL extraction will be handled by webNavigation API
-    return { isPdf: true, originalUrl: null };
-  }
-  
-  // Check if HTML contains Chrome PDF viewer markers (inline PDF rendering).
-  // Chrome sometimes renders PDFs within the original page URL without redirecting
-  // to the viewer extension URL. In this case the tab URL stays as the original
-  // server URL but the HTML references pdf_embedder.css from the PDF viewer extension.
-  if (html && isPdfHtml(html)) {
-    return { isPdf: true, originalUrl: url };
-  }
-  
-  return null;
+  if (!isChromePdfViewer(tabUrl)) return null;
+  const originalUrl = new URL(tabUrl).searchParams.get('file');
+  return { isPdf: true, originalUrl: isSupportedPdfSource(originalUrl) ? originalUrl : null };
 }
 
 /** Detect a top-level PDF, including URLs without a .pdf extension. */
 export async function isPdfTab(tab) {
-  if (!tab?.id || !tab.url) return false;
-  if (detectPdfPage(tab.url, tab.url)) return true;
-  if (!/^https?:\/\//i.test(tab.url)) return false;
+  if (!tab?.id) return false;
+  if (isChromePdfViewer(tab.url) || isDirectLocalPdf(tab.url)) return true;
+  if (!isSupportedPdfSource(tab.url)) return false;
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: () => document.contentType === 'application/pdf'
+      func: () => document.contentType
     });
-    if (results[0]?.result === true) return true;
+    const contentType = results?.[0]?.result;
+    if (typeof contentType === 'string' && contentType) return contentType === 'application/pdf';
   } catch { /* Chrome can isolate the PDF viewer from injected scripts. */ }
+  return isPdfTabWithoutContent(tab);
+}
+
+/** Fall back to tab metadata when the top-level document cannot be inspected. */
+export async function isPdfTabWithoutContent(tab) {
+  if (!tab?.id) return false;
+  if (isChromePdfViewer(tab.url)) return true;
+  if (!isSupportedPdfSource(tab.url)) return false;
+  if (isPdfUrl(tab.url)) return true;
   try {
     const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id });
-    return frames?.some(frame => frame.parentFrameId === 0 && isChromePdfViewer(frame.url)) ?? false;
+    return Boolean(frames?.some(frame => frame.frameId === 0 && frame.url === tab.url) &&
+      frames.some(frame => frame.parentFrameId === 0 && isChromePdfViewer(frame.url)));
   } catch {
     return false;
   }
@@ -142,15 +111,7 @@ export async function getOriginalPdfUrl(tabId) {
     // Find the frame that loaded the PDF (not the viewer extension)
     for (const frame of history) {
       const frameUrl = frame.url;
-      // Skip Chrome extension URLs
-      if (frameUrl.startsWith('chrome-extension://') || 
-          frameUrl.startsWith('chrome://') ||
-          frameUrl.startsWith('edge://')) {
-        continue;
-      }
-      
-      // Check if this is a PDF URL
-      if (isPdfUrl(frameUrl)) {
+      if (isSupportedPdfSource(frameUrl) && isPdfUrl(frameUrl)) {
         return frameUrl;
       }
     }
@@ -158,7 +119,7 @@ export async function getOriginalPdfUrl(tabId) {
     // Alternative: try to get from tab history
     // This might not work in all cases, but worth trying
     const tab = await chrome.tabs.get(tabId);
-    if (tab && tab.url && isPdfUrl(tab.url)) {
+    if (isSupportedPdfSource(tab?.url) && isPdfUrl(tab.url)) {
       return tab.url;
     }
     

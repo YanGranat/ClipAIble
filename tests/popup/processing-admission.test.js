@@ -195,7 +195,11 @@ it('continues tracking an admitted job when provider selection changes during it
   expect(status.mock.calls.some(([kind]) => kind === 'ready')).toBe(false);
 });
 
-it.each(['file:///C:/samples/observations.pdf', 'file:///C:/samples/observations.PDF?download=1#page=2'])('admits a local PDF without requiring readable page HTML: %s', async url => {
+it.each([
+  'file:///C:/samples/observations.pdf',
+  'file:///C:/samples/observations.PDF?download=1#page=2',
+  'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?file=file%3A%2F%2F%2Freports%2Fsurvey.pdf'
+])('admits a known native PDF source without requiring readable page HTML: %s', async url => {
   const tab = { id: 5, url, title: 'Independent observations' };
   chrome.tabs.query.mockResolvedValue([tab]);
   chrome.tabs.get = vi.fn(async () => tab);
@@ -203,7 +207,7 @@ it.each(['file:///C:/samples/observations.pdf', 'file:///C:/samples/observations
   chrome.scripting.executeScript.mockRejectedValue(new Error('File access is disabled'));
   await processing.handleSavePdf();
   const packet = chrome.runtime.sendMessage.mock.calls.find(([value]) => value.action === 'processArticle')?.[0];
-  expect(packet?.data).toMatchObject({ url, title: tab.title, tabId: 5, mode: 'automatic' });
+  expect(packet?.data).toMatchObject({ url, title: tab.title, tabId: 5, mode: 'automatic', sourceContentType: 'application/pdf' });
   expect(packet.data.html).toBe('');
   expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
   expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
@@ -223,12 +227,31 @@ it.each([
   expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'processArticle', data: expect.objectContaining({ url, html: '' }) }));
 });
 
-it('preserves the Chrome viewer HTML marker for extensionless PDFs', async () => {
-  const html = '<head><link rel="stylesheet" href="chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_embedder.css"></head>';
-  chrome.tabs.sendMessage.mockResolvedValue({ ...page, html });
+it('reports the document MIME for an extensionless native PDF without forwarding HTML', async () => {
+  chrome.tabs.sendMessage.mockResolvedValue({ ...page, html: '<html><body></body></html>', sourceContentType: 'application/pdf' });
   await processing.handleSavePdf();
 
-  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'processArticle', data: expect.objectContaining({ html }) }));
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'processArticle',
+    data: expect.objectContaining({ html: '', url: page.url, sourceContentType: 'application/pdf' }) }));
+});
+
+it('uses browser viewer navigation when direct PDF capture is unavailable', async () => {
+  const tab = { id: 5, url: page.url, title: page.title };
+  chrome.tabs.sendMessage.mockRejectedValue(new Error('Could not establish connection'));
+  chrome.scripting.executeScript.mockRejectedValue(new Error('Cannot access contents'));
+  chrome.tabs.get = vi.fn(async () => tab);
+  const existingNavigation = chrome.webNavigation;
+  chrome.webNavigation = { getAllFrames: vi.fn(async () => [
+    { frameId: 0, parentFrameId: -1, url: page.url },
+    { frameId: 1, parentFrameId: 0, url: 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html' }
+  ]) };
+  try {
+    await processing.handleSavePdf();
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'processArticle',
+      data: expect.objectContaining({ html: '', url: page.url, sourceContentType: 'application/pdf' }) }));
+  } finally {
+    chrome.webNavigation = existingNavigation;
+  }
 });
 
 it.each(['navigated', 'closed'])('does not dispatch a captured local PDF after its tab has %s', async outcome => {

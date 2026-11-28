@@ -6,7 +6,8 @@ import { log, logError, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
-import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { createApiError } from './http-errors.js';
 import { DEFAULT_ELEVENLABS_TTS_MODEL, DEFAULT_ELEVENLABS_TTS_VOICE, ELEVENLABS_TTS_MODELS, ELEVENLABS_TTS_VOICES, getElevenLabsCapabilities } from './tts-catalog.js';
 import { isWavBuffer, muLawToPcm, pcmToWav } from './audio-format.js';
 
@@ -160,41 +161,15 @@ export async function textToSpeech(text, apiKey, options = {}) {
       async ({ signal }) => {
         await checkCancellation('ElevenLabs TTS request', options.processingRunId);
         
-        try {
-          const fetchResponse = await fetchBufferedResponse(url, {
-            signal,
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'xi-api-key': apiKey
-            },
-            body: JSON.stringify(requestBody)
-          }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
-          
-          if (!fetchResponse.ok) {
-            const error = await handleApiError(fetchResponse, 'ElevenLabs', {
-              parseErrorData: (errorData) => {
-                // ElevenLabs uses 'detail' instead of 'error'
-                if (errorData.detail) {
-                  return { error: { message: errorData.detail.message || errorData.detail } };
-                }
-                return errorData;
-              },
-              customErrorHandler: (errorData, errorText, response) => {
-                // Handle quota exceeded
-                if (response.status === 429 || errorData.detail?.message?.includes('quota')) {
-                  return 'ElevenLabs quota exceeded. Please check your subscription or try again later.';
-                }
-                return null; // Use default extraction
-              }
-            });
-            throw error;
-          }
-          
-          return fetchResponse;
-        } catch (e) {
-          throw e;
-        }
+        const fetchResponse = await fetchBufferedResponse(url, {
+          signal,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey },
+          body: JSON.stringify(requestBody)
+        }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
+
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'ElevenLabs');
+        return fetchResponse;
       },
       {
         signal: options.signal,
@@ -210,8 +185,8 @@ export async function textToSpeech(text, apiKey, options = {}) {
     if (fetchError.name === 'AbortError') {
       throw await handleTimeoutError('ElevenLabs');
     }
-    if (fetchError.status) {
-      throw fetchError; // Already handled by handleApiError
+    if (fetchError.status || fetchError.translationKey) {
+      throw fetchError;
     }
     throw await handleNetworkError(fetchError, 'ElevenLabs');
   }
@@ -219,10 +194,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   // Get audio data as ArrayBuffer
   const audioBuffer = await response.arrayBuffer();
   
-  log('ElevenLabs TTS response received', { 
-    audioSize: audioBuffer.byteLength,
-    contentType: response.headers.get('content-type')
-  });
+  log('ElevenLabs TTS response received', { audioSize: audioBuffer.byteLength });
   
   if (isWavBuffer(audioBuffer)) return audioBuffer;
   if (format.startsWith('pcm_')) return pcmToWav(audioBuffer, Number(format.slice(4)));
@@ -249,13 +221,13 @@ export async function getVoices(apiKey) {
     });
     
     if (!response.ok) {
-      throw new Error(`Failed to fetch voices: ${response.status}`);
+      throw await createApiError(response, 'ElevenLabs');
     }
     
     const data = await response.json();
     return data.voices || [];
   } catch (error) {
-    logError('Failed to fetch ElevenLabs voices', error);
+    logError('Failed to fetch ElevenLabs voices', { status: error?.status });
     // Return popular voices as fallback
     return ELEVENLABS_CONFIG.POPULAR_VOICES;
   }

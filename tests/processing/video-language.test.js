@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const deps = vi.hoisted(() => ({ youtube: vi.fn(), vimeo: vi.fn(), detect: vi.fn(), process: vi.fn() }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn(), logWarn: vi.fn() }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
-  checkCancellation: vi.fn(), updateProgress: vi.fn(), getUILanguageCached: async () => 'en', getAIRequestOptions: () => ({})
+  checkCancellation: vi.fn(), updateProgress: vi.fn(), getUILanguageCached: async () => 'en',
+  getAIRequestOptions: data => data.signal ? { signal: data.signal } : {}
 }));
 vi.mock('../../scripts/state/processing.js', async importOriginal => ({ ...await importOriginal(), getScopedUpdateState: () => vi.fn() }));
 vi.mock('../../scripts/extraction/video-subtitles.js', () => ({ extractYouTubeSubtitles: deps.youtube, extractVimeoSubtitles: deps.vimeo }));
@@ -28,11 +29,21 @@ describe('Video caption language selection', () => {
   });
 
   it('passes the selected target to Vimeo without sending video metadata for unused source-language inference', async () => {
-    await processVideoPage({ language: 'ua', tabId: 7, model: 'sample-model', apiKey: 'placeholder' }, { platform: 'vimeo', videoId: 'sample-video' });
-    expect(deps.vimeo).toHaveBeenCalledWith(7, 'uk');
+    const signal = new AbortController().signal;
+    await processVideoPage({ language: 'ua', tabId: 7, model: 'sample-model', apiKey: 'placeholder', signal }, { platform: 'vimeo', videoId: 'sample-video' });
+    expect(deps.vimeo).toHaveBeenCalledWith(7, 'uk', signal);
     expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
     expect(deps.detect).not.toHaveBeenCalled();
     expect(deps.process).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves cancellation when a Vimeo caption request is interrupted', async () => {
+    const controller = new AbortController();
+    const reason = new DOMException('Cancelled', 'AbortError');
+    deps.vimeo.mockImplementationOnce(async () => { controller.abort(reason); throw reason; });
+    await expect(processVideoPage({ tabId: 7, apiKey: 'placeholder', signal: controller.signal }, { platform: 'vimeo', videoId: 'sample-video' }))
+      .rejects.toBe(reason);
+    expect(deps.process).not.toHaveBeenCalled();
   });
 
   it('takes the YouTube metadata snapshot even when a resource parks the load event', async () => {
@@ -63,6 +74,13 @@ describe('Video caption language selection', () => {
   it('keeps automatic caption selection when no translation is requested', async () => {
     await processVideoPage({ language: 'auto', tabId: 7, apiKey: 'placeholder' }, { platform: 'youtube', videoId: 'sample-video' });
     expect(deps.youtube).toHaveBeenCalledWith(7, 'auto', 'de');
+  });
+
+  it('leaves the audio language unknown when the early metadata snapshot contains no title', async () => {
+    chrome.scripting.executeScript.mockResolvedValueOnce([{ result: { title: '', description: '' } }]);
+    await processVideoPage({ language: 'auto', tabId: 7, apiKey: 'placeholder' }, { platform: 'youtube', videoId: 'sample-video' });
+    expect(deps.detect).not.toHaveBeenCalled();
+    expect(deps.youtube).toHaveBeenCalledWith(7, 'auto', 'unknown');
   });
 
   it('keeps missing subtitles independent from missing provider credentials', async () => {

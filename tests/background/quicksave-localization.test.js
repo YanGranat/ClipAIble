@@ -32,6 +32,29 @@ it('retains the localized instruction when the source tab closes mid-capture', a
   expect(notify).toHaveBeenCalledWith(tSync('errorTabClosedDuringProcessing', 'ua'));
 });
 
+it('supplies the native PDF MIME for Quick Save when capture cannot access the viewer', async () => {
+  const tab = { id: 7, url: 'https://example.test/storage/report', title: 'Report' };
+  chrome.tabs.get.mockResolvedValueOnce(tab).mockResolvedValueOnce(tab).mockResolvedValueOnce(tab);
+  chrome.scripting.executeScript.mockRejectedValueOnce(new Error('Cannot access contents'));
+  const existingNavigation = chrome.webNavigation;
+  chrome.webNavigation = { getAllFrames: vi.fn(async () => [
+    { frameId: 0, parentFrameId: -1, url: tab.url },
+    { frameId: 1, parentFrameId: 0, url: 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html' }
+  ]) };
+  try {
+    expect(await extractPageContent(7)).toMatchObject({ html: '', url: tab.url, title: tab.title,
+      tabId: 7, sourceContentType: 'application/pdf' });
+  } finally {
+    chrome.webNavigation = existingNavigation;
+  }
+});
+
+it('admits the built-in PDF viewer through the native file acquisition flow for Quick Save', async () => {
+  const url = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?file=file%3A%2F%2F%2Freports%2Fsurvey.pdf';
+  chrome.tabs.get.mockResolvedValueOnce({ id: 7, url, title: 'Survey' });
+  expect(await extractPageContent(7)).toMatchObject({ html: '', url, title: 'Survey', sourceContentType: 'application/pdf' });
+});
+
 it('localizes both a typed failure and an unexpected browser error', async () => {
   await chrome.storage.local.set({ ui_language: 'ja' });
   const notify = vi.fn();

@@ -1,7 +1,7 @@
 import { assertImageResultsUsable } from '../utils/html/image-bytes.js';
 import { fb2ListParagraphs } from './fb2-list.js';
 import { downloadBlob } from '../api/blob-download.js';
-import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, prepareDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, imageCaptionItem, tableCellHtml, listHtml, prepareDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
 // @ts-check
 // FB2 (FictionBook 2) generation module for ClipAIble extension
 // FB2 is an XML-based format popular for e-readers in Russian-speaking countries
@@ -785,9 +785,9 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
         return fallback ? `\n${indentStr}  <p${anchor}>${fallback}</p>` : '';
       }
       const alt = escapeXml(item.alt || '');
-      // CRITICAL: Use convertInlineHtmlToFb2 to preserve links in captions (like PDF)
-      // This handles cases where caption contains HTML with links, e.g., <span>text</span><a href="...">(source)</a>
-      const caption = item.caption ? convertInlineHtmlToFb2(item.caption, sourceUrl, isNativePdfContent(item)) : '';
+      const captionItem = imageCaptionItem(item);
+      const caption = captionItem.format === 'text' ? escapeXml(captionItem.text)
+        : convertInlineHtmlToFb2(captionItem.html ?? documentText(captionItem, sourceUrl), sourceUrl);
       
       // Add anchor paragraph before image if id exists
       let imageXml = anchor ? `\n${indentStr}  <p${anchor}></p>` : '';

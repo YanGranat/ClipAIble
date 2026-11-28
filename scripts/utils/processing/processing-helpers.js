@@ -11,7 +11,7 @@ import { removeLargeData } from '../storage/storage.js';
 import { validateAudioApiKeys, validateImageTranslation } from '../validation/validation.js';
 import { detectVideoPlatform } from '../video.js';
 import { processVideoPage } from '../../processing/video.js';
-import { detectPdfPage, getOriginalPdfUrl } from '../pdf.js';
+import { isChromePdfViewer, isDirectLocalPdf, isPdfTabWithoutContent } from '../pdf.js';
 import { processWithoutAI, processWithExtractMode, processWithSelectorMode } from '../../processing/modes.js';
 import { handleProcessingResult, handleProcessingError } from './pipeline-helpers.js';
 import { getQuickSaveSettingsKeys, prepareQuickSaveData } from '../../processing/quicksave.js';
@@ -359,38 +359,19 @@ export async function extractPageContent(tabId = null) {
   
   // CRITICAL: Validate URL - block browser internal pages
   const tabUrl = tab.url || '';
-  if (tabUrl.startsWith('chrome://') || 
-      tabUrl.startsWith('chrome-extension://') || 
-      tabUrl.startsWith('edge://') || 
-      tabUrl.startsWith('about:') ||
-      tabUrl.startsWith('moz-extension://')) {
+  if (!isChromePdfViewer(tabUrl) && /^(?:chrome|chrome-extension|edge|about|moz-extension):/.test(tabUrl)) {
     throw quickSaveError('pageNotAccessible', uiLang);
   }
   
-  // Check if this is a PDF page (Chrome PDF viewer)
-  const pdfInfo = detectPdfPage(tabUrl, tabUrl);
-  
-  if (pdfInfo && pdfInfo.isPdf) {
-    // For PDF pages, we can't use executeScript (PDF viewer is isolated)
-    // Get original PDF URL instead
-    let pdfUrl = pdfInfo.originalUrl;
-    if (!pdfUrl) {
-      pdfUrl = await getOriginalPdfUrl(tab.id);
-    }
-    
-    if (!pdfUrl) {
-      // Fallback: try to extract from tab URL
-      pdfUrl = tab.url;
-    }
-    
-    return {
-      html: '', // PDFs don't have HTML
-      url: pdfUrl,
+  const pdfPageData = () => ({
+      html: '',
+      url: tabUrl,
       title: tab.title || 'Untitled PDF',
       tabId: tab.id,
-      isPdf: true
-    };
-  }
+      isPdf: true,
+      sourceContentType: 'application/pdf'
+  });
+  if (isChromePdfViewer(tabUrl) || isDirectLocalPdf(tabUrl)) return pdfPageData();
   
   // For regular HTML pages, use executeScript
   // CRITICAL: Check if tab is still available before executing script
@@ -401,7 +382,7 @@ export async function extractPageContent(tabId = null) {
     throw quickSaveError('errorTabClosedDuringProcessing', uiLang);
   }
   
-  let htmlResult;
+  let htmlResult, captureError;
   try {
     htmlResult = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -412,21 +393,25 @@ export async function extractPageContent(tabId = null) {
         title: document.title
       })
     });
-  } catch (scriptError) {
-    logError('Script execution failed in extractPageContent', { tabId: tab.id, error: scriptError });
-    const details = chrome.runtime.lastError?.message || scriptError?.message || '';
-    if (/no tab with id|tab was closed|invalid tab id/i.test(details)) {
-      throw quickSaveError('errorTabClosedDuringProcessing', uiLang);
-    }
-    if (/cannot access/i.test(details)) throw quickSaveError('pageNotAccessible', uiLang);
-    throw quickSaveError('errorExtractPageContentFailed', uiLang);
+  } catch (error) {
+    captureError = error;
   }
-  
-  if (!htmlResult || !htmlResult[0]?.result) {
-    throw quickSaveError('errorExtractPageContentFailed', uiLang);
+  const page = htmlResult?.[0]?.result;
+  if (page?.sourceContentType === 'application/pdf' && page.url === tabUrl) return pdfPageData();
+  if (page) return { ...page, tabId: tab.id };
+
+  const details = chrome.runtime.lastError?.message || captureError?.message || '';
+  if (/no tab with id|tab was closed|invalid tab id/i.test(details)) {
+    throw quickSaveError('errorTabClosedDuringProcessing', uiLang);
   }
-  
-  return { ...htmlResult[0].result, tabId: tab.id };
+  if (await isPdfTabWithoutContent(tab)) {
+    const currentTab = await chrome.tabs.get(tab.id).catch(() => null);
+    if (!currentTab) throw quickSaveError('errorTabClosedDuringProcessing', uiLang);
+    if (currentTab.url === tabUrl) return pdfPageData();
+  }
+  if (captureError) logError('Script execution failed in extractPageContent', { tabId: tab.id, error: captureError });
+  if (/cannot access/i.test(details)) throw quickSaveError('pageNotAccessible', uiLang);
+  throw quickSaveError('errorExtractPageContentFailed', uiLang);
 }
 
 /**

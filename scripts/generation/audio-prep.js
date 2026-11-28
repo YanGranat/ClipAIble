@@ -6,7 +6,7 @@ import { renderPrompt } from '../settings/prompt-catalog.js';
 import { log, logWarn } from '../utils/logging.js';
 import { splitNarrationText } from '../utils/narration-chunks.js';
 import { isLocalSpeechProvider } from '../api/supertonic-config.js';
-import { documentText, listHtml, tableCellHtml, flatTableProjection } from './document-content.js';
+import { documentText, imageCaptionItem, listHtml, tableCellHtml, flatTableProjection } from './document-content.js';
 import { isNativePdfContent } from './xml.js';
 import { sanitizeMarkdownHtml } from '../utils/html.js';
 import { tokenizeHtml, decodeEntities, plainText as plainHtmlText } from '../utils/html/tokenizer.js';
@@ -112,10 +112,7 @@ export function contentToPlainText(content) {
         break;
       case 'image': {
         if (item.isGraphic && item.alt?.trim()) parts.push(item.alt.trim());
-        if (item.caption) {
-          const literal = item.format === 'text' || isNativePdfContent(item);
-          parts.push(narrationItemText(literal ? { format: 'text', text: item.caption } : { html: item.caption }));
-        }
+        if (item.caption) parts.push(narrationItemText(imageCaptionItem(item)));
         break;
       }
       case 'table': {

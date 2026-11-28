@@ -1,6 +1,6 @@
 import { assertImageResultsUsable } from '../utils/html/image-bytes.js';
 import { downloadBlob } from '../api/blob-download.js';
-import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, prepareDocumentContent, localDocumentName } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, imageCaptionItem, renderTableHtml, listHtml, prepareDocumentContent, localDocumentName } from './document-content.js';
 // @ts-check
 // EPUB generation module for ClipAIble extension
 // EPUB is a ZIP archive with specific structure
@@ -590,8 +590,12 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
       };
       
       const captionText = item.caption || '';
-      const literal = item.format === 'text' || isNativePdfContent(item);
-      const caption = (captionText && !isGenericCaption(captionText)) ? sanitizeHtmlForXhtml(captionText, sourceUrl, literal) : '';
+      let caption = '';
+      if (captionText && !isGenericCaption(captionText)) {
+        const captionItem = imageCaptionItem(item);
+        caption = captionItem.format === 'text' ? escapeXml(captionItem.text)
+          : sanitizeHtmlForXhtml(captionItem.html ?? documentText(captionItem, sourceUrl), sourceUrl);
+      }
       if (!src) return '';
 
       let figureHtml = `    <figure${idAttr}><img src="${escapeXml(src)}" alt="${alt}"/>`;

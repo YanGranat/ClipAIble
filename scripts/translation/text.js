@@ -18,7 +18,7 @@ import { getDeepSeekRequestConfig } from '../api/deepseek.js';
 import { getOpenAIRequestConfig } from '../api/openai.js';
 import { getGrokRequestConfig } from '../api/grok.js';
 import { getOpenRouterRequestConfig } from '../api/openrouter.js';
-import { verifiedTableLayout, synchronizeTableAliases } from '../generation/document-content.js';
+import { imageCaptionItem, verifiedTableLayout, synchronizeTableAliases } from '../generation/document-content.js';
 
 async function checkActive(options) {
   if (options.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new DOMException('Translation cancelled', 'AbortError');
@@ -240,14 +240,20 @@ export async function translateContent(original, targetLang, apiKey, model, upda
   }
   const fields = [];
   const tableLayouts = [];
-  const collect = (owner, field, htmlOwner = null) => {
-    if (typeof owner[field] === 'string' && owner[field].trim()) fields.push({ owner, field, text: owner[field], htmlOwner });
+  const collect = (owner, field, htmlOwner = null, literal = false) => {
+    const value = owner[field];
+    if (typeof value === 'string' && value.trim()) {
+      fields.push({ owner, field, text: literal ? escapeText(value) : value, htmlOwner, literal });
+    }
   };
   for (const item of result.content) {
     if (item.type === 'code') continue;
     if (typeof item.html === 'string' && item.html.trim()) collect(item, 'html', item);
     else collect(item, 'text');
-    if (item.type === 'image') { collect(item, 'alt'); collect(item, 'caption'); }
+    if (item.type === 'image') {
+      collect(item, 'alt', null, true);
+      collect(item, 'caption', null, imageCaptionItem(item).format === 'text');
+    }
     if (item.type === 'infobox_start') collect(item, 'title');
     for (let index = 0; index < (item.items?.length || 0); index++) {
       const child = item.items[index];
@@ -289,7 +295,7 @@ export async function translateContent(original, targetLang, apiKey, model, upda
     await checkActive(options);
     for (let index = 0; index < current.length; index++) {
       const field = current[index];
-      field.owner[field.field] = translated[index];
+      field.owner[field.field] = field.literal ? decodeEntities(translated[index]) : translated[index];
       if (field.htmlOwner && typeof field.htmlOwner.text === 'string') field.htmlOwner.text = stripHtml(translated[index]);
       completed += field.text.length;
     }
