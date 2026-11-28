@@ -261,17 +261,28 @@ function readLazyMathPair(source, excluded) {
   return { renderer };
 }
 
-function isHiddenMathSource(source, style) {
-  if (!source.matches('span') || source.firstElementChild?.localName !== 'math') return false;
-  if (style?.display === 'none' || /** @type {HTMLElement} */ (source).style.display === 'none' ||
-      source.hasAttribute('hidden')) return true;
-  // A one-pixel accessibility copy can override its own display style.
+function isClippedAccessibilityText(source, style) {
   if (style?.position !== 'absolute' && style?.position !== 'fixed') return false;
   const clipped = /^rect\(0px,0px,0px,0px\)$/u.test((style.clip || '').replace(/\s/gu, '')) ||
     style.clipPath === 'inset(50%)' || [style.overflowX, style.overflowY].every(value => /^(?:hidden|clip)$/u.test(value));
   if (!clipped) return false;
   const { width, height } = source.getBoundingClientRect();
   return width > 0 && width <= 1 && height > 0 && height <= 1;
+}
+
+function isHiddenMathSource(source, style) {
+  return source.matches('span') && source.firstElementChild?.localName === 'math' &&
+    (style?.display === 'none' || /** @type {HTMLElement} */ (source).style.display === 'none' ||
+      source.hasAttribute('hidden') || isClippedAccessibilityText(source, style));
+}
+
+/** A clipped, copy-excluded hint can accompany a visible external link label. */
+function isCopyExcludedLinkHint(source, style) {
+  const link = source.parentElement;
+  return source.matches('.dont-copy,.no-copy,[data-copy="false"]') &&
+    !!link?.matches('a[href][target="_blank"]') && !source.id && !source.querySelector('*') &&
+    isClippedAccessibilityText(source, style) &&
+    Array.from(link.childNodes).some(node => node !== source && node.textContent?.trim());
 }
 
 /** Clone readable source content without changing its DOM or interpreting literal text. */
@@ -297,6 +308,10 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
     if (excluded(original)) { copy.remove(); continue; }
     const literal = original.closest('pre,code,math,mjx-container,.MathJax,.katex,' + MATHJAX_COMMON_HTML);
     const style = original.ownerDocument.defaultView ? safeGetComputedStyle(original.ownerDocument.defaultView, original) : null;
+    if (!literal && isCopyExcludedLinkHint(original, style)) {
+      copy.remove();
+      continue;
+    }
     if (!literal && isHiddenMathSource(original, style)) {
       const pair = readLazyMathPair(original, excluded);
       const rendererCopy = pair && copies[originals.indexOf(pair.renderer, index + 1)];

@@ -106,7 +106,8 @@ export function filterCandidateElements(win, allElements, constants, debugInfo, 
   if (!allElements.length) return [];
   const batch = {
     controlLabelIds: readControlLabelIds(win.document),
-    exclusionRules: compileClassExclusions(constants.EXCLUDED_CLASSES)
+    exclusionRules: compileClassExclusions(constants.EXCLUDED_CLASSES),
+    adRoles: new WeakMap()
   };
   let excludedImageCount = 0;
   let excludedByType = {};
@@ -338,7 +339,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
     }
     
     // Strong exclusion check (ad/sponsor patterns)
-    if (shouldSkipStronglyExcluded(container || element)) {
+    if (shouldSkipStronglyExcluded(container || element, state.referenceRoots)) {
       skippedCount++;
       continue;
     }
@@ -458,6 +459,9 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
         const isLeadingCaption = tagName === 'figcaption' && element.closest('figure') && state.titleElement &&
             compareDomOrder(element, state.titleElement) < 0;
         content.push(isLeadingCaption ? { ...item, isFeatured: true } : item);
+        if (tagName === 'figcaption') {
+          for (const child of element.querySelectorAll('*')) consumed.add(child);
+        }
         incrementContentType(state.debugInfo, 'paragraph');
         processedCount++;
       } else {
@@ -483,6 +487,10 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
       const mixedContent = Array.from(element.querySelectorAll('h1,h2,h3,h4,h5,h6,p,table,pre,code,blockquote,ul,ol,hr,iframe,video,audio'))
         .some(child => !child.closest('figcaption,button,[role="button"]'));
       if (mixedContent) continue;
+      // A composite figure can have independent captions woven between its images.
+      const captions = Array.from(element.querySelectorAll('figcaption')).filter(caption =>
+        caption.closest('figure') === element && elements.includes(caption));
+      if (captions.length > 1) continue;
       const images = [];
       for (const image of Array.from(element.querySelectorAll('img')).filter(image =>
         image.closest('figure') === element && elements.includes(image))) {
@@ -492,7 +500,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
       if (images.length) {
         const source = Array.from(element.querySelectorAll('img')).find(image => image.closest('figure') === element && elements.includes(image));
         images[images.length - 1].caption = getImageCaption(source, state.captionOwners, state.selectionExclusions);
-        for (const caption of Array.from(element.querySelectorAll('figcaption')).filter(caption => caption.closest('figure') === element)) {
+        for (const caption of captions.filter(caption => state.captionOwners.has(caption))) {
           consumed.add(caption);
           for (const child of Array.from(caption.querySelectorAll('*'))) consumed.add(child);
         }

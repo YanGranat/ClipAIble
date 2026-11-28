@@ -94,6 +94,33 @@ describe('Reading graphic ownership', () => {
     }
   });
 
+  it('rasterizes nested SVG viewports as part of their chart within a mixed figure', async () => {
+    const { win, doc, root, owner } = page('<figure><p>Independent reading note.</p>' +
+      '<svg role="img" aria-label="Station readings" style="width:100px;height:80px"><g>' +
+      '<svg id="axis-label" x="5" y="8"><text>Station A</text></svg>' +
+      '</g></svg><figcaption>Chart for the surrounding observations.</figcaption></figure>');
+    const chart = doc.querySelector('svg');
+    const label = doc.querySelector('#axis-label');
+    expect(owner('figure')).toBeNull();
+    expect(owner('#axis-label')).toBe(chart);
+    expect(owner('#axis-label text')).toBe(chart);
+    expect(getGraphicReadingOwner(label, [label])).toBeNull();
+    position(chart, 0, 0, 100, 80);
+    position(label, 5, 8, 25, 20);
+    fakeRasterWindow(win);
+    vi.mocked(toSvg).mockResolvedValueOnce('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg"><text>Station A</text></svg>'));
+    const elements = Array.from(root.querySelectorAll('p,figure,svg,figcaption'));
+    const state = { referenceRoots: [root], processedImages: new Set(), addedHeadings: new Set(), content: [], debugInfo: null };
+    state.readingGraphics = await captureReadingGraphics(win, elements, state, CONSTANTS);
+    expect(Array.from(state.readingGraphics.keys())).toEqual([chart]);
+    const items = parseElements(win, elements, state, CONSTANTS, doc.URL);
+    expect(items.filter(item => item.type === 'image')).toEqual([
+      expect.objectContaining({ alt: expect.stringContaining('Station A') })
+    ]);
+    expect(items.find(item => item.type === 'paragraph')?.text).toContain('Independent reading note');
+  });
+
   it('keeps the video and caption when a caption glyph is the only vector', async () => {
     const { win, doc, root, owner } = page('<p>The observers measured the channel before publishing their findings.</p>' +
       '<figure><video poster="/preview.jpg"><source src="/recording.mp4"></video>' +
@@ -292,6 +319,24 @@ describe('Reading graphic ownership', () => {
     const capture = captureReadingGraphics(win, [svg], { referenceRoots: [root] }, CONSTANTS);
     if (allowed) expect((await capture).get(svg)).toMatchObject({ type: 'image', alt: 'Sample chart' });
     else await expect(capture).rejects.toMatchObject({ code: 'GRAPHIC_CAPTURE_FAILED' });
+  });
+
+  it('copies computed paint while omitting CSS custom properties from the static graphic', async () => {
+    const { win, doc, root } = page('<svg role="img" aria-label="Sample chart" style="width:100px;height:80px;fill:rgb(35, 95, 120);--shared-art:url(/brand.svg)"><path d="M0 0L50 70"/></svg>');
+    const graphic = doc.querySelector('svg');
+    position(graphic, 0, 0, 100, 80);
+    fakeRasterWindow(win);
+    const serialized = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L50 70"/></svg>';
+    let frozenGraphic;
+    vi.mocked(toSvg).mockImplementationOnce(wrapper => {
+      frozenGraphic = wrapper.querySelector('svg[role="img"]');
+      return Promise.resolve('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(serialized));
+    });
+    const captured = await captureReadingGraphics(win, [graphic], { referenceRoots: [root] }, CONSTANTS);
+    expect(captured.get(graphic)).toMatchObject({ type: 'image', alt: 'Sample chart' });
+    expect(frozenGraphic.style.getPropertyValue('fill')).toBe('rgb(35, 95, 120)');
+    expect(frozenGraphic.style.getPropertyValue('--shared-art')).toBe('');
+    expect(graphic.style.getPropertyValue('--shared-art')).toContain('brand.svg');
   });
 
   it('uses painted bounds through nested clip axes and still includes visible overflow', async () => {

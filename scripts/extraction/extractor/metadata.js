@@ -4,6 +4,7 @@
 
 import { cleanHeadingText } from './text-utils.js';
 import { readArticleMetadataText, safeGetComputedStyle } from './dom-utils.js';
+import { isDocumentHeadline } from './reading-context.js';
 
 /**
  * Check if h1 looks like a valid article title (not site name)
@@ -232,13 +233,20 @@ export function readStructuredArticleMetadata(doc, baseUrl) {
   const seenIds = new Set();
   for (const source of records) {
     const record = resolve(source);
-    if (!hasType(record, /(?:Article|BlogPosting)$/)) continue;
+    const articleType = hasType(record, /(?:Article|BlogPosting)$/);
+    const pageTitleMatches = [record.headline, record.name].some(name =>
+      typeof name === 'string' && name.replace(/\s+/g, ' ').trim() === title);
+    const currentEditorialPage = !articleType && hasType(record, /WebPage$/) && pageTitleMatches &&
+      matchesPage(record.url || record['@id']) && (record.author || record.datePublished);
+    if (!articleType && !currentEditorialPage) continue;
     const id = absoluteId(record['@id']);
     if (id && conflictingIds.has(id)) continue;
     if (id && seenIds.has(id)) continue;
     if (id) seenIds.add(id);
     let rank;
-    if (identities(record.mainEntityOfPage).length) {
+    if (currentEditorialPage) {
+      rank = 1;
+    } else if (identities(record.mainEntityOfPage).length) {
       if (!matchesPage(record.mainEntityOfPage)) continue;
       rank = 4;
     } else if ((id && currentPageSubjects.has(id)) || inlineSubjects.has(source)) {
@@ -251,8 +259,7 @@ export function readStructuredArticleMetadata(doc, baseUrl) {
       rank = 2;
     } else if (id) continue;
     else rank = 0;
-    const headlineMatches = typeof record.headline === 'string' && record.headline.replace(/\s+/g, ' ').trim() === title;
-    candidates.push({ record, rank, headlineMatches });
+    candidates.push({ record, rank, headlineMatches: pageTitleMatches });
   }
   candidates.sort((a, b) => b.rank - a.rank || Number(b.headlineMatches) - Number(a.headlineMatches));
   const chosen = candidates[0];
@@ -313,6 +320,24 @@ function readAuthorProfileName(element, baseUrl) {
   return label;
 }
 
+/** A byline attached directly to the page headline identifies the writer. */
+function readHeadlineByline(title, baseUrl) {
+  if (!isDocumentHeadline(title)) return '';
+  for (let scope = title.parentElement, depth = 0; scope && depth < 4; scope = scope.parentElement, depth++) {
+    if (scope.matches('body,main,article,[role~="main"],[role~="article"]')) break;
+    if (scope.querySelectorAll('h1').length > 1) break;
+    const groups = Array.from(scope.querySelectorAll('[class*="author-date"],[class*="author_date"],[class~="byline"]'))
+      .filter(group => !group.contains(title) && group.querySelector('a[href]') && isArticleAuthorCandidate(group));
+    if (groups.length !== 1) continue;
+    const names = Array.from(groups[0].querySelectorAll('a[href]'))
+      .filter(link => isArticleAuthorCandidate(link) && !link.closest('time,[itemprop~="datePublished"]'))
+      .map(link => readAuthorProfileName(link, baseUrl))
+      .filter(name => /^[\p{L}\p{M}][\p{L}\p{M} .’'\-·]{1,98}$/u.test(name));
+    if (names.length) return [...new Set(names)].join(', ');
+  }
+  return '';
+}
+
 /**
  * Extract metadata (title, author, date) from document
  * @param {Document} doc - Document object
@@ -325,6 +350,8 @@ export function extractMetadata(doc, baseUrl, titleElement = findArticleTitleEle
     author: '',
     publishDate: ''
   };
+  const structured = readStructuredArticleMetadata(doc, baseUrl);
+  metadata.author = readHeadlineByline(titleElement, baseUrl);
   
   // Author extraction
   const authorSelectors = [
@@ -338,7 +365,9 @@ export function extractMetadata(doc, baseUrl, titleElement = findArticleTitleEle
   ];
   
   for (const selector of authorSelectors) {
+    if (metadata.author) break;
     try {
+      if (!selector.startsWith('meta[') && structured.author) break;
       const elements = Array.from(doc.querySelectorAll(selector));
       if (selector === 'meta[name="citation_author"]') {
         const names = elements.map(element => (element.getAttribute('content') || '').normalize('NFC').replace(/\s+/g, ' ').trim())
@@ -378,7 +407,6 @@ export function extractMetadata(doc, baseUrl, titleElement = findArticleTitleEle
     } catch (e) { }
   }
 
-  const structured = readStructuredArticleMetadata(doc, baseUrl);
   if (!metadata.author) metadata.author = structured.author;
   if (!metadata.author) {
     for (const element of Array.from(doc.querySelectorAll('a[href*="/author/"], a[href*="/profile/"]'))) {

@@ -2,8 +2,9 @@
 // Image processing functions for extraction
 // Handles image URL extraction, filtering, and featured image detection
 
-import { toAbsoluteUrl, normalizeImageUrl, safeGetComputedStyle, compareDomOrder } from './dom-utils.js';
+import { toAbsoluteUrl, normalizeImageUrl, safeGetComputedStyle, compareDomOrder, INTERFACE_REGIONS } from './dom-utils.js';
 import { serializeReadingHtml } from './inline-content.js';
+import { findImagePreviewCaption, findImagePreviewLink, imageAssetDestination, isDocumentHeadline, isEditorialOwner, isImageRendition } from './reading-context.js';
 
 /**
  * Check if URL is a placeholder (base64 1x1 transparent pixel, etc.)
@@ -102,7 +103,7 @@ export function extractBestImageUrl(imgElement) {
   for (const attr of ['data-full-src', 'data-high-res', 'data-original-src', 'data-srcset', 'data-src', 'data-lazy-src', 'data-original', 'data-lazy']) {
     const value = imgElement.getAttribute(attr);
     const candidate = attr === 'data-srcset' ? getBestSrcsetUrl(value, imgElement) : value;
-    if (candidate && !isPlaceholderUrl(candidate, imgElement)) return candidate;
+    if (candidate && !/^(?:true|false|null|undefined)$/i.test(candidate.trim()) && !isPlaceholderUrl(candidate, imgElement)) return candidate;
   }
   
   // Priority 1: currentSrc (browser's selected src from srcset)
@@ -143,24 +144,7 @@ export function extractBestImageUrl(imgElement) {
     }
   }
   
-  // Priority 5: Lazy loading data attributes
-  if (!src) {
-    const dataAttrs = ['data-src', 'data-lazy-src', 'data-original', 'data-lazy', 
-                       'data-full-src', 'data-high-res', 'data-srcset', 'data-original-src'];
-    for (const attr of dataAttrs) {
-      const val = imgElement.getAttribute(attr);
-      if (val && !val.includes('data:') && !isPlaceholderUrl(val, imgElement)) {
-        if (attr === 'data-srcset') {
-          src = getBestSrcsetUrl(val, imgElement);
-        } else {
-          src = val;
-        }
-        if (src) break;
-      }
-    }
-  }
-  
-  // Priority 6: Parent link
+  // Priority 5: Parent link
   if (!src) {
     const parentLink = imgElement.closest('a[href]');
     if (parentLink) {
@@ -360,7 +344,7 @@ export function isDecorativeImage(win, img, logoPatterns) {
  * @returns {string} - Portable inline caption HTML or empty string
  */
 export function getImageCaption(img, captionOwners = null, excludedElements = [], selectedIllustration = null) {
-  const captionText = element => serializeReadingHtml(element, excludedElements);
+  const captionText = element => serializeReadingHtml(element, excludedElements).replace(/<!--[\s\S]*?-->/g, '').trim();
   const excluded = element => excludedElements.some(rule => {
     try { return typeof rule === 'string' ? !!element.closest(rule) : rule.contains(element); }
     catch (_) { return true; }
@@ -415,8 +399,26 @@ export function getImageCaption(img, captionOwners = null, excludedElements = []
     }
   }
 
+  const preview = findImagePreviewLink(img);
+  const declaredCaption = preview && findImagePreviewCaption(preview);
+  if (declaredCaption) {
+    const label = element => (element?.textContent || '').trim().replace(/\s+/g, ' ');
+    const originalTitle = label(declaredCaption);
+    let caption = readable(declaredCaption) ? declaredCaption : null;
+    for (let owner = preview.parentElement; !caption && owner?.querySelectorAll('img').length === 1; owner = owner.parentElement) {
+      const mirror = owner.nextElementSibling;
+      if (mirror && label(mirror) === originalTitle && readable(mirror)) caption = mirror;
+    }
+    if (caption) {
+      const text = captionText(caption);
+      if (text) { captionOwners?.add(caption); return text; }
+    }
+  }
+
   if (!figure && selectedIllustration && selectedIllustration !== img) {
-    const captions = Array.from(selectedIllustration.children).filter(node =>
+    const galleryCard = readGalleryCard(img, selectedIllustration.parentElement) === selectedIllustration;
+    const nodes = galleryCard ? selectedIllustration.querySelectorAll('h2,h3,h4,h5,h6,p') : selectedIllustration.children;
+    const captions = Array.from(nodes).filter(node =>
       node.matches('figcaption,p,h2,h3,h4,h5,h6') && compareDomOrder(img, node) < 0 && readable(node));
     const parts = captions.map(node => {
       const html = captionText(node);
@@ -465,6 +467,152 @@ export function extractMetadataImage(doc, baseUrl, logoPatterns) {
   return null;
 }
 
+/** Media cards point to an image resource and supply a local visible title and description. */
+function readGalleryCard(image, section) {
+  for (let card = image.parentElement; card && card !== section; card = card.parentElement) {
+    if (card.querySelectorAll('img').length !== 1) break;
+    if (card.querySelector('form,button,[role~="button"],article,[role~="article"]')) return null;
+    if (!card.querySelector('h2,h3,h4,h5,h6') || !card.querySelector('p')) continue;
+    const links = Array.from(card.querySelectorAll('a[href]')).filter(link => !link.closest('p,figcaption'));
+    if (links.length !== 1) continue;
+    const destination = imageAssetDestination(links[0]);
+    if (destination && isImageRendition(image, destination)) return card;
+  }
+  return null;
+}
+
+/** A decorative glyph accompanying visible text belongs to that label. */
+function isDecorativeInlineGraphic(element) {
+  if (!element.matches('svg') || element.matches('[role~="img"],[role~="graphics-document"],[aria-label],[aria-labelledby]') ||
+      element.querySelector('title,desc,text,image,foreignObject')) return false;
+  const wrapper = element.parentElement;
+  const link = element.closest('a[href]');
+  const ornament = wrapper?.matches('p') && wrapper.childElementCount === 1 && !wrapper.textContent?.trim() &&
+    element.getAttribute('aria-hidden') === 'true';
+  if ((link?.textContent?.trim() || ornament) && !element.closest('figure')) {
+    const rect = element.getBoundingClientRect();
+    const width = rect.width || Number(element.getAttribute('width'));
+    const height = rect.height || Number(element.getAttribute('height'));
+    if (width > 0 && height > 0 && width <= 24 && height <= 24) return true;
+  }
+  if (wrapper?.matches('span') && wrapper.childElementCount === 1 && !wrapper.textContent?.trim() &&
+      Array.from(wrapper.classList).some(name => /(?:^|[-_])icon(?:$|[-_])/i.test(name)) &&
+      wrapper.parentElement?.textContent?.trim()) {
+    const rect = element.getBoundingClientRect();
+    const width = rect.width || Number(element.getAttribute('width'));
+    const height = rect.height || Number(element.getAttribute('height'));
+    if (width > 0 && height > 0 && width <= 48 && height <= 48) return true;
+  }
+  if (!element.querySelector('use') || element.querySelector('path,rect,circle,ellipse,line,polygon,polyline')) return false;
+  const label = element.closest('h1,h2,h3,h4,h5,h6,a[href],button,[role~="heading"],[role~="button"]');
+  return !!label?.textContent?.trim();
+}
+
+const READING_SCOPE = 'article,[role~="article"],main,[role~="main"]';
+
+/** Read static figure fallbacks from the same public page without touching live layout. */
+export function createDeferredFigureImageRecovery(win, deadline) {
+  const doc = win.document;
+  let publicSource;
+  return async elements => {
+    const recovered = new Map();
+    const figures = elements.filter(element => {
+      if (!element.matches('figure[aria-hidden="true"]') || element.children.length || element.textContent?.trim() ||
+          element.closest(INTERFACE_REGIONS + ',aside,form,[inert],[hidden]') || !element.closest(READING_SCOPE)) return false;
+      const bounds = element.getBoundingClientRect();
+      return bounds.width >= 160 && bounds.height >= 90;
+    });
+    if (!figures.length || typeof win.fetch !== 'function') return recovered;
+    publicSource ||= readPublicPageSource(win, deadline);
+    const source = await publicSource;
+    if (!source) return recovered;
+    const sourceScopes = Array.from(source.querySelectorAll(READING_SCOPE));
+    for (const figure of figures) {
+      if (!figure.isConnected || figure.children.length || figure.textContent?.trim()) continue;
+      const scope = figure.closest(READING_SCOPE);
+      const matching = sourceScopes.filter(candidate => sameSourceElement(scope, candidate));
+      if (matching.length !== 1) continue;
+      const fallback = findSourceFigure(figure, scope, matching[0]);
+      if (!fallback || fallback.getAttribute('aria-hidden') === 'true') continue;
+      const images = Array.from(fallback.querySelectorAll('img'));
+      if (images.length !== 1 || fallback.querySelector('a[href],video,iframe,canvas,object,form,button')) continue;
+      const image = /** @type {HTMLImageElement} */ (images[0]);
+      const src = extractBestImageUrl(image);
+      if (!src || isPlaceholderUrl(src, image)) continue;
+      try {
+        const address = new URL(src, doc.baseURI);
+        if (!/^https?:$/.test(address.protocol) || address.username || address.password) continue;
+        const caption = doc.createElement('span');
+        caption.textContent = fallback.querySelector('figcaption')?.textContent?.trim() || '';
+        recovered.set(figure, { type: 'image', src: address.href, alt: image.getAttribute('alt') || '', caption: caption.innerHTML });
+      } catch { }
+    }
+    return recovered;
+  };
+}
+
+async function readPublicPageSource(win, deadline) {
+  const url = new URL(win.location.href);
+  url.hash = '';
+  const remaining = Math.min(3000, deadline - Date.now());
+  // A query can carry an access grant even when browser credentials are omitted.
+  if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || remaining <= 0) return null;
+  const controller = new win.AbortController();
+  const timer = win.setTimeout(() => controller.abort(), remaining);
+  try {
+    const response = await win.fetch(url.href, {
+      mode: 'same-origin', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
+      headers: { Accept: 'text/html' }, signal: controller.signal
+    });
+    const mediaType = response.headers.get('content-type') || '';
+    if (!response.ok || response.url !== url.href || !/^text\/html(?:;|$)/i.test(mediaType) || !response.body) return null;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder(/charset=([^;\s]+)/i.exec(mediaType)?.[1] || 'utf-8');
+    const parts = [];
+    let totalBytes = 0;
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > 2 * 1024 * 1024) return null;
+      parts.push(decoder.decode(chunk.value, { stream: true }));
+    }
+    parts.push(decoder.decode());
+    const source = win.document.createElement('template');
+    source.innerHTML = parts.join('');
+    const title = source.content.querySelector('title')?.textContent?.trim();
+    return title && title === win.document.title.trim() ? source.content : null;
+  } catch {
+    return null;
+  } finally {
+    controller.abort();
+    win.clearTimeout(timer);
+  }
+}
+
+function sameSourceElement(live, source) {
+  return live?.localName === source?.localName && live.id === source.id && live.classList.length === source.classList.length &&
+    Array.from(live.classList).every(name => source.classList.contains(name));
+}
+
+function findSourceFigure(live, liveScope, sourceScope) {
+  const path = [];
+  for (let element = live; element !== liveScope; element = element.parentElement) {
+    path.unshift(element);
+  }
+  let source = sourceScope;
+  let contextMatches = false;
+  for (const element of path) {
+    const index = Array.from(element.parentElement.children).indexOf(element);
+    source = source.children[index];
+    if (!source || !sameSourceElement(element, source)) return null;
+    for (const direction of ['previousElementSibling', 'nextElementSibling']) {
+      const nearbyText = element[direction]?.textContent?.trim().replace(/\s+/g, ' ');
+      if (nearbyText && nearbyText.length >= 20 &&
+          nearbyText === source[direction]?.textContent?.trim().replace(/\s+/g, ' ')) contextMatches = true;
+    }
+  }
+  return contextMatches ? source : null;
+}
+
 /** Resolve source media owners without admitting a selector's unrelated surrounding prose. */
 export function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
   const mediaSelector = 'figure,img,picture,svg,canvas,video,audio,iframe';
@@ -476,6 +624,7 @@ export function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
   const before = (left, right) => left !== right && !left.contains(right) && compareDomOrder(left, right) < 0;
   for (const root of bodyRoots) {
     for (const element of [...(root.matches(mediaSelector) ? [root] : []), ...Array.from(root.querySelectorAll(mediaSelector))]) {
+      if (element !== root && isDecorativeInlineGraphic(element)) continue;
       const media = ownerOf(element);
       if (root.contains(media)) mediaRoots.add(media);
     }
@@ -513,6 +662,7 @@ export function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
     const narrativeStart = roots.flatMap(root => [...(root.matches('p,blockquote,pre,ul,ol,table') ? [root] : []), ...Array.from(root.querySelectorAll('p,blockquote,pre,ul,ol,table'))])
       .filter(element => !element.closest('figure,figcaption') && !headerOf(element, owner)).sort(compareDomOrder)[0];
     for (const element of Array.from(owner.querySelectorAll(mediaSelector))) {
+      if (isDecorativeInlineGraphic(element)) continue;
       const media = ownerOf(element);
       if (media.closest('article,[itemprop~="articleBody"]') !== owner) continue;
       const outside = !insideBody(media) && !bodyRoots.some(root => media.contains(root));
@@ -521,6 +671,32 @@ export function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
       const header = headerOf(media, owner);
       if (leading || interleaved || (header && insideBody(media))) mediaRoots.add(media);
       if (leading || (header && narrativeStart && before(media, narrativeStart))) featuredRoots.add(media);
+    }
+  }
+  const scope = bodyRoots[0]?.closest(READING_SCOPE);
+  const readingBlock = 'p,blockquote,pre,ul,ol,table';
+  if (scope && bodyRoots.every(root => root.closest(READING_SCOPE) === scope) &&
+      bodyRoots.some(root => root.matches(readingBlock) || root.querySelector(readingBlock)) &&
+      (isEditorialOwner(scope) || Array.from(scope.querySelectorAll('h1')).some(isDocumentHeadline))) {
+    const gallerySections = new Map();
+    for (const image of scope.querySelectorAll('img')) {
+      if (image.closest(READING_SCOPE) !== scope ||
+          image.closest(INTERFACE_REGIONS + ',aside,[role~="complementary"],form,[hidden],[inert]')) continue;
+      const selected = insideBody(image);
+      if (!selected && !bodyRoots.every(root => before(root, image))) continue;
+      const section = image.closest('section,[role~="region"]');
+      if (!section || section === scope || !selected && bodyRoots.some(root => section.contains(root))) continue;
+      const card = readGalleryCard(image, section);
+      if (!card) continue;
+      if (!gallerySections.has(section)) gallerySections.set(section, []);
+      gallerySections.get(section).push({ image, card });
+    }
+    for (const cards of gallerySections.values()) {
+      if (cards.length < 2) continue;
+      for (const { image, card } of cards) {
+        mediaRoots.add(image);
+        selectedIllustrations.set(image, card);
+      }
     }
   }
   for (const selected of selectedHeroes) {
@@ -538,6 +714,7 @@ export function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
       }
     }
     for (const element of elements) {
+      if (element !== selected && isDecorativeInlineGraphic(element)) continue;
       const media = ownerOf(element);
       mediaRoots.add(media);
       if (!insideBody(media) && !bodyRoots.some(root => media.contains(root))) featuredRoots.add(media);
@@ -550,7 +727,7 @@ export function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
 export function hasSourceReadingMedia(roots, logoPatterns = []) {
   const selector = 'img,svg,canvas,video,audio,iframe';
   return roots.some(root => [...(root.matches(selector) ? [root] : []), ...Array.from(root.querySelectorAll(selector))].some(element =>
-    element.tagName !== 'IMG' || (!isTrackingPixel(element.ownerDocument.defaultView, /** @type {HTMLImageElement} */ (element)) &&
+    element.tagName !== 'IMG' ? !isDecorativeInlineGraphic(element) : (!isTrackingPixel(element.ownerDocument.defaultView, /** @type {HTMLImageElement} */ (element)) &&
       !isDecorativeImage(element.ownerDocument.defaultView, /** @type {HTMLImageElement} */ (element), logoPatterns))));
 }
 

@@ -28,6 +28,24 @@ function metadata(data, options) {
 const current = { '@type': 'NewsArticle', mainEntityOfPage: 'https://example.test/report', author: { name: 'Morgan Example' }, datePublished: '2024-04-17T12:00:00Z', dateModified: '2024-08-20T14:00:00Z' };
 
 describe('Current structured article metadata', () => {
+  it('prefers an exact editorial WebPage record to an unrelated byline', () => {
+    const match = { '@type': 'WebPage', url: 'https://example.test/report', name: 'Observation report',
+      author: { '@type': 'Person', name: 'Morgan Example' } };
+    const other = { ...match, url: 'https://example.test/other', author: { name: 'Other Example' } };
+    const extra = '<aside><a rel="author" href="/authors/related">Related Writer</a></aside>';
+    expect(metadata([other, match], { extra }).author).toBe('Morgan Example');
+    expect(metadata([{ ...match, name: 'Another report' }], { extra }).author).toBe('Related Writer');
+  });
+
+  it('reads the visible headline byline when publisher metadata names an editor', () => {
+    const extra = '<meta name="author" content="Other Example">';
+    const heading = '<header><h1>Observation report</h1><div class="article__author-date">' +
+      '<a href="/authors/morgan">Morgan Example</a>, <a href="/authors/casey">Casey Example</a>' +
+      '<time datetime="2024-04-17">17 April 2024</time></div></header>';
+    const result = metadata({ ...current, author: { name: 'Other Example' } }, { extra, heading });
+    expect(result.author).toBe('Morgan Example, Casey Example');
+  });
+
   it('reads author and publication date from the same current article record', () => {
     expect(metadata(current)).toMatchObject({ author: 'Morgan Example', publishDate: '2024-04-17' });
   });

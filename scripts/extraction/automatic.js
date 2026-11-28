@@ -458,15 +458,20 @@ var clipaibleArticleExtractor = (() => {
     }
     return { renderer };
   }
-  function isHiddenMathSource(source, style) {
-    if (!source.matches("span") || source.firstElementChild?.localName !== "math") return false;
-    if (style?.display === "none" || /** @type {HTMLElement} */
-    source.style.display === "none" || source.hasAttribute("hidden")) return true;
+  function isClippedAccessibilityText(source, style) {
     if (style?.position !== "absolute" && style?.position !== "fixed") return false;
     const clipped = /^rect\(0px,0px,0px,0px\)$/u.test((style.clip || "").replace(/\s/gu, "")) || style.clipPath === "inset(50%)" || [style.overflowX, style.overflowY].every((value) => /^(?:hidden|clip)$/u.test(value));
     if (!clipped) return false;
     const { width, height } = source.getBoundingClientRect();
     return width > 0 && width <= 1 && height > 0 && height <= 1;
+  }
+  function isHiddenMathSource(source, style) {
+    return source.matches("span") && source.firstElementChild?.localName === "math" && (style?.display === "none" || /** @type {HTMLElement} */
+    source.style.display === "none" || source.hasAttribute("hidden") || isClippedAccessibilityText(source, style));
+  }
+  function isCopyExcludedLinkHint(source, style) {
+    const link = source.parentElement;
+    return source.matches('.dont-copy,.no-copy,[data-copy="false"]') && !!link?.matches('a[href][target="_blank"]') && !source.id && !source.querySelector("*") && isClippedAccessibilityText(source, style) && Array.from(link.childNodes).some((node) => node !== source && node.textContent?.trim());
   }
   function cloneReadingContent(element, exclusions = [], copyMap = null, { disclosed = false } = {}) {
     const clone = element.cloneNode(true);
@@ -495,6 +500,10 @@ var clipaibleArticleExtractor = (() => {
       }
       const literal = original.closest("pre,code,math,mjx-container,.MathJax,.katex," + MATHJAX_COMMON_HTML);
       const style = original.ownerDocument.defaultView ? safeGetComputedStyle(original.ownerDocument.defaultView, original) : null;
+      if (!literal && isCopyExcludedLinkHint(original, style)) {
+        copy.remove();
+        continue;
+      }
       if (!literal && isHiddenMathSource(original, style)) {
         const pair = readLazyMathPair(original, excluded2);
         const rendererCopy = pair && copies[originals.indexOf(pair.renderer, index + 1)];
@@ -650,384 +659,6 @@ var clipaibleArticleExtractor = (() => {
       }
     }
     return (clone.textContent || "").replace(/\s+/g, " ").trim();
-  }
-
-  // scripts/extraction/extractor/metadata.js
-  function isValidArticleTitle(h1Element) {
-    if (!h1Element || !h1Element.textContent) return false;
-    const text = readArticleMetadataText(h1Element);
-    if (text.length < 5) return false;
-    const siteNamePatterns = ["home", "about", "contact", "blog", "news", "archive"];
-    const lowerText = text.toLowerCase();
-    if (siteNamePatterns.some((pattern) => lowerText === pattern)) return false;
-    return true;
-  }
-  function extractAuthorFromUrl(url) {
-    if (!url) return null;
-    try {
-      const profileMatch = url.match(/\/(?:profile|author)\/([^\/\?]+)/i);
-      if (profileMatch) {
-        const slug = profileMatch[1];
-        const parts = slug.split(/[-_]/);
-        if (parts.length > 1) {
-          const name2 = parts.map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(" ");
-          if (name2.length > 2 && name2.length < 100) return name2;
-        }
-        const camelCaseMatch = slug.match(/^([a-z]+)([A-Z][a-z]*)$/);
-        if (camelCaseMatch) {
-          const name2 = [
-            camelCaseMatch[1].charAt(0).toUpperCase() + camelCaseMatch[1].slice(1).toLowerCase(),
-            camelCaseMatch[2].charAt(0).toUpperCase() + camelCaseMatch[2].slice(1).toLowerCase()
-          ].join(" ");
-          if (name2.length > 2 && name2.length < 100) return name2;
-        }
-        const name = slug.charAt(0).toUpperCase() + slug.slice(1).toLowerCase();
-        if (name.length > 2 && name.length < 100) return name;
-      }
-    } catch (e) {
-    }
-    return null;
-  }
-  function getMonthNumber(monthName) {
-    const months = {
-      "january": "01",
-      "jan": "01",
-      "february": "02",
-      "feb": "02",
-      "march": "03",
-      "mar": "03",
-      "april": "04",
-      "apr": "04",
-      "may": "05",
-      "june": "06",
-      "jun": "06",
-      "july": "07",
-      "jul": "07",
-      "august": "08",
-      "aug": "08",
-      "september": "09",
-      "sep": "09",
-      "sept": "09",
-      "october": "10",
-      "oct": "10",
-      "november": "11",
-      "nov": "11",
-      "december": "12",
-      "dec": "12"
-    };
-    const name = monthName.toLowerCase();
-    return Object.hasOwn(months, name) ? months[name] : null;
-  }
-  function validatedCalendarDate(date) {
-    const value = /* @__PURE__ */ new Date(`${date}T00:00:00Z`);
-    return Number.isFinite(value.getTime()) && value.toISOString().slice(0, 10) === date ? date : null;
-  }
-  function parseDateToISO(dateStr) {
-    const input = dateStr?.trim();
-    if (!input) return null;
-    const isoMatch = input.match(/^\d{4}-\d{2}-\d{2}(?=$|[Tt\s])/);
-    if (isoMatch) return validatedCalendarDate(isoMatch[0]);
-    if (/^\d{4}(?:-\d{2})?$/.test(input)) {
-      return /^\d{4}(?:-(?:0[1-9]|1[0-2]))?$/.test(input) ? input : null;
-    }
-    const namedDate = input.match(/\b(?<day>\d{1,2})(?:st|nd|rd|th)?\s+(?<name>[a-z]+)\s+(?<year>\d{4})\b/i) || input.match(/\b(?<name>[a-z]+)\s+(?<day>\d{1,2})(?:st|nd|rd|th)?,?\s+(?<year>\d{4})\b/i);
-    if (namedDate?.groups) {
-      const { day: day2, name, year: year2 } = namedDate.groups;
-      const month2 = getMonthNumber(name);
-      if (month2) return validatedCalendarDate(`${year2}-${month2}-${day2.padStart(2, "0")}`);
-    }
-    const monthYear = input.match(/^(?:published\s+(?:in\s+)?)?([a-z]+)\s+(\d{4})$/i);
-    if (monthYear) {
-      const month2 = getMonthNumber(monthYear[1]);
-      if (month2) return `${monthYear[2]}-${month2}`;
-    }
-    const date = new Date(input);
-    if (!Number.isFinite(date.getTime())) return null;
-    const year = String(date.getFullYear()).padStart(4, "0");
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return validatedCalendarDate(`${year}-${month}-${day}`);
-  }
-  function readPublicationDate(root, selectors) {
-    for (const selector of selectors) {
-      for (const element of root.querySelectorAll(selector)) {
-        const parsed = readDateElement(element);
-        if (parsed) return parsed;
-      }
-    }
-    return "";
-  }
-  function readDateElement(element) {
-    return parseDateToISO(element.getAttribute("content") || element.getAttribute("datetime") || element.textContent);
-  }
-  function readStructuredArticleMetadata(doc, baseUrl) {
-    const records = [];
-    for (const script of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) {
-      try {
-        const data = JSON.parse(script.textContent || "");
-        const pending = [data];
-        while (pending.length) {
-          const record = pending.shift();
-          if (!record || typeof record !== "object") continue;
-          if (Array.isArray(record)) {
-            pending.push(...record);
-            continue;
-          }
-          records.push(record);
-          pending.push(...Object.values(record).filter((value) => value && typeof value === "object"));
-        }
-      } catch (_) {
-      }
-    }
-    const absoluteId = (value) => {
-      try {
-        return typeof value === "string" && value.trim() ? new URL(value, baseUrl).href : "";
-      } catch (_) {
-        return "";
-      }
-    };
-    const pageIdentity = (value) => {
-      try {
-        const url = new URL(value, baseUrl);
-        if (!["http:", "https:"].includes(url.protocol)) return "";
-        url.hash = "";
-        return url.href;
-      } catch (_) {
-        return "";
-      }
-    };
-    const pages = new Set([baseUrl, doc.URL, doc.querySelector('link[rel="canonical"]')?.getAttribute("href")].filter(Boolean).map(pageIdentity).filter(Boolean));
-    const byId = /* @__PURE__ */ new Map();
-    const conflictingIds = /* @__PURE__ */ new Set();
-    const comparable = (value) => {
-      if (Array.isArray(value)) return value.map(comparable);
-      if (!value || typeof value !== "object") return value;
-      return Object.fromEntries(Object.keys(value).sort().map((key) => [key, key === "@id" ? absoluteId(value[key]) : comparable(value[key])]));
-    };
-    for (const record of records) {
-      const id = absoluteId(record["@id"]);
-      if (!id) continue;
-      byId.set(id, { ...byId.get(id), ...record });
-    }
-    const resolve = (value) => value && typeof value === "object" && value["@id"] ? { ...byId.get(absoluteId(value["@id"])), ...value } : value;
-    const values = (value) => Array.isArray(value) ? value : [value];
-    const identities = (value) => values(value).flatMap((item) => {
-      const resolved = resolve(item);
-      return typeof resolved === "string" ? [resolved] : resolved?.url ? values(resolved.url).filter((url) => typeof url === "string") : typeof resolved?.["@id"] === "string" ? [resolved["@id"]] : [];
-    });
-    const matchesPage = (value) => identities(value).some((identity) => pages.has(pageIdentity(identity)));
-    const metadataValue = (field, value) => {
-      if (field === "url" || field === "mainEntityOfPage") return identities(value).map((identity) => pageIdentity(identity) || absoluteId(identity));
-      if (field === "datePublished" && typeof value === "string") return parseDateToISO(value);
-      if (field === "author") return values(value).map((author) => {
-        if (typeof author === "string") return byId.get(absoluteId(author))?.name || author;
-        return resolve(author)?.name || absoluteId(author?.["@id"]);
-      });
-      return comparable(value);
-    };
-    const assertions = /* @__PURE__ */ new Map();
-    for (const record of records) {
-      const id = absoluteId(record["@id"]);
-      if (!id) continue;
-      const previous = assertions.get(id) || {};
-      for (const field of ["author", "datePublished", "url", "mainEntityOfPage", "name", "headline"]) {
-        if (record[field] === void 0) continue;
-        const value = JSON.stringify(metadataValue(field, record[field]));
-        if (previous[field] !== void 0 && previous[field] !== value) conflictingIds.add(id);
-        previous[field] = value;
-      }
-      assertions.set(id, previous);
-    }
-    const hasType = (record, pattern) => values(record?.["@type"]).some((type) => typeof type === "string" && pattern.test(type));
-    const currentPageSubjects = /* @__PURE__ */ new Set();
-    const inlineSubjects = /* @__PURE__ */ new Set();
-    for (const record of records) {
-      if (!hasType(record, /WebPage$/) || !matchesPage(record.url || record["@id"])) continue;
-      for (const subject of values(record.mainEntity)) {
-        const id = absoluteId(typeof subject === "string" ? subject : subject?.["@id"]);
-        if (id) currentPageSubjects.add(id);
-        if (subject && typeof subject === "object") inlineSubjects.add(subject);
-      }
-    }
-    const title = (readArticleMetadataText(doc.querySelector("article h1,main h1,h1")) || doc.title || "").replace(/\s+/g, " ").trim();
-    const candidates = [];
-    const seenIds = /* @__PURE__ */ new Set();
-    for (const source of records) {
-      const record = resolve(source);
-      if (!hasType(record, /(?:Article|BlogPosting)$/)) continue;
-      const id = absoluteId(record["@id"]);
-      if (id && conflictingIds.has(id)) continue;
-      if (id && seenIds.has(id)) continue;
-      if (id) seenIds.add(id);
-      let rank;
-      if (identities(record.mainEntityOfPage).length) {
-        if (!matchesPage(record.mainEntityOfPage)) continue;
-        rank = 4;
-      } else if (id && currentPageSubjects.has(id) || inlineSubjects.has(source)) {
-        rank = 4;
-      } else if (identities(record.url).length) {
-        if (!matchesPage(record.url)) continue;
-        rank = 3;
-      } else if (id && pageIdentity(id)) {
-        if (!pages.has(pageIdentity(id))) continue;
-        rank = 2;
-      } else if (id) continue;
-      else rank = 0;
-      const headlineMatches = typeof record.headline === "string" && record.headline.replace(/\s+/g, " ").trim() === title;
-      candidates.push({ record, rank, headlineMatches });
-    }
-    candidates.sort((a, b) => b.rank - a.rank || Number(b.headlineMatches) - Number(a.headlineMatches));
-    const chosen = candidates[0];
-    const empty = { author: "", publishDate: "" };
-    if (!chosen || candidates.some((candidate, index) => index > 0 && candidate.rank === chosen.rank && candidate.headlineMatches === chosen.headlineMatches && JSON.stringify(comparable([candidate.record.author, candidate.record.datePublished])) !== JSON.stringify(comparable([chosen.record.author, chosen.record.datePublished])))) return empty;
-    const article = chosen.record;
-    const names = values(article.author).map((author) => {
-      if (typeof author === "string") {
-        if (conflictingIds.has(absoluteId(author))) return "";
-        const referenced = byId.get(absoluteId(author));
-        return referenced?.name || (/^(?:https?:|urn:|#)/i.test(author) ? "" : author);
-      }
-      if (conflictingIds.has(absoluteId(author?.["@id"]))) return "";
-      return resolve(author)?.name;
-    }).filter((name) => typeof name === "string").map((name) => name.trim()).filter(Boolean);
-    return { author: names.join(", "), publishDate: typeof article.datePublished === "string" ? parseDateToISO(article.datePublished) || "" : "" };
-  }
-  function isAuthorCandidateDisplayed(element) {
-    for (let node = element; node; node = node.parentElement) {
-      const style = safeGetComputedStyle(element.ownerDocument.defaultView, node);
-      if (style?.display === "none" || !style && node.hasAttribute("hidden")) return false;
-    }
-    return true;
-  }
-  function isArticleAuthorCandidate(element) {
-    if (!isAuthorCandidateDisplayed(element) || element.closest("figure, figcaption")) return false;
-    for (let node = element; node; node = node.parentElement) {
-      const types = (node.getAttribute("itemtype") || "").split(/\s+/);
-      if (types.some((type) => /^https?:\/\/schema\.org\/(ImageObject|VideoObject|AudioObject)\/?$/.test(type))) return false;
-    }
-    return true;
-  }
-  function readAuthorProfileName(element, baseUrl) {
-    const readLabel = (node) => readArticleMetadataText(node, ['time,[itemprop~="datePublished"]']).replace(/^by\s+/i, "").trim();
-    const label = readLabel(element);
-    const anchor = element.closest("a[href]");
-    const initials = label.replace(/[\s.\u00b7-]/g, "");
-    if (!anchor || !new RegExp("^\\p{Lu}{1,4}$", "u").test(initials)) return label;
-    let identity;
-    try {
-      identity = new URL(anchor.getAttribute("href"), baseUrl).href;
-    } catch (_) {
-      return label;
-    }
-    for (const candidate of Array.from(element.ownerDocument.querySelectorAll("a[href]"))) {
-      if (!isArticleAuthorCandidate(candidate)) continue;
-      try {
-        if (new URL(candidate.getAttribute("href"), baseUrl).href !== identity) continue;
-      } catch (_) {
-        continue;
-      }
-      const name = readLabel(candidate);
-      const words = name.match(/[\p{L}\p{M}]+/gu) || [];
-      if (words.length < 2 || name.length >= 100) continue;
-      const letters = words.map((word) => Array.from(word)[0].toUpperCase());
-      if (letters.join("") === initials || letters[0] + letters[letters.length - 1] === initials || initials.length === 1 && letters[0] === initials) return name;
-    }
-    return label;
-  }
-  function extractMetadata(doc, baseUrl, titleElement = findArticleTitleElement(doc)) {
-    const metadata = {
-      title: titleElement ? cleanHeadingText(readArticleMetadataText(titleElement)) : doc.title || "",
-      author: "",
-      publishDate: ""
-    };
-    const authorSelectors = [
-      'meta[name="author"]',
-      'meta[name="citation_author"]',
-      'meta[property="article:author"]',
-      '[rel="author"]',
-      ".author",
-      ".byline",
-      ".meta-author",
-      '[itemprop="author"]',
-      'a[rel="author"]'
-    ];
-    for (const selector of authorSelectors) {
-      try {
-        const elements = Array.from(doc.querySelectorAll(selector));
-        if (selector === 'meta[name="citation_author"]') {
-          const names = elements.map((element) => (element.getAttribute("content") || "").normalize("NFC").replace(/\s+/g, " ").trim()).filter((name) => name && !/^https?:/i.test(name) && name.length < 100);
-          if (names.length) {
-            metadata.author = [...new Set(names)].join(", ");
-            break;
-          }
-        }
-        for (const element of elements) {
-          if (element.tagName !== "META" && !isArticleAuthorCandidate(element)) continue;
-          let authorText = "";
-          if (element.tagName === "META") {
-            authorText = element.getAttribute("content") || "";
-          } else {
-            authorText = readAuthorProfileName(element, baseUrl);
-          }
-          authorText = authorText.replace(/^by\s+/i, "").trim();
-          if (authorText && !authorText.startsWith("http") && authorText.length < 100) {
-            metadata.author = authorText;
-            break;
-          }
-          if (element.tagName === "A") {
-            const href = element.getAttribute("href") || "";
-            const extracted = extractAuthorFromUrl(href);
-            if (extracted) {
-              metadata.author = extracted;
-              break;
-            }
-          }
-        }
-        if (metadata.author) break;
-      } catch (e) {
-      }
-    }
-    const structured = readStructuredArticleMetadata(doc, baseUrl);
-    if (!metadata.author) metadata.author = structured.author;
-    if (!metadata.author) {
-      for (const element of Array.from(doc.querySelectorAll('a[href*="/author/"], a[href*="/profile/"]'))) {
-        try {
-          if (new URL(element.getAttribute("href"), baseUrl).origin !== new URL(baseUrl).origin) continue;
-          if (!isArticleAuthorCandidate(element)) continue;
-          const text = readAuthorProfileName(element, baseUrl);
-          if (text && !text.startsWith("http") && text.length < 100) {
-            metadata.author = text;
-            break;
-          }
-        } catch (_) {
-        }
-      }
-    }
-    metadata.publishDate = readPublicationDate(doc, [
-      'meta[property="article:published_time"]',
-      'meta[name="datePublished"]',
-      'meta[name="citation_date"]',
-      '[itemprop="datePublished"]',
-      "time[pubdate]"
-    ]) || structured.publishDate || readPublicationDate(doc, ['meta[name="date"]']);
-    if (!metadata.publishDate) {
-      const article = titleElement?.closest("article, main");
-      const titleHeader = titleElement?.closest("header");
-      const header = article?.contains(titleHeader) ? titleHeader : article?.querySelector(":scope > header");
-      if (header) metadata.publishDate = readPublicationDate(header, ["time[datetime]", ".published", ".date", ".meta-date"]);
-      if (!metadata.publishDate && article) {
-        const next = titleElement?.nextElementSibling;
-        metadata.publishDate = next?.matches("time[datetime],.published,.meta-date") && readDateElement(next) || readPublicationDate(article, [":scope > .published", ":scope > .meta-date"]);
-      }
-    }
-    return metadata;
-  }
-  function findArticleTitleElement(doc) {
-    for (const selector of ["article h1", "main h1", "h1"]) {
-      const heading = doc.querySelector(selector);
-      if (heading && isValidArticleTitle(heading)) return heading;
-    }
-    return null;
   }
 
   // scripts/extraction/patterns/exclusion-patterns.js
@@ -1958,6 +1589,47 @@ var clipaibleArticleExtractor = (() => {
     if (headings.length !== 1 || !normalizedLabel(headings[0].textContent) || doc.querySelector('meta[property="og:type"]')?.getAttribute("content")?.toLowerCase() !== "article") return false;
     return !Array.from(doc.querySelectorAll('article,[role~="article"]')).some((other) => other !== element && ownHeadings(other).some((heading) => normalizedLabel(heading.textContent)));
   }
+  function imageAssetDestination(link) {
+    try {
+      const url = new URL(link.getAttribute("href"), link.ownerDocument.baseURI);
+      return /^https?:$/.test(url.protocol) && !url.username && !url.password && /\.(?:avif|gif|jpe?g|png|svg|tiff?|webp)$/i.test(url.pathname) ? url : null;
+    } catch {
+      return null;
+    }
+  }
+  function isImageRendition(image, destination) {
+    const fileStem = (url) => url.pathname.split("/").pop().replace(/\.[^.]+$/, "");
+    const destinationStem = fileStem(destination);
+    for (const attribute of ["src", "data-src", "data-full-src", "data-original"]) {
+      const source = image.getAttribute(attribute);
+      if (!source) continue;
+      try {
+        const url = new URL(source, image.ownerDocument.baseURI);
+        if (url.origin !== destination.origin) continue;
+        const stem = fileStem(url);
+        if (stem === destinationStem || stem.startsWith(destinationStem + "_") || stem.startsWith(destinationStem + "-")) return true;
+      } catch {
+      }
+    }
+    return false;
+  }
+  function findImagePreviewLink(image) {
+    if (!image.matches("img")) return null;
+    const link = image.closest("a[href]");
+    if (!link || link.textContent?.trim() || link.querySelectorAll("img").length !== 1) return null;
+    const destination = imageAssetDestination(link);
+    if (destination && isImageRendition(image, destination)) return link;
+    return null;
+  }
+  function findImagePreviewCaption(link) {
+    const next = link.nextElementSibling;
+    const title = normalizedLabel(link.getAttribute("title"));
+    if (!next?.matches("div,p,figcaption") || next.querySelector("img,form,button,figure,iframe")) return null;
+    const text = normalizedLabel(next.textContent);
+    const labels = [next.id, ...next.classList];
+    const caption = next.matches("figcaption") || labels.some((label) => /(?:^|[-_])caption(?:$|[-_])/i.test(label));
+    return text && (caption || title && text.startsWith(title)) ? next : null;
+  }
   function isEditorialLayoutLabel(region, source, role) {
     if (role === "header" && region.matches("table") && !region.closest(INTERFACE_REGIONS + ",header") && Array.from(region.querySelectorAll("th")).some((cell) => cell.closest("table") === region)) {
       const labels = [region.id, ...region.classList].filter((name) => /(?:^|[-_])header(?:$|[-_])/i.test(name));
@@ -1969,6 +1641,11 @@ var clipaibleArticleExtractor = (() => {
       const figure = region.closest("figure");
       const labels = [region.id, ...region.classList].filter((name) => /(?:^|[-_])lightbox(?:$|[-_])/i.test(name));
       if (figure && labels.length && labels.every((name) => /^(?:lightbox[-_](?:image|photo|trigger)|(?:image|photo)[-_]lightbox)$/i.test(name)) && (region.getAttribute("alt")?.trim() || figure.querySelector("figcaption")?.textContent?.trim())) return true;
+    }
+    if ((role === "popup" || role === "lightbox") && !region.closest(INTERFACE_REGIONS + ",[hidden],[inert],form")) {
+      const preview = findImagePreviewLink(source);
+      const caption = preview && findImagePreviewCaption(preview);
+      if (preview && (region === source || region === preview || region.contains(preview) && region.querySelectorAll("img").length === 1 && !region.querySelector('button,input,form,[role~="button"]') && (caption && region.contains(caption) || !!preview.closest("figure")))) return true;
     }
     if (role === "comment" || role === "comments") {
       const labels = [region.id, ...region.classList].filter((name) => /(?:^|[-_])comments?(?:$|[-_])/i.test(name));
@@ -2160,6 +1837,403 @@ var clipaibleArticleExtractor = (() => {
   }
   function isFlowContainer(element) {
     return ["DIV", "ARTICLE", "SECTION", "MAIN", "ASIDE", "BODY", "DL", "DT", "DD", "TD", "TH"].includes(element.tagName);
+  }
+
+  // scripts/extraction/extractor/metadata.js
+  function isValidArticleTitle(h1Element) {
+    if (!h1Element || !h1Element.textContent) return false;
+    const text = readArticleMetadataText(h1Element);
+    if (text.length < 5) return false;
+    const siteNamePatterns = ["home", "about", "contact", "blog", "news", "archive"];
+    const lowerText = text.toLowerCase();
+    if (siteNamePatterns.some((pattern) => lowerText === pattern)) return false;
+    return true;
+  }
+  function extractAuthorFromUrl(url) {
+    if (!url) return null;
+    try {
+      const profileMatch = url.match(/\/(?:profile|author)\/([^\/\?]+)/i);
+      if (profileMatch) {
+        const slug = profileMatch[1];
+        const parts = slug.split(/[-_]/);
+        if (parts.length > 1) {
+          const name2 = parts.map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(" ");
+          if (name2.length > 2 && name2.length < 100) return name2;
+        }
+        const camelCaseMatch = slug.match(/^([a-z]+)([A-Z][a-z]*)$/);
+        if (camelCaseMatch) {
+          const name2 = [
+            camelCaseMatch[1].charAt(0).toUpperCase() + camelCaseMatch[1].slice(1).toLowerCase(),
+            camelCaseMatch[2].charAt(0).toUpperCase() + camelCaseMatch[2].slice(1).toLowerCase()
+          ].join(" ");
+          if (name2.length > 2 && name2.length < 100) return name2;
+        }
+        const name = slug.charAt(0).toUpperCase() + slug.slice(1).toLowerCase();
+        if (name.length > 2 && name.length < 100) return name;
+      }
+    } catch (e) {
+    }
+    return null;
+  }
+  function getMonthNumber(monthName) {
+    const months = {
+      "january": "01",
+      "jan": "01",
+      "february": "02",
+      "feb": "02",
+      "march": "03",
+      "mar": "03",
+      "april": "04",
+      "apr": "04",
+      "may": "05",
+      "june": "06",
+      "jun": "06",
+      "july": "07",
+      "jul": "07",
+      "august": "08",
+      "aug": "08",
+      "september": "09",
+      "sep": "09",
+      "sept": "09",
+      "october": "10",
+      "oct": "10",
+      "november": "11",
+      "nov": "11",
+      "december": "12",
+      "dec": "12"
+    };
+    const name = monthName.toLowerCase();
+    return Object.hasOwn(months, name) ? months[name] : null;
+  }
+  function validatedCalendarDate(date) {
+    const value = /* @__PURE__ */ new Date(`${date}T00:00:00Z`);
+    return Number.isFinite(value.getTime()) && value.toISOString().slice(0, 10) === date ? date : null;
+  }
+  function parseDateToISO(dateStr) {
+    const input = dateStr?.trim();
+    if (!input) return null;
+    const isoMatch = input.match(/^\d{4}-\d{2}-\d{2}(?=$|[Tt\s])/);
+    if (isoMatch) return validatedCalendarDate(isoMatch[0]);
+    if (/^\d{4}(?:-\d{2})?$/.test(input)) {
+      return /^\d{4}(?:-(?:0[1-9]|1[0-2]))?$/.test(input) ? input : null;
+    }
+    const namedDate = input.match(/\b(?<day>\d{1,2})(?:st|nd|rd|th)?\s+(?<name>[a-z]+)\s+(?<year>\d{4})\b/i) || input.match(/\b(?<name>[a-z]+)\s+(?<day>\d{1,2})(?:st|nd|rd|th)?,?\s+(?<year>\d{4})\b/i);
+    if (namedDate?.groups) {
+      const { day: day2, name, year: year2 } = namedDate.groups;
+      const month2 = getMonthNumber(name);
+      if (month2) return validatedCalendarDate(`${year2}-${month2}-${day2.padStart(2, "0")}`);
+    }
+    const monthYear = input.match(/^(?:published\s+(?:in\s+)?)?([a-z]+)\s+(\d{4})$/i);
+    if (monthYear) {
+      const month2 = getMonthNumber(monthYear[1]);
+      if (month2) return `${monthYear[2]}-${month2}`;
+    }
+    const date = new Date(input);
+    if (!Number.isFinite(date.getTime())) return null;
+    const year = String(date.getFullYear()).padStart(4, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return validatedCalendarDate(`${year}-${month}-${day}`);
+  }
+  function readPublicationDate(root, selectors) {
+    for (const selector of selectors) {
+      for (const element of root.querySelectorAll(selector)) {
+        const parsed = readDateElement(element);
+        if (parsed) return parsed;
+      }
+    }
+    return "";
+  }
+  function readDateElement(element) {
+    return parseDateToISO(element.getAttribute("content") || element.getAttribute("datetime") || element.textContent);
+  }
+  function readStructuredArticleMetadata(doc, baseUrl) {
+    const records = [];
+    for (const script of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) {
+      try {
+        const data = JSON.parse(script.textContent || "");
+        const pending = [data];
+        while (pending.length) {
+          const record = pending.shift();
+          if (!record || typeof record !== "object") continue;
+          if (Array.isArray(record)) {
+            pending.push(...record);
+            continue;
+          }
+          records.push(record);
+          pending.push(...Object.values(record).filter((value) => value && typeof value === "object"));
+        }
+      } catch (_) {
+      }
+    }
+    const absoluteId = (value) => {
+      try {
+        return typeof value === "string" && value.trim() ? new URL(value, baseUrl).href : "";
+      } catch (_) {
+        return "";
+      }
+    };
+    const pageIdentity = (value) => {
+      try {
+        const url = new URL(value, baseUrl);
+        if (!["http:", "https:"].includes(url.protocol)) return "";
+        url.hash = "";
+        return url.href;
+      } catch (_) {
+        return "";
+      }
+    };
+    const pages = new Set([baseUrl, doc.URL, doc.querySelector('link[rel="canonical"]')?.getAttribute("href")].filter(Boolean).map(pageIdentity).filter(Boolean));
+    const byId = /* @__PURE__ */ new Map();
+    const conflictingIds = /* @__PURE__ */ new Set();
+    const comparable = (value) => {
+      if (Array.isArray(value)) return value.map(comparable);
+      if (!value || typeof value !== "object") return value;
+      return Object.fromEntries(Object.keys(value).sort().map((key) => [key, key === "@id" ? absoluteId(value[key]) : comparable(value[key])]));
+    };
+    for (const record of records) {
+      const id = absoluteId(record["@id"]);
+      if (!id) continue;
+      byId.set(id, { ...byId.get(id), ...record });
+    }
+    const resolve = (value) => value && typeof value === "object" && value["@id"] ? { ...byId.get(absoluteId(value["@id"])), ...value } : value;
+    const values = (value) => Array.isArray(value) ? value : [value];
+    const identities = (value) => values(value).flatMap((item) => {
+      const resolved = resolve(item);
+      return typeof resolved === "string" ? [resolved] : resolved?.url ? values(resolved.url).filter((url) => typeof url === "string") : typeof resolved?.["@id"] === "string" ? [resolved["@id"]] : [];
+    });
+    const matchesPage = (value) => identities(value).some((identity) => pages.has(pageIdentity(identity)));
+    const metadataValue = (field, value) => {
+      if (field === "url" || field === "mainEntityOfPage") return identities(value).map((identity) => pageIdentity(identity) || absoluteId(identity));
+      if (field === "datePublished" && typeof value === "string") return parseDateToISO(value);
+      if (field === "author") return values(value).map((author) => {
+        if (typeof author === "string") return byId.get(absoluteId(author))?.name || author;
+        return resolve(author)?.name || absoluteId(author?.["@id"]);
+      });
+      return comparable(value);
+    };
+    const assertions = /* @__PURE__ */ new Map();
+    for (const record of records) {
+      const id = absoluteId(record["@id"]);
+      if (!id) continue;
+      const previous = assertions.get(id) || {};
+      for (const field of ["author", "datePublished", "url", "mainEntityOfPage", "name", "headline"]) {
+        if (record[field] === void 0) continue;
+        const value = JSON.stringify(metadataValue(field, record[field]));
+        if (previous[field] !== void 0 && previous[field] !== value) conflictingIds.add(id);
+        previous[field] = value;
+      }
+      assertions.set(id, previous);
+    }
+    const hasType = (record, pattern) => values(record?.["@type"]).some((type) => typeof type === "string" && pattern.test(type));
+    const currentPageSubjects = /* @__PURE__ */ new Set();
+    const inlineSubjects = /* @__PURE__ */ new Set();
+    for (const record of records) {
+      if (!hasType(record, /WebPage$/) || !matchesPage(record.url || record["@id"])) continue;
+      for (const subject of values(record.mainEntity)) {
+        const id = absoluteId(typeof subject === "string" ? subject : subject?.["@id"]);
+        if (id) currentPageSubjects.add(id);
+        if (subject && typeof subject === "object") inlineSubjects.add(subject);
+      }
+    }
+    const title = (readArticleMetadataText(doc.querySelector("article h1,main h1,h1")) || doc.title || "").replace(/\s+/g, " ").trim();
+    const candidates = [];
+    const seenIds = /* @__PURE__ */ new Set();
+    for (const source of records) {
+      const record = resolve(source);
+      const articleType = hasType(record, /(?:Article|BlogPosting)$/);
+      const pageTitleMatches = [record.headline, record.name].some((name) => typeof name === "string" && name.replace(/\s+/g, " ").trim() === title);
+      const currentEditorialPage = !articleType && hasType(record, /WebPage$/) && pageTitleMatches && matchesPage(record.url || record["@id"]) && (record.author || record.datePublished);
+      if (!articleType && !currentEditorialPage) continue;
+      const id = absoluteId(record["@id"]);
+      if (id && conflictingIds.has(id)) continue;
+      if (id && seenIds.has(id)) continue;
+      if (id) seenIds.add(id);
+      let rank;
+      if (currentEditorialPage) {
+        rank = 1;
+      } else if (identities(record.mainEntityOfPage).length) {
+        if (!matchesPage(record.mainEntityOfPage)) continue;
+        rank = 4;
+      } else if (id && currentPageSubjects.has(id) || inlineSubjects.has(source)) {
+        rank = 4;
+      } else if (identities(record.url).length) {
+        if (!matchesPage(record.url)) continue;
+        rank = 3;
+      } else if (id && pageIdentity(id)) {
+        if (!pages.has(pageIdentity(id))) continue;
+        rank = 2;
+      } else if (id) continue;
+      else rank = 0;
+      candidates.push({ record, rank, headlineMatches: pageTitleMatches });
+    }
+    candidates.sort((a, b) => b.rank - a.rank || Number(b.headlineMatches) - Number(a.headlineMatches));
+    const chosen = candidates[0];
+    const empty = { author: "", publishDate: "" };
+    if (!chosen || candidates.some((candidate, index) => index > 0 && candidate.rank === chosen.rank && candidate.headlineMatches === chosen.headlineMatches && JSON.stringify(comparable([candidate.record.author, candidate.record.datePublished])) !== JSON.stringify(comparable([chosen.record.author, chosen.record.datePublished])))) return empty;
+    const article = chosen.record;
+    const names = values(article.author).map((author) => {
+      if (typeof author === "string") {
+        if (conflictingIds.has(absoluteId(author))) return "";
+        const referenced = byId.get(absoluteId(author));
+        return referenced?.name || (/^(?:https?:|urn:|#)/i.test(author) ? "" : author);
+      }
+      if (conflictingIds.has(absoluteId(author?.["@id"]))) return "";
+      return resolve(author)?.name;
+    }).filter((name) => typeof name === "string").map((name) => name.trim()).filter(Boolean);
+    return { author: names.join(", "), publishDate: typeof article.datePublished === "string" ? parseDateToISO(article.datePublished) || "" : "" };
+  }
+  function isAuthorCandidateDisplayed(element) {
+    for (let node = element; node; node = node.parentElement) {
+      const style = safeGetComputedStyle(element.ownerDocument.defaultView, node);
+      if (style?.display === "none" || !style && node.hasAttribute("hidden")) return false;
+    }
+    return true;
+  }
+  function isArticleAuthorCandidate(element) {
+    if (!isAuthorCandidateDisplayed(element) || element.closest("figure, figcaption")) return false;
+    for (let node = element; node; node = node.parentElement) {
+      const types = (node.getAttribute("itemtype") || "").split(/\s+/);
+      if (types.some((type) => /^https?:\/\/schema\.org\/(ImageObject|VideoObject|AudioObject)\/?$/.test(type))) return false;
+    }
+    return true;
+  }
+  function readAuthorProfileName(element, baseUrl) {
+    const readLabel = (node) => readArticleMetadataText(node, ['time,[itemprop~="datePublished"]']).replace(/^by\s+/i, "").trim();
+    const label = readLabel(element);
+    const anchor = element.closest("a[href]");
+    const initials = label.replace(/[\s.\u00b7-]/g, "");
+    if (!anchor || !new RegExp("^\\p{Lu}{1,4}$", "u").test(initials)) return label;
+    let identity;
+    try {
+      identity = new URL(anchor.getAttribute("href"), baseUrl).href;
+    } catch (_) {
+      return label;
+    }
+    for (const candidate of Array.from(element.ownerDocument.querySelectorAll("a[href]"))) {
+      if (!isArticleAuthorCandidate(candidate)) continue;
+      try {
+        if (new URL(candidate.getAttribute("href"), baseUrl).href !== identity) continue;
+      } catch (_) {
+        continue;
+      }
+      const name = readLabel(candidate);
+      const words = name.match(/[\p{L}\p{M}]+/gu) || [];
+      if (words.length < 2 || name.length >= 100) continue;
+      const letters = words.map((word) => Array.from(word)[0].toUpperCase());
+      if (letters.join("") === initials || letters[0] + letters[letters.length - 1] === initials || initials.length === 1 && letters[0] === initials) return name;
+    }
+    return label;
+  }
+  function readHeadlineByline(title, baseUrl) {
+    if (!isDocumentHeadline(title)) return "";
+    for (let scope = title.parentElement, depth = 0; scope && depth < 4; scope = scope.parentElement, depth++) {
+      if (scope.matches('body,main,article,[role~="main"],[role~="article"]')) break;
+      if (scope.querySelectorAll("h1").length > 1) break;
+      const groups = Array.from(scope.querySelectorAll('[class*="author-date"],[class*="author_date"],[class~="byline"]')).filter((group) => !group.contains(title) && group.querySelector("a[href]") && isArticleAuthorCandidate(group));
+      if (groups.length !== 1) continue;
+      const names = Array.from(groups[0].querySelectorAll("a[href]")).filter((link) => isArticleAuthorCandidate(link) && !link.closest('time,[itemprop~="datePublished"]')).map((link) => readAuthorProfileName(link, baseUrl)).filter((name) => /^[\p{L}\p{M}][\p{L}\p{M} .’'\-·]{1,98}$/u.test(name));
+      if (names.length) return [...new Set(names)].join(", ");
+    }
+    return "";
+  }
+  function extractMetadata(doc, baseUrl, titleElement = findArticleTitleElement(doc)) {
+    const metadata = {
+      title: titleElement ? cleanHeadingText(readArticleMetadataText(titleElement)) : doc.title || "",
+      author: "",
+      publishDate: ""
+    };
+    const structured = readStructuredArticleMetadata(doc, baseUrl);
+    metadata.author = readHeadlineByline(titleElement, baseUrl);
+    const authorSelectors = [
+      'meta[name="author"]',
+      'meta[name="citation_author"]',
+      'meta[property="article:author"]',
+      '[rel="author"]',
+      ".author",
+      ".byline",
+      ".meta-author",
+      '[itemprop="author"]',
+      'a[rel="author"]'
+    ];
+    for (const selector of authorSelectors) {
+      if (metadata.author) break;
+      try {
+        if (!selector.startsWith("meta[") && structured.author) break;
+        const elements = Array.from(doc.querySelectorAll(selector));
+        if (selector === 'meta[name="citation_author"]') {
+          const names = elements.map((element) => (element.getAttribute("content") || "").normalize("NFC").replace(/\s+/g, " ").trim()).filter((name) => name && !/^https?:/i.test(name) && name.length < 100);
+          if (names.length) {
+            metadata.author = [...new Set(names)].join(", ");
+            break;
+          }
+        }
+        for (const element of elements) {
+          if (element.tagName !== "META" && !isArticleAuthorCandidate(element)) continue;
+          let authorText = "";
+          if (element.tagName === "META") {
+            authorText = element.getAttribute("content") || "";
+          } else {
+            authorText = readAuthorProfileName(element, baseUrl);
+          }
+          authorText = authorText.replace(/^by\s+/i, "").trim();
+          if (authorText && !authorText.startsWith("http") && authorText.length < 100) {
+            metadata.author = authorText;
+            break;
+          }
+          if (element.tagName === "A") {
+            const href = element.getAttribute("href") || "";
+            const extracted = extractAuthorFromUrl(href);
+            if (extracted) {
+              metadata.author = extracted;
+              break;
+            }
+          }
+        }
+        if (metadata.author) break;
+      } catch (e) {
+      }
+    }
+    if (!metadata.author) metadata.author = structured.author;
+    if (!metadata.author) {
+      for (const element of Array.from(doc.querySelectorAll('a[href*="/author/"], a[href*="/profile/"]'))) {
+        try {
+          if (new URL(element.getAttribute("href"), baseUrl).origin !== new URL(baseUrl).origin) continue;
+          if (!isArticleAuthorCandidate(element)) continue;
+          const text = readAuthorProfileName(element, baseUrl);
+          if (text && !text.startsWith("http") && text.length < 100) {
+            metadata.author = text;
+            break;
+          }
+        } catch (_) {
+        }
+      }
+    }
+    metadata.publishDate = readPublicationDate(doc, [
+      'meta[property="article:published_time"]',
+      'meta[name="datePublished"]',
+      'meta[name="citation_date"]',
+      '[itemprop="datePublished"]',
+      "time[pubdate]"
+    ]) || structured.publishDate || readPublicationDate(doc, ['meta[name="date"]']);
+    if (!metadata.publishDate) {
+      const article = titleElement?.closest("article, main");
+      const titleHeader = titleElement?.closest("header");
+      const header = article?.contains(titleHeader) ? titleHeader : article?.querySelector(":scope > header");
+      if (header) metadata.publishDate = readPublicationDate(header, ["time[datetime]", ".published", ".date", ".meta-date"]);
+      if (!metadata.publishDate && article) {
+        const next = titleElement?.nextElementSibling;
+        metadata.publishDate = next?.matches("time[datetime],.published,.meta-date") && readDateElement(next) || readPublicationDate(article, [":scope > .published", ":scope > .meta-date"]);
+      }
+    }
+    return metadata;
+  }
+  function findArticleTitleElement(doc) {
+    for (const selector of ["article h1", "main h1", "h1"]) {
+      const heading = doc.querySelector(selector);
+      if (heading && isValidArticleTitle(heading)) return heading;
+    }
+    return null;
   }
 
   // scripts/extraction/extractor/discover.js
@@ -3948,6 +4022,7 @@ var clipaibleArticleExtractor = (() => {
 
   // scripts/extraction/extractor/graphics.js
   var SVG_NS = "http://www.w3.org/2000/svg";
+  var GRAPHIC_SURFACE = "svg:not(svg svg),canvas";
   var OMIT = 'figcaption,script,style,template,noscript,source,button,input,select,textarea,nav,footer,iframe,video,audio,object,embed,[role="button"],[role="navigation"],[contenteditable="true"]';
   var DEFINITIONS = "defs,marker,pattern,linearGradient,radialGradient,clipPath,mask,symbol,title,desc";
   var FAILURE_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII=";
@@ -4024,19 +4099,20 @@ var clipaibleArticleExtractor = (() => {
   }
   function getGraphicReadingOwner(element, roots) {
     if (!element || !roots?.some((root) => root === element || root.contains(element))) return null;
-    const graphic = element.closest("svg,canvas");
+    const graphic = element.closest(GRAPHIC_SURFACE);
+    if (graphic && !roots.some((root) => root === graphic || root.contains(graphic))) return null;
     const pre = graphic?.parentElement;
     const replacesCodeBlock = pre?.tagName === "PRE" && Array.from(pre.childNodes).every((node) => node === graphic || node.nodeType === 8 || node.nodeType === 3 && !node.textContent?.trim());
     if (element.closest("code,math,mjx-container,.MathJax,.katex") || !replacesCodeBlock && element.closest("pre")) return null;
     const figure = element.closest("figure");
     if (!figure && !graphic || isDecorativeLinkGraphic(graphic) || controls(element) || hidden(element, true)) return null;
     if (figure && roots.some((root) => root === figure || root.contains(figure))) {
-      const graphics = Array.from(figure.querySelectorAll("svg,canvas")).filter((node) => node.closest("figure") === figure && !isCaptionSvgGlyph(node, figure) && !isDecorativeLinkGraphic(node) && !controls(node) && !hidden(node, true));
+      const graphics = Array.from(figure.querySelectorAll(GRAPHIC_SURFACE)).filter((node) => node.closest("figure") === figure && !isCaptionSvgGlyph(node, figure) && !isDecorativeLinkGraphic(node) && !controls(node) && !hidden(node, true));
       const layered = hasLayeredImages(figure);
       if (graphics.length || layered) {
         const mixed = !!figure.querySelector("figure") || Array.from(figure.querySelectorAll("p,table,img,blockquote,pre,ul,ol")).some((node) => !(layered && node.tagName === "IMG") && !isRenderedPlaceholder(node) && !node.closest('figcaption,svg,[role="img"]') && !controls(node) && !hidden(node));
         if (!mixed) return figure;
-        return element.closest("svg,canvas");
+        return graphic;
       }
     }
     if (!graphic || /(?:^|[\s_-])icon(?:$|[\s_-])/i.test(graphic.getAttribute("class") || "")) return null;
@@ -4308,7 +4384,11 @@ var clipaibleArticleExtractor = (() => {
             const style = win.getComputedStyle(original);
             if (copy.style) {
               const declarations = [];
+              for (const property of Array.from(copy.style)) {
+                if (property.startsWith("--")) copy.style.removeProperty(property);
+              }
               for (const property of Array.from(style)) {
+                if (property.startsWith("--")) continue;
                 const value = style.getPropertyValue(property).replace(/url\((['"]?)(.*?)\1\)/g, (match, quote, url) => {
                   const local = localReference(url, doc);
                   return local ? `url("${local}")` : match;
@@ -4336,7 +4416,7 @@ var clipaibleArticleExtractor = (() => {
                 if (!pseudoStyle.content || ["none", "normal"].includes(pseudoStyle.content) || pseudoStyle.display === "none") continue;
                 const token = `reading-graphic-${index}-${pseudo.slice(2)}`;
                 copy.classList.add(token);
-                const declarations = Array.from(pseudoStyle).map((property) => `${property}:${pseudoStyle.getPropertyValue(property)}!important;`).join("");
+                const declarations = Array.from(pseudoStyle).filter((property) => !property.startsWith("--")).map((property) => `${property}:${pseudoStyle.getPropertyValue(property)}!important;`).join("");
                 pseudoReferences.push(...[...declarations.matchAll(/url\(['"]?(#[^)'"\s]+)['"]?\)/g)].map((match) => match[1]));
                 pseudoRules.push(`.${token}${pseudo}{${declarations}}`);
               }
@@ -4634,7 +4714,29 @@ var clipaibleArticleExtractor = (() => {
   // scripts/extraction/extractor/filters.js
   var LABELLED_CONTROLS = ':is(input,select,button,[role="radiogroup"],[role="listbox"],[role="tablist"],[role="menu"])[aria-labelledby]';
   function semanticClassNames(element) {
-    return Array.from(element.classList).filter((name) => !name.includes("[")).join(" ").toLowerCase();
+    return Array.from(element.classList).filter((name) => !name.includes("[") && !/^(?:group|peer)\//.test(name)).join(" ").toLowerCase();
+  }
+  function isVisibleArticleProse(win, element, readingRoots, batch) {
+    if (!element.matches("p.paywall") || !readingRoots.some((root) => root.contains(element)) || !element.closest('article,[itemprop~="articleBody"],[role~="article"]') || element.closest('aside,form,dialog,[hidden],[inert],[aria-hidden="true"]') || element.querySelector('button,input,[role~="button"]')) return false;
+    const bounds = element.getBoundingClientRect();
+    if (bounds.width <= 1 || bounds.height <= 1) return false;
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      const style = safeGetComputedStyle(win, parent);
+      if (style?.opacity === "0" || style?.contentVisibility === "hidden") return false;
+      if (/^(?:hidden|clip)$/.test(style?.overflowY || "")) {
+        const outer = parent.getBoundingClientRect();
+        if (bounds.top < outer.top || bounds.bottom > outer.bottom + 1) return false;
+      }
+    }
+    const hasBarrier = () => Array.from(win.document.querySelectorAll(
+      '[aria-modal="true"],[class*="paywall-modal" i],[data-testid*="paywall" i],[class*="payment-wall" i]'
+    )).some((node) => {
+      const rect = node.getBoundingClientRect();
+      const style = safeGetComputedStyle(win, node);
+      return rect.height > 1 && rect.width > 1 && style?.visibility !== "hidden" && style?.display !== "none" && (node.getAttribute("aria-modal") === "true" || !!node.querySelector("a[href],button,form"));
+    });
+    if (batch && batch.hasReadingBarrier === void 0) batch.hasReadingBarrier = hasBarrier();
+    return !(batch ? batch.hasReadingBarrier : hasBarrier());
   }
   function readControlLabelIds(document2) {
     const ids = /* @__PURE__ */ new Set();
@@ -4762,6 +4864,7 @@ var clipaibleArticleExtractor = (() => {
   var PANEL_HEADING = "h2,h3,h4,h5,h6";
   var FORM_CONTROL = 'button,input[type="submit"],[role="button"]';
   var SUBSCRIBE_PROMPT = /^(?:subscribe|sign[\s-]*up)\b/i;
+  var SUBSCRIBE_PREFACE = /^(?:do you want more (?:stories|articles|posts) like this\?\s*(?:then\s*)?)$/i;
   var NEWSLETTER_INVITATION = /^(?:(?:subscribe|sign[\s-]*up)\s+(?:to|for)|join)\s+(?:(?:our|the)\s+)?(?:\S+\s+){0,2}(?:newsletter|mailing list)\b/i;
   var PANEL_PROMPT = /^(?:subscribe|sign[\s-]*up) (?:to|for) [^.!?:]{1,100}$/i;
   var SUBSCRIPTION_PANEL = /^(?:newsletter|subscription)(?: (?:promotion|sign[\s-]*up|form))?$/i;
@@ -4810,11 +4913,14 @@ var clipaibleArticleExtractor = (() => {
       if (paragraph.closest("blockquote,pre,figcaption,form") || linkedTargets.has(paragraph)) continue;
       const actions = Array.from(paragraph.querySelectorAll("a[href]"));
       const firstAction = actions[0]?.textContent.trim() || "";
-      if (!SUBSCRIBE_PROMPT.test(firstAction) || !paragraph.textContent.trim().startsWith(firstAction)) continue;
+      const text = paragraph.textContent.trim().replace(/\s+/g, " ");
+      const firstIndex = text.indexOf(firstAction);
+      const isPublicationNote = actions.length === 1 && paragraph.closest("aside") && /\b(?:this (?:story|article)|in your inbox)\b/i.test(text) && /\bnewsletter\b/i.test(text);
+      if (!SUBSCRIBE_PROMPT.test(firstAction) || firstIndex !== 0 && !SUBSCRIBE_PREFACE.test(text.slice(0, firstIndex).trim()) && !isPublicationNote) continue;
       if (!actions.every((action) => {
         try {
           const pathname = new URL(action.getAttribute("href"), action.baseURI).pathname;
-          return /(?:^|[/_-])(?:newsletters?|subscribe|subscriptions?|signup|sign-up)(?:$|[/_.-])/i.test(pathname);
+          return /(?:^|[/_-])(?:newsletters?|subscribers?|subscribe|subscriptions?|signup|sign-up)(?:$|[/_.-])/i.test(pathname);
         } catch {
           return false;
         }
@@ -4835,6 +4941,11 @@ var clipaibleArticleExtractor = (() => {
     const regions = [];
     const ownsFragment = (element) => linkedTargets.has(element) || [...linkedTargets].some((target) => target && element.contains(target));
     const normalize = (text) => (text || "").trim().replace(/\s+/g, " ");
+    for (const panel of root.querySelectorAll('[class~="cta-content"],[class~="cta-panel"],[data-component="newsletter-cta"]')) {
+      if (panel.querySelector(PROTECTED_READING) || ownsFragment(panel)) continue;
+      const labels = Array.from(panel.querySelectorAll('a[href],button,[role="button"]'));
+      if (labels.some((action) => SUBSCRIBE_PROMPT.test(normalize(action.textContent || action.getAttribute("aria-label")))) && /\b(?:newsletter|mailing list)\b/i.test(normalize(panel.textContent))) regions.push(panel);
+    }
     for (const link of root.querySelectorAll("a[href]")) {
       if (!NEWSLETTER_INVITATION.test(normalize(link.textContent)) || link.closest("p,blockquote,pre,figure,figcaption,form")) continue;
       for (let panel = link.parentElement; panel && panel !== root; panel = panel.parentElement) {
@@ -4956,7 +5067,27 @@ var clipaibleArticleExtractor = (() => {
     const readingOwned = isReadingOwned(element, readingRoots);
     const authoredHeading = readingOwned && /^h[1-6]$/.test(tagName);
     const selectedFlows = readingRoots.filter((root) => root.contains(element) && root.querySelector("p,pre,table,blockquote"));
-    const layoutRoles = ["nav", "navigation", "menu", "sidebar", "related", "social", "share"];
+    const articleOwner = element.closest('article,[role~="article"]');
+    const layoutRoles = [
+      "nav",
+      "navigation",
+      "menu",
+      "sidebar",
+      "related",
+      "social",
+      "share",
+      "header",
+      "newsletter",
+      "subscribe",
+      "comment",
+      "comments"
+    ];
+    const panelLabel = /(?:^|[\s_-])(?:widget|banner|rail|box|cta|panel|prompt|promotion|signup)(?:$|[\s_-])/;
+    const strongAdRole = (node) => {
+      if (!batch) return shouldSkipStronglyExcluded(node, readingRoots);
+      if (!batch.adRoles.has(node)) batch.adRoles.set(node, shouldSkipStronglyExcluded(node, readingRoots));
+      return batch.adRoles.get(node);
+    };
     const hasAuthoredAnchor = (node) => isReadingOwned(node, readingRoots) && (node.matches("h1,h2,h3,h4,h5,h6") || node.matches("section") && node.querySelector(":scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > h5,:scope > h6"));
     const hasExactRole = (node, role2) => node.id.toLowerCase() === role2 || Array.from(node.classList).some((name) => name.toLowerCase() === role2);
     if (element.closest(INTERFACE_REGIONS) || isPublisherLinkAction(element)) return true;
@@ -5036,7 +5167,9 @@ var clipaibleArticleExtractor = (() => {
     if (dataOuter.includes("google") || dataOuter.includes("facebook") || dataOuter.includes("twitter")) {
       return true;
     }
-    if (PAYWALL_CLASSES2.some((paywallClass) => className.includes(paywallClass) || id.includes(paywallClass))) {
+    const hasPaywallLabel = PAYWALL_CLASSES2.some((paywallClass) => className.includes(paywallClass) || id.includes(paywallClass));
+    const publicProse = hasPaywallLabel && isVisibleArticleProse(win, element, readingRoots, batch);
+    if (hasPaywallLabel && !publicProse) {
       return true;
     }
     const pricePattern = /\$\s*\d{3,4}(\.\d{2})?/;
@@ -5065,8 +5198,10 @@ var clipaibleArticleExtractor = (() => {
     }
     const exclusionRules = batch?.exclusionRules ?? compileClassExclusions(EXCLUDED_CLASSES2);
     for (const { name: excluded2, word: pattern } of exclusionRules) {
+      if (publicProse && excluded2 === "paywall") continue;
       if ((authoredHeading || selectedMedia || selectedInline) && ["header", "article-section-title"].includes(excluded2)) continue;
       if (selectedMedia && excluded2 === "overlay") continue;
+      if (excluded2 === "ad" && !strongAdRole(element)) continue;
       const exactPanelId = id === excluded2 && !(authoredHeading && Array.from(element.ownerDocument.querySelectorAll(DOCUMENT_CONTENTS)).some((contents) => Array.from(contents.querySelectorAll('a[href*="#"]')).some((link) => getDocumentFragmentTarget(link) === element)));
       if ((pattern.test(className) || exactPanelId || pattern.test(id) && !hasAuthoredAnchor(element) || className === excluded2 || className.startsWith(excluded2 + "-") || className.endsWith("-" + excluded2)) && !isEditorialLayoutLabel(element, element, excluded2) && !(excluded2 === "sidebar" && isReferencedReadingAside(element, readingRoots, tocRoots))) {
         return true;
@@ -5086,18 +5221,22 @@ var clipaibleArticleExtractor = (() => {
           if ((authoredHeading || selectedMedia || selectedInline) && ["header", "article-section-title"].includes(excluded2)) return false;
           if (selectedMedia && excluded2 === "overlay") return false;
           if (excluded2 === "sidebar" && illustrationAside && parent.contains(illustrationAside)) return false;
+          if (excluded2 === "ad" && !strongAdRole(parent)) return false;
           if (excluded2 === "next" || excluded2 === "prev" || excluded2 === "previous") {
             return parentClass.split(/\s+/).includes(excluded2) || parentId === excluded2;
           }
           const matchingRole = role2.test(parentClass) || parentId === excluded2 || role2.test(parentId) && !hasAuthoredAnchor(parent);
           if (!matchingRole || isEditorialLayoutLabel(parent, element, excluded2) || excluded2 === "sidebar" && isReferencedReadingAside(parent, readingRoots, tocRoots)) return false;
-          const wrapsSelectedFlow = layoutRoles.includes(excluded2) && !hasExactRole(parent, excluded2) && !parent.matches('aside,[role~="complementary"],header,[role~="banner"]') && selectedFlows.some((root) => root !== parent && parent.contains(root));
+          if (excluded2 === "overlay" && !parent.matches('aside,dialog,[role~="dialog"],[aria-modal="true"],[inert]') && selectedFlows.some((root) => parent.contains(root)) && Array.from(parent.querySelectorAll('h1,[itemprop~="headline"]')).some(isDocumentHeadline)) return false;
+          if (excluded2 === "widget" && articleOwner && !parent.matches('aside,[role~="complementary"],form,[inert]') && selectedFlows.some((root) => articleOwner.contains(root))) {
+            const bodyWrapper = articleOwner.contains(parent) && /(?:^|\s)widget[-_]+(?:body|content)(?:$|\s)/.test(parentClass) && !panelLabel.test(parentClass.replace(/(?:^|\s)widget[-_]+(?:body|content)(?=$|\s)/g, " ")) && selectedFlows.some((root) => root !== parent && parent.contains(root));
+            const articleWrapper = parent.childElementCount === 1 && parent.firstElementChild === articleOwner && (articleOwner.querySelector("h1") || selectedFlows.some((root) => root.querySelectorAll("p").length >= 4 && root.textContent.trim().length >= 450));
+            if (bodyWrapper || articleWrapper) return false;
+          }
+          const wrapsSelectedFlow = layoutRoles.includes(excluded2) && !hasExactRole(parent, excluded2) && !panelLabel.test(parentClass + " " + parentId) && !parent.matches('aside,header,form,[role~="complementary"],[role~="banner"],[inert]') && selectedFlows.some((root) => root !== parent && parent.contains(root));
           return !wrapsSelectedFlow;
         })) return true;
-        const clearAdIndicators = [/\bad\b/, /\badvertisement\b/, /\bsponsor\b/];
-        const isClearAd = clearAdIndicators.some(
-          (indicator) => indicator.test(parentClass) || indicator.test(parentId)
-        );
+        const isClearAd = strongAdRole(parent);
         if (isClearAd || parentTag === "aside" && parent !== illustrationAside && !isReadingOwned(parent, readingRoots) && !isArticleContentFigure(win, element)) {
           return true;
         }
@@ -5106,16 +5245,18 @@ var clipaibleArticleExtractor = (() => {
     }
     return false;
   }
-  function shouldSkipStronglyExcluded(element) {
+  function shouldSkipStronglyExcluded(element, readingRoots = []) {
     const className = semanticClassNames(element);
     const id = (element.id || "").toLowerCase();
-    const strongPatterns = [/\bad\b/, /\bads\b/, /\bsponsor\b/];
-    for (const pattern of strongPatterns) {
-      if (pattern.test(className) || pattern.test(id)) {
-        return true;
-      }
-    }
-    return false;
+    const labels = [id, ...className.split(/\s+/)];
+    const adLabel = /(?:^|[-_])(?:ads|advertisement|sponsor|sponsored|(?:paid|partner|promo)[-_]ad)(?:$|[-_])|^ad(?:$|[-_])/;
+    if (labels.some((label) => adLabel.test(label))) return true;
+    if (!labels.some((label) => /\bad\b/.test(label))) return false;
+    const boundary = 'aside,form,button,nav,[role~="complementary"],[role~="navigation"],[hidden],[inert]';
+    if (element.closest(boundary)) return true;
+    const paragraphs = (node) => Array.from(node.querySelectorAll("p")).filter((paragraph) => !paragraph.closest(boundary) && (paragraph.textContent || "").trim().length >= 60);
+    const prose = paragraphs(element);
+    return prose.length < 2 || !readingRoots.some((root) => root === element || root.contains(element) && paragraphs(root).filter((paragraph) => !element.contains(paragraph)).length <= 1);
   }
 
   // scripts/extraction/extractor/inline-content.js
@@ -5456,7 +5597,7 @@ var clipaibleArticleExtractor = (() => {
     for (const attr of ["data-full-src", "data-high-res", "data-original-src", "data-srcset", "data-src", "data-lazy-src", "data-original", "data-lazy"]) {
       const value = imgElement.getAttribute(attr);
       const candidate = attr === "data-srcset" ? getBestSrcsetUrl(value, imgElement) : value;
-      if (candidate && !isPlaceholderUrl(candidate, imgElement)) return candidate;
+      if (candidate && !/^(?:true|false|null|undefined)$/i.test(candidate.trim()) && !isPlaceholderUrl(candidate, imgElement)) return candidate;
     }
     if (imgElement.currentSrc && !isPlaceholderUrl(imgElement.currentSrc, imgElement)) {
       src = imgElement.currentSrc;
@@ -5485,29 +5626,6 @@ var clipaibleArticleExtractor = (() => {
               break;
             }
           }
-        }
-      }
-    }
-    if (!src) {
-      const dataAttrs = [
-        "data-src",
-        "data-lazy-src",
-        "data-original",
-        "data-lazy",
-        "data-full-src",
-        "data-high-res",
-        "data-srcset",
-        "data-original-src"
-      ];
-      for (const attr of dataAttrs) {
-        const val = imgElement.getAttribute(attr);
-        if (val && !val.includes("data:") && !isPlaceholderUrl(val, imgElement)) {
-          if (attr === "data-srcset") {
-            src = getBestSrcsetUrl(val, imgElement);
-          } else {
-            src = val;
-          }
-          if (src) break;
         }
       }
     }
@@ -5644,7 +5762,7 @@ var clipaibleArticleExtractor = (() => {
     return false;
   }
   function getImageCaption(img, captionOwners = null, excludedElements = [], selectedIllustration = null) {
-    const captionText = (element) => serializeReadingHtml(element, excludedElements);
+    const captionText = (element) => serializeReadingHtml(element, excludedElements).replace(/<!--[\s\S]*?-->/g, "").trim();
     const excluded2 = (element) => excludedElements.some((rule) => {
       try {
         return typeof rule === "string" ? !!element.closest(rule) : rule.contains(element);
@@ -5701,8 +5819,28 @@ var clipaibleArticleExtractor = (() => {
         }
       }
     }
+    const preview = findImagePreviewLink(img);
+    const declaredCaption = preview && findImagePreviewCaption(preview);
+    if (declaredCaption) {
+      const label = (element) => (element?.textContent || "").trim().replace(/\s+/g, " ");
+      const originalTitle = label(declaredCaption);
+      let caption = readable(declaredCaption) ? declaredCaption : null;
+      for (let owner = preview.parentElement; !caption && owner?.querySelectorAll("img").length === 1; owner = owner.parentElement) {
+        const mirror = owner.nextElementSibling;
+        if (mirror && label(mirror) === originalTitle && readable(mirror)) caption = mirror;
+      }
+      if (caption) {
+        const text = captionText(caption);
+        if (text) {
+          captionOwners?.add(caption);
+          return text;
+        }
+      }
+    }
     if (!figure && selectedIllustration && selectedIllustration !== img) {
-      const captions = Array.from(selectedIllustration.children).filter((node) => node.matches("figcaption,p,h2,h3,h4,h5,h6") && compareDomOrder(img, node) < 0 && readable(node));
+      const galleryCard = readGalleryCard(img, selectedIllustration.parentElement) === selectedIllustration;
+      const nodes = galleryCard ? selectedIllustration.querySelectorAll("h2,h3,h4,h5,h6,p") : selectedIllustration.children;
+      const captions = Array.from(nodes).filter((node) => node.matches("figcaption,p,h2,h3,h4,h5,h6") && compareDomOrder(img, node) < 0 && readable(node));
       const parts = captions.map((node) => {
         const html = captionText(node);
         if (html) captionOwners?.add(node);
@@ -5736,6 +5874,142 @@ var clipaibleArticleExtractor = (() => {
     }
     return null;
   }
+  function readGalleryCard(image, section) {
+    for (let card = image.parentElement; card && card !== section; card = card.parentElement) {
+      if (card.querySelectorAll("img").length !== 1) break;
+      if (card.querySelector('form,button,[role~="button"],article,[role~="article"]')) return null;
+      if (!card.querySelector("h2,h3,h4,h5,h6") || !card.querySelector("p")) continue;
+      const links = Array.from(card.querySelectorAll("a[href]")).filter((link) => !link.closest("p,figcaption"));
+      if (links.length !== 1) continue;
+      const destination = imageAssetDestination(links[0]);
+      if (destination && isImageRendition(image, destination)) return card;
+    }
+    return null;
+  }
+  function isDecorativeInlineGraphic(element) {
+    if (!element.matches("svg") || element.matches('[role~="img"],[role~="graphics-document"],[aria-label],[aria-labelledby]') || element.querySelector("title,desc,text,image,foreignObject")) return false;
+    const wrapper = element.parentElement;
+    const link = element.closest("a[href]");
+    const ornament = wrapper?.matches("p") && wrapper.childElementCount === 1 && !wrapper.textContent?.trim() && element.getAttribute("aria-hidden") === "true";
+    if ((link?.textContent?.trim() || ornament) && !element.closest("figure")) {
+      const rect = element.getBoundingClientRect();
+      const width = rect.width || Number(element.getAttribute("width"));
+      const height = rect.height || Number(element.getAttribute("height"));
+      if (width > 0 && height > 0 && width <= 24 && height <= 24) return true;
+    }
+    if (wrapper?.matches("span") && wrapper.childElementCount === 1 && !wrapper.textContent?.trim() && Array.from(wrapper.classList).some((name) => /(?:^|[-_])icon(?:$|[-_])/i.test(name)) && wrapper.parentElement?.textContent?.trim()) {
+      const rect = element.getBoundingClientRect();
+      const width = rect.width || Number(element.getAttribute("width"));
+      const height = rect.height || Number(element.getAttribute("height"));
+      if (width > 0 && height > 0 && width <= 48 && height <= 48) return true;
+    }
+    if (!element.querySelector("use") || element.querySelector("path,rect,circle,ellipse,line,polygon,polyline")) return false;
+    const label = element.closest('h1,h2,h3,h4,h5,h6,a[href],button,[role~="heading"],[role~="button"]');
+    return !!label?.textContent?.trim();
+  }
+  var READING_SCOPE = 'article,[role~="article"],main,[role~="main"]';
+  function createDeferredFigureImageRecovery(win, deadline) {
+    const doc = win.document;
+    let publicSource;
+    return async (elements) => {
+      const recovered = /* @__PURE__ */ new Map();
+      const figures = elements.filter((element) => {
+        if (!element.matches('figure[aria-hidden="true"]') || element.children.length || element.textContent?.trim() || element.closest(INTERFACE_REGIONS + ",aside,form,[inert],[hidden]") || !element.closest(READING_SCOPE)) return false;
+        const bounds = element.getBoundingClientRect();
+        return bounds.width >= 160 && bounds.height >= 90;
+      });
+      if (!figures.length || typeof win.fetch !== "function") return recovered;
+      publicSource ||= readPublicPageSource(win, deadline);
+      const source = await publicSource;
+      if (!source) return recovered;
+      const sourceScopes = Array.from(source.querySelectorAll(READING_SCOPE));
+      for (const figure of figures) {
+        if (!figure.isConnected || figure.children.length || figure.textContent?.trim()) continue;
+        const scope = figure.closest(READING_SCOPE);
+        const matching = sourceScopes.filter((candidate) => sameSourceElement(scope, candidate));
+        if (matching.length !== 1) continue;
+        const fallback = findSourceFigure(figure, scope, matching[0]);
+        if (!fallback || fallback.getAttribute("aria-hidden") === "true") continue;
+        const images = Array.from(fallback.querySelectorAll("img"));
+        if (images.length !== 1 || fallback.querySelector("a[href],video,iframe,canvas,object,form,button")) continue;
+        const image = (
+          /** @type {HTMLImageElement} */
+          images[0]
+        );
+        const src = extractBestImageUrl(image);
+        if (!src || isPlaceholderUrl(src, image)) continue;
+        try {
+          const address = new URL(src, doc.baseURI);
+          if (!/^https?:$/.test(address.protocol) || address.username || address.password) continue;
+          const caption = doc.createElement("span");
+          caption.textContent = fallback.querySelector("figcaption")?.textContent?.trim() || "";
+          recovered.set(figure, { type: "image", src: address.href, alt: image.getAttribute("alt") || "", caption: caption.innerHTML });
+        } catch {
+        }
+      }
+      return recovered;
+    };
+  }
+  async function readPublicPageSource(win, deadline) {
+    const url = new URL(win.location.href);
+    url.hash = "";
+    const remaining = Math.min(3e3, deadline - Date.now());
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || remaining <= 0) return null;
+    const controller = new win.AbortController();
+    const timer = win.setTimeout(() => controller.abort(), remaining);
+    try {
+      const response = await win.fetch(url.href, {
+        mode: "same-origin",
+        credentials: "omit",
+        redirect: "error",
+        referrerPolicy: "no-referrer",
+        headers: { Accept: "text/html" },
+        signal: controller.signal
+      });
+      const mediaType = response.headers.get("content-type") || "";
+      if (!response.ok || response.url !== url.href || !/^text\/html(?:;|$)/i.test(mediaType) || !response.body) return null;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder(/charset=([^;\s]+)/i.exec(mediaType)?.[1] || "utf-8");
+      const parts = [];
+      let totalBytes = 0;
+      for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+        totalBytes += chunk.value.byteLength;
+        if (totalBytes > 2 * 1024 * 1024) return null;
+        parts.push(decoder.decode(chunk.value, { stream: true }));
+      }
+      parts.push(decoder.decode());
+      const source = win.document.createElement("template");
+      source.innerHTML = parts.join("");
+      const title = source.content.querySelector("title")?.textContent?.trim();
+      return title && title === win.document.title.trim() ? source.content : null;
+    } catch {
+      return null;
+    } finally {
+      controller.abort();
+      win.clearTimeout(timer);
+    }
+  }
+  function sameSourceElement(live, source) {
+    return live?.localName === source?.localName && live.id === source.id && live.classList.length === source.classList.length && Array.from(live.classList).every((name) => source.classList.contains(name));
+  }
+  function findSourceFigure(live, liveScope, sourceScope) {
+    const path = [];
+    for (let element = live; element !== liveScope; element = element.parentElement) {
+      path.unshift(element);
+    }
+    let source = sourceScope;
+    let contextMatches = false;
+    for (const element of path) {
+      const index = Array.from(element.parentElement.children).indexOf(element);
+      source = source.children[index];
+      if (!source || !sameSourceElement(element, source)) return null;
+      for (const direction of ["previousElementSibling", "nextElementSibling"]) {
+        const nearbyText = element[direction]?.textContent?.trim().replace(/\s+/g, " ");
+        if (nearbyText && nearbyText.length >= 20 && nearbyText === source[direction]?.textContent?.trim().replace(/\s+/g, " ")) contextMatches = true;
+      }
+    }
+    return contextMatches ? source : null;
+  }
   function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
     const mediaSelector = "figure,img,picture,svg,canvas,video,audio,iframe";
     const mediaRoots = /* @__PURE__ */ new Set();
@@ -5746,6 +6020,7 @@ var clipaibleArticleExtractor = (() => {
     const before = (left, right) => left !== right && !left.contains(right) && compareDomOrder(left, right) < 0;
     for (const root of bodyRoots) {
       for (const element of [...root.matches(mediaSelector) ? [root] : [], ...Array.from(root.querySelectorAll(mediaSelector))]) {
+        if (element !== root && isDecorativeInlineGraphic(element)) continue;
         const media = ownerOf(element);
         if (root.contains(media)) mediaRoots.add(media);
       }
@@ -5781,6 +6056,7 @@ var clipaibleArticleExtractor = (() => {
       const ordered = [...roots].sort(compareDomOrder);
       const narrativeStart = roots.flatMap((root) => [...root.matches("p,blockquote,pre,ul,ol,table") ? [root] : [], ...Array.from(root.querySelectorAll("p,blockquote,pre,ul,ol,table"))]).filter((element) => !element.closest("figure,figcaption") && !headerOf(element, owner)).sort(compareDomOrder)[0];
       for (const element of Array.from(owner.querySelectorAll(mediaSelector))) {
+        if (isDecorativeInlineGraphic(element)) continue;
         const media = ownerOf(element);
         if (media.closest('article,[itemprop~="articleBody"]') !== owner) continue;
         const outside = !insideBody(media) && !bodyRoots.some((root) => media.contains(root));
@@ -5789,6 +6065,29 @@ var clipaibleArticleExtractor = (() => {
         const header = headerOf(media, owner);
         if (leading || interleaved || header && insideBody(media)) mediaRoots.add(media);
         if (leading || header && narrativeStart && before(media, narrativeStart)) featuredRoots.add(media);
+      }
+    }
+    const scope = bodyRoots[0]?.closest(READING_SCOPE);
+    const readingBlock = "p,blockquote,pre,ul,ol,table";
+    if (scope && bodyRoots.every((root) => root.closest(READING_SCOPE) === scope) && bodyRoots.some((root) => root.matches(readingBlock) || root.querySelector(readingBlock)) && (isEditorialOwner(scope) || Array.from(scope.querySelectorAll("h1")).some(isDocumentHeadline))) {
+      const gallerySections = /* @__PURE__ */ new Map();
+      for (const image of scope.querySelectorAll("img")) {
+        if (image.closest(READING_SCOPE) !== scope || image.closest(INTERFACE_REGIONS + ',aside,[role~="complementary"],form,[hidden],[inert]')) continue;
+        const selected = insideBody(image);
+        if (!selected && !bodyRoots.every((root) => before(root, image))) continue;
+        const section = image.closest('section,[role~="region"]');
+        if (!section || section === scope || !selected && bodyRoots.some((root) => section.contains(root))) continue;
+        const card = readGalleryCard(image, section);
+        if (!card) continue;
+        if (!gallerySections.has(section)) gallerySections.set(section, []);
+        gallerySections.get(section).push({ image, card });
+      }
+      for (const cards of gallerySections.values()) {
+        if (cards.length < 2) continue;
+        for (const { image, card } of cards) {
+          mediaRoots.add(image);
+          selectedIllustrations.set(image, card);
+        }
       }
     }
     for (const selected of selectedHeroes) {
@@ -5804,6 +6103,7 @@ var clipaibleArticleExtractor = (() => {
         }
       }
       for (const element of elements) {
+        if (element !== selected && isDecorativeInlineGraphic(element)) continue;
         const media = ownerOf(element);
         mediaRoots.add(media);
         if (!insideBody(media) && !bodyRoots.some((root) => media.contains(root))) featuredRoots.add(media);
@@ -5813,7 +6113,7 @@ var clipaibleArticleExtractor = (() => {
   }
   function hasSourceReadingMedia(roots, logoPatterns = []) {
     const selector = "img,svg,canvas,video,audio,iframe";
-    return roots.some((root) => [...root.matches(selector) ? [root] : [], ...Array.from(root.querySelectorAll(selector))].some((element) => element.tagName !== "IMG" || !isTrackingPixel(
+    return roots.some((root) => [...root.matches(selector) ? [root] : [], ...Array.from(root.querySelectorAll(selector))].some((element) => element.tagName !== "IMG" ? !isDecorativeInlineGraphic(element) : !isTrackingPixel(
       element.ownerDocument.defaultView,
       /** @type {HTMLImageElement} */
       element
@@ -6308,7 +6608,8 @@ var clipaibleArticleExtractor = (() => {
     if (!allElements.length) return [];
     const batch = {
       controlLabelIds: readControlLabelIds(win.document),
-      exclusionRules: compileClassExclusions(constants.EXCLUDED_CLASSES)
+      exclusionRules: compileClassExclusions(constants.EXCLUDED_CLASSES),
+      adRoles: /* @__PURE__ */ new WeakMap()
     };
     let excludedImageCount = 0;
     let excludedByType = {};
@@ -6500,7 +6801,7 @@ var clipaibleArticleExtractor = (() => {
         for (const child of Array.from(element.querySelectorAll("*"))) consumed.add(child);
         continue;
       }
-      if (shouldSkipStronglyExcluded(container || element)) {
+      if (shouldSkipStronglyExcluded(container || element, state.referenceRoots)) {
         skippedCount++;
         continue;
       }
@@ -6632,6 +6933,9 @@ var clipaibleArticleExtractor = (() => {
         if (item) {
           const isLeadingCaption = tagName === "figcaption" && element.closest("figure") && state.titleElement && compareDomOrder(element, state.titleElement) < 0;
           content.push(isLeadingCaption ? { ...item, isFeatured: true } : item);
+          if (tagName === "figcaption") {
+            for (const child of element.querySelectorAll("*")) consumed.add(child);
+          }
           incrementContentType(state.debugInfo, "paragraph");
           processedCount++;
         } else {
@@ -6655,6 +6959,8 @@ var clipaibleArticleExtractor = (() => {
         }
         const mixedContent = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6,p,table,pre,code,blockquote,ul,ol,hr,iframe,video,audio")).some((child) => !child.closest('figcaption,button,[role="button"]'));
         if (mixedContent) continue;
+        const captions = Array.from(element.querySelectorAll("figcaption")).filter((caption) => caption.closest("figure") === element && elements.includes(caption));
+        if (captions.length > 1) continue;
         const images = [];
         for (const image of Array.from(element.querySelectorAll("img")).filter((image2) => image2.closest("figure") === element && elements.includes(image2))) {
           const item = createImageItem(win, image, state, constants, baseUrl);
@@ -6666,7 +6972,7 @@ var clipaibleArticleExtractor = (() => {
         if (images.length) {
           const source = Array.from(element.querySelectorAll("img")).find((image) => image.closest("figure") === element && elements.includes(image));
           images[images.length - 1].caption = getImageCaption(source, state.captionOwners, state.selectionExclusions);
-          for (const caption of Array.from(element.querySelectorAll("figcaption")).filter((caption2) => caption2.closest("figure") === element)) {
+          for (const caption of captions.filter((caption2) => state.captionOwners.has(caption2))) {
             consumed.add(caption);
             for (const child of Array.from(caption.querySelectorAll("*"))) consumed.add(child);
           }
@@ -7169,15 +7475,33 @@ var clipaibleArticleExtractor = (() => {
   function selectorValues(value) {
     return (Array.isArray(value) ? value : [value]).filter((item) => typeof item === "string" && item.trim());
   }
+  function matchableSelector(doc, selector) {
+    let syntaxError;
+    try {
+      if (doc.querySelector(selector)) return selector;
+    } catch (error) {
+      if (error?.name !== "SyntaxError") throw error;
+      syntaxError = error;
+    }
+    const corrected = selector.replace(
+      /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|\.([\w-]+(?::[\w-]+)+)/g,
+      (token, name) => name && doc.getElementsByClassName(name).length ? `[class~="${name}"]` : token
+    );
+    if (corrected !== selector && doc.querySelector(corrected)) return corrected;
+    if (syntaxError) throw syntaxError;
+    return selector;
+  }
   function resolveContentSelection(doc, selectors) {
+    const normalized = { ...selectors };
     try {
       for (const name of ["articleContainer", "content", "title", "subtitle", "heroImage", "toc", "exclude"]) {
-        for (const selector of selectorValues(selectors[name])) doc.querySelector(selector);
+        normalized[name] = selectorValues(selectors[name]).map((selector) => matchableSelector(doc, selector));
       }
     } catch (error) {
       if (error?.name === "SyntaxError") return { matched: false, containers: [], roots: [], elements: [], exclusions: [], tocRoots: [] };
       throw error;
     }
+    selectors = normalized;
     const containers = selectorValues(selectors.articleContainer).flatMap((selector) => Array.from(doc.querySelectorAll(selector)));
     if (selectorValues(selectors.articleContainer).length && !containers.length) {
       return { matched: false, containers: [], roots: [], elements: [], exclusions: [], tocRoots: [] };
@@ -7205,7 +7529,7 @@ var clipaibleArticleExtractor = (() => {
       for (const node of Array.from(root.querySelectorAll(CANDIDATE_SELECTOR))) elements.add(node);
     }
     const tocRoots = selectorValues(selectors.toc).flatMap((selector) => containers.flatMap((container) => [...container.querySelectorAll(selector)])).filter((node) => !isSelectedContentExcluded(node, exclusions));
-    return { matched: roots.size > 0, containers: [...new Set(containers)], roots: rootsList, elements: [...elements], exclusions, tocRoots };
+    return { matched: roots.size > 0, containers: [...new Set(containers)], roots: rootsList, elements: [...elements], exclusions, tocRoots, selectors };
   }
   function isSelectedContentExcluded(element, exclusions) {
     return exclusions.some((node) => {
@@ -7304,6 +7628,7 @@ var clipaibleArticleExtractor = (() => {
       let selectedTitleElement = null;
       const metadata = extractMetadata(doc, baseUrl, titleElement);
       const selection = selectors ? resolveContentSelection(doc, selectors) : null;
+      if (selection?.selectors) selectors = selection.selectors;
       const editorialScopes = selection?.containers.filter(isEditorialOwner) || [];
       const editorialScope = editorialScopes.length === 1 ? editorialScopes[0] : null;
       let selectorRecovered = false;
@@ -7326,6 +7651,7 @@ var clipaibleArticleExtractor = (() => {
       pushDebugLog(debugInfo, "METADATA_EXTRACTED", metadata);
       const socialRoot = selectors ? null : findSocialReadingRoot(baseUrl, doc);
       const primaryRoot = (selectorRecovered ? editorialScope : selection?.roots[0]) || socialRoot || findMainContent(win, doc, (el) => isExcluded(win, el, constants, isSemanticReadingScope(el) ? [el] : []));
+      const recoverDeferredFigureImages = createDeferredFigureImageRecovery(win, extractionDeadline);
       const extractReadingRoots = async (bodyRoots) => {
         const mainContent = bodyRoots[0];
         const bodyTitle = readLeadingDeclaredTitle(mainContent, titleElement, mainTitleText, selection?.exclusions);
@@ -7373,6 +7699,7 @@ var clipaibleArticleExtractor = (() => {
           candidates: sortedElements.length
         });
         state.readingGraphics = await captureReadingGraphics(win, sortedElements, state, constants);
+        for (const [figure, image] of await recoverDeferredFigureImages(sortedElements)) state.readingGraphics.set(figure, image);
         const content2 = parseElements(win, sortedElements, state, constants, baseUrl);
         const hasReadingContent2 = content2.some((item) => !["heading", "separator"].includes(item.type));
         if (hasReadingContent2 && !selection && !content2.some((item) => item.type === "image") && !hasSourceReadingMedia(readingRoots, constants.LOGO_PATTERNS)) {

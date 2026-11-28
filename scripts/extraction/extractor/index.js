@@ -7,7 +7,7 @@ import { waitForContentLoad } from './spa.js';
 import { detectGoogleTranslateState, checkFirstParagraph } from './translate.js';
 import { extractMetadata, findArticleTitleElement } from './metadata.js';
 import { findMainContent } from './discover.js';
-import { discoverReadingMedia, extractMetadataImage, hasSourceReadingMedia } from './images.js';
+import { createDeferredFigureImageRecovery, discoverReadingMedia, extractMetadataImage, hasSourceReadingMedia } from './images.js';
 import { isSourceExcluded, readArticleMetadataText, readSourceFragmentIds } from './dom-utils.js';
 import { extractStandfirst } from './standfirst.js';
 import { collectCandidateElements, collectExplicitFlowRoots, filterCandidateElements, sortElementsInDomOrder, parseElements } from './parse.js';
@@ -87,6 +87,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     let selectedTitleElement = null;
     const metadata = extractMetadata(doc, baseUrl, titleElement);
     const selection = selectors ? resolveContentSelection(doc, selectors) : null;
+    if (selection?.selectors) selectors = selection.selectors;
     const editorialScopes = selection?.containers.filter(isEditorialOwner) || [];
     const editorialScope = editorialScopes.length === 1 ? editorialScopes[0] : null;
     let selectorRecovered = false;
@@ -113,6 +114,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     const socialRoot = selectors ? null : findSocialReadingRoot(baseUrl, doc);
     const primaryRoot = (selectorRecovered ? editorialScope : selection?.roots[0]) || socialRoot || findMainContent(win, doc, (el) =>
       isExcluded(win, el, constants, isSemanticReadingScope(el) ? [el] : []));
+    const recoverDeferredFigureImages = createDeferredFigureImageRecovery(win, extractionDeadline);
 
     // Discovery changes roots, while every source occurrence uses the same parser.
     const extractReadingRoots = async bodyRoots => {
@@ -165,6 +167,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         bodyRoots: bodyRoots.length, mediaRoots: media.roots.length, candidates: sortedElements.length
       });
       state.readingGraphics = await captureReadingGraphics(win, sortedElements, state, constants);
+      for (const [figure, image] of await recoverDeferredFigureImages(sortedElements)) state.readingGraphics.set(figure, image);
       const content = parseElements(win, sortedElements, state, constants, baseUrl);
       const hasReadingContent = content.some(item => !['heading', 'separator'].includes(item.type));
       if (hasReadingContent && !selection && !content.some(item => item.type === 'image') && !hasSourceReadingMedia(readingRoots, constants.LOGO_PATTERNS)) {

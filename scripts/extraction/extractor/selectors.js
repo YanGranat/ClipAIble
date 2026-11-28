@@ -8,15 +8,33 @@ export function selectorValues(value) {
   return (Array.isArray(value) ? value : [value]).filter(item => typeof item === 'string' && item.trim());
 }
 
+function matchableSelector(doc, selector) {
+  let syntaxError;
+  try {
+    if (doc.querySelector(selector)) return selector;
+  } catch (error) {
+    if (error?.name !== 'SyntaxError') throw error;
+    syntaxError = error;
+  }
+  // An unescaped utility class can look like a pseudo-class in a model response.
+  const corrected = selector.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|\.([\w-]+(?::[\w-]+)+)/g,
+    (token, name) => name && doc.getElementsByClassName(name).length ? `[class~="${name}"]` : token);
+  if (corrected !== selector && doc.querySelector(corrected)) return corrected;
+  if (syntaxError) throw syntaxError;
+  return selector;
+}
+
 export function resolveContentSelection(doc, selectors) {
+  const normalized = { ...selectors };
   try {
     for (const name of ['articleContainer', 'content', 'title', 'subtitle', 'heroImage', 'toc', 'exclude']) {
-      for (const selector of selectorValues(selectors[name])) doc.querySelector(selector);
+      normalized[name] = selectorValues(selectors[name]).map(selector => matchableSelector(doc, selector));
     }
   } catch (error) {
     if (error?.name === 'SyntaxError') return { matched: false, containers: [], roots: [], elements: [], exclusions: [], tocRoots: [] };
     throw error;
   }
+  selectors = normalized;
   const containers = selectorValues(selectors.articleContainer).flatMap(selector => Array.from(doc.querySelectorAll(selector)));
   if (selectorValues(selectors.articleContainer).length && !containers.length) {
     return { matched: false, containers: [], roots: [], elements: [], exclusions: [], tocRoots: [] };
@@ -50,7 +68,7 @@ export function resolveContentSelection(doc, selectors) {
   const tocRoots = selectorValues(selectors.toc)
     .flatMap(selector => containers.flatMap(container => [...container.querySelectorAll(selector)]))
     .filter(node => !isSelectedContentExcluded(node, exclusions));
-  return { matched: roots.size > 0, containers: [...new Set(containers)], roots: rootsList, elements: [...elements], exclusions, tocRoots };
+  return { matched: roots.size > 0, containers: [...new Set(containers)], roots: rootsList, elements: [...elements], exclusions, tocRoots, selectors };
 }
 
 export function isSelectedContentExcluded(element, exclusions) {

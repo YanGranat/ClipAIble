@@ -12,7 +12,35 @@ const LABELLED_CONTROLS = ':is(input,select,button,[role="radiogroup"],[role="li
 
 /** Utility arguments are CSS values, not names for interface regions. */
 export function semanticClassNames(element) {
-  return Array.from(element.classList).filter(name => !name.includes('[')).join(' ').toLowerCase();
+  return Array.from(element.classList).filter(name => !name.includes('[') && !/^(?:group|peer)\//.test(name)).join(' ').toLowerCase();
+}
+
+/** Publisher access labels may remain on prose already visible in the reader. */
+function isVisibleArticleProse(win, element, readingRoots, batch) {
+  if (!element.matches('p.paywall') || !readingRoots.some(root => root.contains(element)) ||
+      !element.closest('article,[itemprop~="articleBody"],[role~="article"]') ||
+      element.closest('aside,form,dialog,[hidden],[inert],[aria-hidden="true"]') ||
+      element.querySelector('button,input,[role~="button"]')) return false;
+  const bounds = element.getBoundingClientRect();
+  if (bounds.width <= 1 || bounds.height <= 1) return false;
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    const style = safeGetComputedStyle(win, parent);
+    if (style?.opacity === '0' || style?.contentVisibility === 'hidden') return false;
+    if (/^(?:hidden|clip)$/.test(style?.overflowY || '')) {
+      const outer = parent.getBoundingClientRect();
+      if (bounds.top < outer.top || bounds.bottom > outer.bottom + 1) return false;
+    }
+  }
+  const hasBarrier = () => Array.from(win.document.querySelectorAll(
+    '[aria-modal="true"],[class*="paywall-modal" i],[data-testid*="paywall" i],[class*="payment-wall" i]'
+  )).some(node => {
+    const rect = node.getBoundingClientRect();
+    const style = safeGetComputedStyle(win, node);
+    return rect.height > 1 && rect.width > 1 && style?.visibility !== 'hidden' && style?.display !== 'none' &&
+      (node.getAttribute('aria-modal') === 'true' || !!node.querySelector('a[href],button,form'));
+  });
+  if (batch && batch.hasReadingBarrier === undefined) batch.hasReadingBarrier = hasBarrier();
+  return !(batch ? batch.hasReadingBarrier : hasBarrier());
 }
 
 /** Index the ARIA labels of controls once for a batch of reading candidates. */
@@ -199,6 +227,7 @@ export function isSubscriptionFormContent(element) {
 const PANEL_HEADING = 'h2,h3,h4,h5,h6';
 const FORM_CONTROL = 'button,input[type="submit"],[role="button"]';
 const SUBSCRIBE_PROMPT = /^(?:subscribe|sign[\s-]*up)\b/i;
+const SUBSCRIBE_PREFACE = /^(?:do you want more (?:stories|articles|posts) like this\?\s*(?:then\s*)?)$/i;
 const NEWSLETTER_INVITATION = /^(?:(?:subscribe|sign[\s-]*up)\s+(?:to|for)|join)\s+(?:(?:our|the)\s+)?(?:\S+\s+){0,2}(?:newsletter|mailing list)\b/i;
 const PANEL_PROMPT = /^(?:subscribe|sign[\s-]*up) (?:to|for) [^.!?:]{1,100}$/i;
 const SUBSCRIPTION_PANEL = /^(?:newsletter|subscription)(?: (?:promotion|sign[\s-]*up|form))?$/i;
@@ -262,11 +291,16 @@ export function findPublisherFormRegions(root) {
     if (paragraph.closest('blockquote,pre,figcaption,form') || linkedTargets.has(paragraph)) continue;
     const actions = Array.from(paragraph.querySelectorAll('a[href]'));
     const firstAction = actions[0]?.textContent.trim() || '';
-    if (!SUBSCRIBE_PROMPT.test(firstAction) || !paragraph.textContent.trim().startsWith(firstAction)) continue;
+    const text = paragraph.textContent.trim().replace(/\s+/g, ' ');
+    const firstIndex = text.indexOf(firstAction);
+    const isPublicationNote = actions.length === 1 && paragraph.closest('aside') &&
+      /\b(?:this (?:story|article)|in your inbox)\b/i.test(text) && /\bnewsletter\b/i.test(text);
+    if (!SUBSCRIBE_PROMPT.test(firstAction) || (firstIndex !== 0 &&
+        !SUBSCRIBE_PREFACE.test(text.slice(0, firstIndex).trim()) && !isPublicationNote)) continue;
     if (!actions.every(action => {
       try {
         const pathname = new URL(action.getAttribute('href'), action.baseURI).pathname;
-        return /(?:^|[/_-])(?:newsletters?|subscribe|subscriptions?|signup|sign-up)(?:$|[/_.-])/i.test(pathname);
+        return /(?:^|[/_-])(?:newsletters?|subscribers?|subscribe|subscriptions?|signup|sign-up)(?:$|[/_.-])/i.test(pathname);
       } catch { return false; }
     })) continue;
     regions.add(paragraph);
@@ -288,6 +322,13 @@ function findPublisherWidgets(root, linkedTargets) {
   const ownsFragment = element => linkedTargets.has(element) ||
     [...linkedTargets].some(target => target && element.contains(target));
   const normalize = text => (text || '').trim().replace(/\s+/g, ' ');
+
+  for (const panel of root.querySelectorAll('[class~="cta-content"],[class~="cta-panel"],[data-component="newsletter-cta"]')) {
+    if (panel.querySelector(PROTECTED_READING) || ownsFragment(panel)) continue;
+    const labels = Array.from(panel.querySelectorAll('a[href],button,[role="button"]'));
+    if (labels.some(action => SUBSCRIBE_PROMPT.test(normalize(action.textContent || action.getAttribute('aria-label')))) &&
+        /\b(?:newsletter|mailing list)\b/i.test(normalize(panel.textContent))) regions.push(panel);
+  }
 
   // Standalone newsletter links can open a signup form on a separate origin.
   for (const link of root.querySelectorAll('a[href]')) {
@@ -448,7 +489,15 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
   const readingOwned = isReadingOwned(element, readingRoots);
   const authoredHeading = readingOwned && /^h[1-6]$/.test(tagName);
   const selectedFlows = readingRoots.filter(root => root.contains(element) && root.querySelector('p,pre,table,blockquote'));
-  const layoutRoles = ['nav', 'navigation', 'menu', 'sidebar', 'related', 'social', 'share'];
+  const articleOwner = element.closest('article,[role~="article"]');
+  const layoutRoles = ['nav', 'navigation', 'menu', 'sidebar', 'related', 'social', 'share', 'header', 'newsletter',
+    'subscribe', 'comment', 'comments'];
+  const panelLabel = /(?:^|[\s_-])(?:widget|banner|rail|box|cta|panel|prompt|promotion|signup)(?:$|[\s_-])/;
+  const strongAdRole = node => {
+    if (!batch) return shouldSkipStronglyExcluded(node, readingRoots);
+    if (!batch.adRoles.has(node)) batch.adRoles.set(node, shouldSkipStronglyExcluded(node, readingRoots));
+    return batch.adRoles.get(node);
+  };
   const hasAuthoredAnchor = node => isReadingOwned(node, readingRoots) &&
     (node.matches('h1,h2,h3,h4,h5,h6') || node.matches('section') &&
       node.querySelector(':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > h5,:scope > h6'));
@@ -573,7 +622,9 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
   }
   
   // Paywall classes
-  if (PAYWALL_CLASSES.some(paywallClass => className.includes(paywallClass) || id.includes(paywallClass))) {
+  const hasPaywallLabel = PAYWALL_CLASSES.some(paywallClass => className.includes(paywallClass) || id.includes(paywallClass));
+  const publicProse = hasPaywallLabel && isVisibleArticleProse(win, element, readingRoots, batch);
+  if (hasPaywallLabel && !publicProse) {
     return true;
   }
   
@@ -617,8 +668,10 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
   // Check excluded classes with word boundaries
   const exclusionRules = batch?.exclusionRules ?? compileClassExclusions(EXCLUDED_CLASSES);
   for (const { name: excluded, word: pattern } of exclusionRules) {
+    if (publicProse && excluded === 'paywall') continue;
     if ((authoredHeading || selectedMedia || selectedInline) && ['header', 'article-section-title'].includes(excluded)) continue;
     if (selectedMedia && excluded === 'overlay') continue;
+    if (excluded === 'ad' && !strongAdRole(element)) continue;
     const exactPanelId = id === excluded && !(authoredHeading && Array.from(element.ownerDocument.querySelectorAll(DOCUMENT_CONTENTS)).some(contents =>
       Array.from(contents.querySelectorAll('a[href*="#"]')).some(link => getDocumentFragmentTarget(link) === element)));
     if ((pattern.test(className) || exactPanelId || (pattern.test(id) && !hasAuthoredAnchor(element)) ||
@@ -648,6 +701,7 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
         if ((authoredHeading || selectedMedia || selectedInline) && ['header', 'article-section-title'].includes(excluded)) return false;
         if (selectedMedia && excluded === 'overlay') return false;
         if (excluded === 'sidebar' && illustrationAside && parent.contains(illustrationAside)) return false;
+        if (excluded === 'ad' && !strongAdRole(parent)) return false;
         if (excluded === 'next' || excluded === 'prev' || excluded === 'previous') {
           return parentClass.split(/\s+/).includes(excluded) || parentId === excluded;
         }
@@ -655,17 +709,29 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
           (role.test(parentId) && !hasAuthoredAnchor(parent));
         if (!matchingRole || isEditorialLayoutLabel(parent, element, excluded) ||
             (excluded === 'sidebar' && isReferencedReadingAside(parent, readingRoots, tocRoots))) return false;
+        if (excluded === 'overlay' && !parent.matches('aside,dialog,[role~="dialog"],[aria-modal="true"],[inert]') &&
+            selectedFlows.some(root => parent.contains(root)) &&
+            Array.from(parent.querySelectorAll('h1,[itemprop~="headline"]')).some(isDocumentHeadline)) return false;
+        // A component's body wrapper can own the entire editorial flow.
+        if (excluded === 'widget' && articleOwner && !parent.matches('aside,[role~="complementary"],form,[inert]') &&
+            selectedFlows.some(root => articleOwner.contains(root))) {
+          const bodyWrapper = articleOwner.contains(parent) &&
+            /(?:^|\s)widget[-_]+(?:body|content)(?:$|\s)/.test(parentClass) &&
+            !panelLabel.test(parentClass.replace(/(?:^|\s)widget[-_]+(?:body|content)(?=$|\s)/g, ' ')) &&
+            selectedFlows.some(root => root !== parent && parent.contains(root));
+          const articleWrapper = parent.childElementCount === 1 && parent.firstElementChild === articleOwner &&
+            (articleOwner.querySelector('h1') || selectedFlows.some(root =>
+              root.querySelectorAll('p').length >= 4 && root.textContent.trim().length >= 450));
+          if (bodyWrapper || articleWrapper) return false;
+        }
         const wrapsSelectedFlow = layoutRoles.includes(excluded) && !hasExactRole(parent, excluded) &&
-          !parent.matches('aside,[role~="complementary"],header,[role~="banner"]') &&
+          !panelLabel.test(parentClass + ' ' + parentId) &&
+          !parent.matches('aside,header,form,[role~="complementary"],[role~="banner"],[inert]') &&
           selectedFlows.some(root => root !== parent && parent.contains(root));
         return !wrapsSelectedFlow;
       })) return true;
       
-      // Clear ad indicators
-      const clearAdIndicators = [/\bad\b/, /\badvertisement\b/, /\bsponsor\b/];
-      const isClearAd = clearAdIndicators.some(indicator => 
-        indicator.test(parentClass) || indicator.test(parentId)
-      );
+      const isClearAd = strongAdRole(parent);
       
       if (isClearAd || (parentTag === 'aside' && parent !== illustrationAside && !isReadingOwned(parent, readingRoots) && !isArticleContentFigure(win, element))) {
         return true;
@@ -682,20 +748,22 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
  * Check if element should be strongly excluded (always skip)
  * Used for ad/sponsor patterns with word boundaries
  * @param {Element} element - Element to check
+ * @param {Element[]} readingRoots - Roots selected for the current publication
  * @returns {boolean} - True if element should be strongly excluded
  */
-export function shouldSkipStronglyExcluded(element) {
+export function shouldSkipStronglyExcluded(element, readingRoots = []) {
   const className = semanticClassNames(element);
   const id = (element.id || '').toLowerCase();
-  
-  // Strong exclusion patterns (word boundaries to avoid "lead-article-image")
-  const strongPatterns = [/\bad\b/, /\bads\b/, /\bsponsor\b/];
-  
-  for (const pattern of strongPatterns) {
-    if (pattern.test(className) || pattern.test(id)) {
-      return true;
-    }
-  }
-  
-  return false;
+  const labels = [id, ...className.split(/\s+/)];
+  const adLabel = /(?:^|[-_])(?:ads|advertisement|sponsor|sponsored|(?:paid|partner|promo)[-_]ad)(?:$|[-_])|^ad(?:$|[-_])/;
+  if (labels.some(label => adLabel.test(label))) return true;
+  if (!labels.some(label => /\bad\b/.test(label))) return false;
+  const boundary = 'aside,form,button,nav,[role~="complementary"],[role~="navigation"],[hidden],[inert]';
+  if (element.closest(boundary)) return true;
+  // A compound label on an identified prose wrapper can name the page layout.
+  const paragraphs = node => Array.from(node.querySelectorAll('p')).filter(paragraph =>
+    !paragraph.closest(boundary) && (paragraph.textContent || '').trim().length >= 60);
+  const prose = paragraphs(element);
+  return prose.length < 2 || !readingRoots.some(root => root === element ||
+    root.contains(element) && paragraphs(root).filter(paragraph => !element.contains(paragraph)).length <= 1);
 }

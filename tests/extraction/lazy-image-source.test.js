@@ -3,6 +3,15 @@ import { JSDOM } from 'jsdom';
 import { execFileSync } from 'node:child_process';
 import { handleImg } from '../../scripts/extraction/extractor/parse.js';
 import { extractBestImageUrl } from '../../scripts/extraction/extractor/images.js';
+
+it.each(['true', 'FALSE', 'undefined', 'null'])('ignores the lazy state marker %s and keeps the rendered image source', marker => {
+  const dom = new JSDOM(`<img data-lazy="${marker}" src="/images/diagram.webp" alt="Sample diagram">`, { url: 'https://example.test/report' });
+  try {
+    expect(extractBestImageUrl(dom.window.document.querySelector('img'))).toBe('https://example.test/images/diagram.webp');
+  } finally {
+    dom.window.close();
+  }
+});
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 
 const placeholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';

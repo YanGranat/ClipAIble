@@ -249,7 +249,14 @@ export function richMarkdown(value, sourceUrl = '') {
     if (node.name === 'sup' || node.name === 'sub') return `<${node.name}>${inner}</${node.name}>`;
     if (node.name === 'a') {
       const href = node.attrs.find(attr => attr.name === 'href');
-      return href ? `[${inner}](${decodeEntities(href.value).replace(/\(/g, '%28').replace(/\)/g, '%29')})` : inner;
+      if (!href || !inner.trim()) return inner;
+      const leadingBreak = /^[ \t]*\n/.test(inner);
+      const trailingBreak = /\n[ \t]*$/.test(inner);
+      let label = inner.replace(/[ \t]*\n(?:[ \t]*\n)*[ \t]*/g, ' ');
+      if (leadingBreak) label = label.trimStart();
+      if (trailingBreak) label = label.trimEnd();
+      const destination = decodeEntities(href.value).replace(/\(/g, '%28').replace(/\)/g, '%29');
+      return `${leadingBreak ? ' ' : ''}[${label}](${destination})${trailingBreak ? ' ' : ''}`;
     }
     if (node.name === 'br') return '\n';
     if (node.name === 'hr') return '\n\n---\n\n';

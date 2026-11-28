@@ -45,6 +45,55 @@ export function isEditorialOwner(element) {
     other !== element && ownHeadings(other).some(heading => normalizedLabel(heading.textContent)));
 }
 
+/** Resolve a direct image destination without treating a linked page as an image. */
+export function imageAssetDestination(link) {
+  try {
+    const url = new URL(link.getAttribute('href'), link.ownerDocument.baseURI);
+    return /^https?:$/.test(url.protocol) && !url.username && !url.password &&
+      /\.(?:avif|gif|jpe?g|png|svg|tiff?|webp)$/i.test(url.pathname) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Match the original image name and names with a rendition suffix. */
+export function isImageRendition(image, destination) {
+  const fileStem = url => url.pathname.split('/').pop().replace(/\.[^.]+$/, '');
+  const destinationStem = fileStem(destination);
+  for (const attribute of ['src', 'data-src', 'data-full-src', 'data-original']) {
+    const source = image.getAttribute(attribute);
+    if (!source) continue;
+    try {
+      const url = new URL(source, image.ownerDocument.baseURI);
+      if (url.origin !== destination.origin) continue;
+      const stem = fileStem(url);
+      if (stem === destinationStem || stem.startsWith(destinationStem + '_') || stem.startsWith(destinationStem + '-')) return true;
+    } catch { }
+  }
+  return false;
+}
+
+/** A link containing just a preview can open a larger rendition of that same image. */
+export function findImagePreviewLink(image) {
+  if (!image.matches('img')) return null;
+  const link = image.closest('a[href]');
+  if (!link || link.textContent?.trim() || link.querySelectorAll('img').length !== 1) return null;
+  const destination = imageAssetDestination(link);
+  if (destination && isImageRendition(image, destination)) return link;
+  return null;
+}
+
+/** A preview's visible title can be followed by its local credit or caption. */
+export function findImagePreviewCaption(link) {
+  const next = link.nextElementSibling;
+  const title = normalizedLabel(link.getAttribute('title'));
+  if (!next?.matches('div,p,figcaption') || next.querySelector('img,form,button,figure,iframe')) return null;
+  const text = normalizedLabel(next.textContent);
+  const labels = [next.id, ...next.classList];
+  const caption = next.matches('figcaption') || labels.some(label => /(?:^|[-_])caption(?:$|[-_])/i.test(label));
+  return text && (caption || title && text.startsWith(title)) ? next : null;
+}
+
 /** Compound layout labels can enclose the editorial owner without owning a panel. */
 export function isEditorialLayoutLabel(region, source, role) {
   if (role === 'header' && region.matches('table') && !region.closest(INTERFACE_REGIONS + ',header') &&
@@ -59,6 +108,13 @@ export function isEditorialLayoutLabel(region, source, role) {
     const labels = [region.id, ...region.classList].filter(name => /(?:^|[-_])lightbox(?:$|[-_])/i.test(name));
     if (figure && labels.length && labels.every(name => /^(?:lightbox[-_](?:image|photo|trigger)|(?:image|photo)[-_]lightbox)$/i.test(name)) &&
         (region.getAttribute('alt')?.trim() || figure.querySelector('figcaption')?.textContent?.trim())) return true;
+  }
+  if ((role === 'popup' || role === 'lightbox') && !region.closest(INTERFACE_REGIONS + ',[hidden],[inert],form')) {
+    const preview = findImagePreviewLink(source);
+    const caption = preview && findImagePreviewCaption(preview);
+    if (preview && (region === source || region === preview || region.contains(preview) &&
+        region.querySelectorAll('img').length === 1 && !region.querySelector('button,input,form,[role~="button"]') &&
+        (caption && region.contains(caption) || !!preview.closest('figure')))) return true;
   }
   if (role === 'comment' || role === 'comments') {
     // A comment capability on the reading layout is distinct from a discussion panel.

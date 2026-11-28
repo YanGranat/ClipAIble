@@ -35,6 +35,11 @@ describe('Markdown fragment targets', () => {
     expect(output).toContain('Second');
   });
 
+  it('keeps adjacent references separate and folds internal line breaks into a single link label', () => {
+    const output = htmlToMarkdown('<a href="/charts">Field<br>charts<br></a><a href="/methods">Survey methods</a><a href="/extension"><br></a><a id="sources"></a>', 'https://example.org/article');
+    expect(output).toBe('[Field charts](https://example.org/charts) [Survey methods](https://example.org/methods)\n<a id="sources"></a>');
+  });
+
   it('escapes identity values and keeps event attributes and executable URLs inactive', () => {
     const output = htmlToMarkdown('<span id="memo&quot; onfocus=&quot;run()">Text</span><a href="javascript:run()">Bad</a>');
     const doc = documentFor(output);

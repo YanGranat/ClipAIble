@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { extractAutomaticallyInlined } from '../../scripts/extraction/automatic.js';
+import { cloneReadingContent } from '../../scripts/extraction/extractor/dom-utils.js';
 
 const inlineSource = extractAutomaticallyInlined.toString();
 const documents = [];
@@ -21,6 +22,23 @@ function contentMarkup(result) {
 }
 
 describe('selector page extraction', () => {
+  it('removes a clipped copy-excluded link hint and keeps visible and referenced text', () => {
+    const style = 'position:absolute;clip-path:inset(50%);width:1px;height:1px';
+    const dom = new JSDOM(`<p><a href="/data" target="_blank">Survey data
+      <span class="dont-copy" style="${style}">(opens separately)</span>
+      <span class="dont-copy">interim results</span><span class="dont-copy" id="note" style="${style}">Archive note</span>
+      </a></p>`);
+    documents.push(dom);
+    const text = dom.window.document.querySelector('p');
+    for (const hint of text.querySelectorAll('[style]')) hint.getBoundingClientRect = () => ({width: 1, height: 1});
+    const copy = cloneReadingContent(text);
+    expect(copy.querySelector('a').getAttribute('href')).toBe('/data');
+    expect(copy.textContent).toContain('Survey data');
+    expect(copy.textContent).toContain('interim results');
+    expect(copy.textContent).toContain('Archive note');
+    expect(copy.textContent).not.toContain('opens separately');
+  });
+
   it.each([false, true])('preserves the image inside a captioned figure control with table=%s', async table => {
     const figure = '<figure><button><img src="/specimen.png" width="600" height="400" alt="Sample profile">Open larger image</button>' +
       '<figcaption>Measured profile.</figcaption><button><img src="/close.png">Close</button></figure>';
@@ -102,6 +120,17 @@ describe('selector page extraction', () => {
     expect(result.selectorMatched).toBe(false);
     expect(result.error).toBeUndefined();
     expect(result.content).toEqual([]);
+  });
+
+  it('escapes a literal colon in an existing class before applying the selection', async () => {
+    const result = await extract('<main><article><h1 class="md:headline">Field observations</h1>' +
+      '<p>The field team recorded the first observation.</p><div class="print:hidden"><p>Auxiliary controls go here.</p></div>' +
+      '<p>The last measurement confirmed the result.</p></article></main>', undefined,
+    {content: 'article', title: 'h1.md:headline', exclude: ['article > div.print:hidden']});
+    expect(result.title).toBe('Field observations');
+    expect(result.content.map(item => item.text)).toEqual([
+      'The field team recorded the first observation.', 'The last measurement confirmed the result.'
+    ]);
   });
 
   it.each([
@@ -191,6 +220,101 @@ describe('selector page extraction', () => {
     expect(contentMarkup(result)).toContain('The publication retains its commentary policy.');
     expect(contentMarkup(result)).toContain('Each option controls compiler behavior.');
     expect(contentMarkup(result)).not.toMatch(/A visitor message|A separate recommendation|Navigation controls/);
+  });
+
+  it.each([
+    ['<div id="publication-header">', '<div class="body-copy">'],
+    ['<div class="subscribe-frame">', '<div class="body-copy">'],
+    ['<div class="article-comments-layout">', '<div class="body-copy">'],
+    ['<div class="group/header-controls">', '<div class="body-copy">'],
+    ['<div>', '<div class="body-copy report-ad" id="report-ad">']
+  ])('keeps selected prose within a shared reading layout (%s, %s)', async (layout, body) => {
+    const first = 'The field team recorded the first independent measurement before dawn and checked it against the reference.';
+    const last = 'A second observer repeated the measurement that evening and documented the difference in recorded temperature.';
+    const html = `<!doctype html><title>Field observations</title><main><h1>Field observations</h1>${layout}${body}
+      <p>${first}</p><div data-component="ad"><p>Sponsored message within the report.</p></div>
+      <div class="ad-rail"><p>Unrelated advertising panel.</p></div>
+      <div class="newsletter"><p>Unrelated newsletter promotion.</p></div>
+      <p>${last}</p></div></div></main>`;
+    const result = await extract(html, undefined, { content: '.body-copy' });
+    expect(result.content.map(item => item.text)).toEqual([first, last]);
+  });
+
+  it.each(['newsletter-widget', 'subscribe-banner', 'partner-ad'])('rejects an independent %s that also matches a positive selector', async panel => {
+    const first = 'The field team recorded the first independent measurement before dawn and checked it against the reference.';
+    const last = 'A second observer repeated the measurement that evening and documented the difference in recorded temperature.';
+    const html = `<!doctype html><title>Field observations</title><main><h1>Field observations</h1>
+      <div class="body-copy"><p>${first}</p><p>${last}</p></div>
+      <div class="${panel}"><div class="body-copy"><p>Take advantage of this exclusive opportunity to support the ongoing volunteer activities of this organization.</p>
+      <p>Every new member receives a gift and early access to discounts available throughout the coming calendar year.</p></div></div></main>`;
+    const result = await extract(html, undefined, { content: `.body-copy,.${panel}` });
+    expect(result.content.map(item => item.text)).toEqual([first, last]);
+  });
+
+  it('retains prose when a selected wrapper contains both a standfirst and the body', async () => {
+    const lead = 'The field report was prepared by independent observers who used the same reference instrument.';
+    const first = 'The field team recorded the first independent measurement before dawn and checked it against the reference.';
+    const last = 'A second observer repeated the measurement that evening and documented the difference in recorded temperature.';
+    const result = await extract(`<main><h1>Field observations</h1><section class="report">
+      <p>${lead}</p><div class="report-ad"><p>${first}</p><p>${last}</p></div></section></main>`, undefined, { content: '.report' });
+    expect(result.content.map(item => item.text)).toEqual([lead, first, last]);
+  });
+
+  it('preserves an article body built as a widget component and rejects a sibling widget', async () => {
+    const first = 'The field report records the first sample after the spring thaw.';
+    const last = 'A second observation confirms the direction of the temperature change.';
+    const result = await extract(`<main><div class="widget"><article><h1>Field observations</h1>
+      <div class="widget__body"><section class="editorial"><p>${first}</p><p>${last}</p></section></div>
+      <div class="widget"><section class="editorial"><p>Check the forecast in the weather widget.</p></section></div>
+      </article></div></main>`, undefined, {content: '.editorial'});
+    expect(result.content.map(item => item.text)).toEqual([first, last]);
+  });
+
+  it('keeps a full publication rendered in an overlay layout and excludes a dialog in the publication', async () => {
+    const first = 'The first reported observation was measured shortly before sunrise.';
+    const last = 'The report concludes with an independent observation from a second site.';
+    const result = await extract(`<!doctype html><title>Field observations | Journal</title><main>
+      <div class="article-overlay"><div class="content-overlay-wrapper">
+      <h1>Field observations</h1><div class="editorial"><p>${first}</p>
+      <div class="article-overlay" role="dialog"><p>A menu for the overlay.</p></div><p>${last}</p>
+      </div></div></div></main>`, undefined, {content: '.editorial'});
+    expect(result.content.map(item => item.text)).toEqual([first, last]);
+  });
+
+  it('keeps each image and caption of a composite figure in source order', async () => {
+    const result = await extract('<main><article><h1>Survey</h1><p>See the paired images below.</p><figure>' +
+      '<div><img src="/first.png" width="800" height="500"><figcaption><p>First documented observation.</p></figcaption></div>' +
+      '<div><img src="/last.png" width="800" height="500"><figcaption><p>Last documented observation.</p></figcaption></div>' +
+      '</figure><p>The survey was completed before winter.</p></article></main>', undefined, {content: 'article'});
+    const items = result.content.map(item => item.src || JSDOM.fragment(item.text).textContent);
+    expect(items).toEqual([
+      'See the paired images below.', 'https://example.com/first.png', 'First documented observation.',
+      'https://example.com/last.png', 'Last documented observation.', 'The survey was completed before winter.'
+    ]);
+  });
+
+  it('keeps a visible authored paragraph with an access label while honoring a real reading barrier', async () => {
+    const article = '<main><article><h1>Field observations</h1><p>Public introduction.</p>' +
+      '<section class="report"><p class="paywall">A second observation was visible in the report.</p></section></article></main>';
+    const normal = await extract(article, undefined, {content: 'article'});
+    expect(contentMarkup(normal)).toContain('A second observation');
+    const gated = await extract(article + '<div class="paywall-modal"><button>Subscribe to continue</button></div>', undefined, {content: 'article'});
+    expect(contentMarkup(gated)).toContain('Public introduction');
+    expect(contentMarkup(gated)).not.toContain('A second observation');
+  });
+
+  it('omits publisher signup invitations without removing adjacent authored notes', async () => {
+    const html = '<main><article><h1>Field observations</h1><p>The instrument recorded a steady temperature.</p>' +
+      '<div class="cta-content"><p>Join thousands of newsletter subscribers</p><button>Sign up</button></div>' +
+      '<p><strong>Do you want more stories like this? Then <a href="/subscriber/new">subscribe</a> to our updates.</strong></p>' +
+      '<aside><p>This story appeared first in our newsletter. <a href="/newsletters/digest">Sign up here</a>.</p>' +
+      '<p>Independent measurements are described in the source note.</p></aside>' +
+      '<p>The team used a <a href="/newsletters/archive">newsletter archive</a> as a primary source.</p></article></main>';
+    const result = await extract(html, undefined, {content: 'article'});
+    const content = contentMarkup(result);
+    expect(content).not.toMatch(/Join thousands|want more stories|Sign up here/);
+    expect(content).toContain('Independent measurements');
+    expect(content).toContain('newsletter archive');
   });
 
   it.each(['(opens a new tab)', 'opens in a new window'])('omits marked link announcements while preserving authored and mathematical text: %s', async label => {

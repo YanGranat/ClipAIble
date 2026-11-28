@@ -6,6 +6,7 @@ import { isExternalLinkAdornment, isSourceExcluded } from './dom-utils.js';
 import { isCollapsedImageLayer, isPlaceholderUrl } from './images.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const GRAPHIC_SURFACE = 'svg:not(svg svg),canvas';
 const OMIT = 'figcaption,script,style,template,noscript,source,button,input,select,textarea,nav,footer,iframe,video,audio,object,embed,[role="button"],[role="navigation"],[contenteditable="true"]';
 const DEFINITIONS = 'defs,marker,pattern,linearGradient,radialGradient,clipPath,mask,symbol,title,desc';
 const FAILURE_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII=';
@@ -88,7 +89,9 @@ function isCaptionSvgGlyph(graphic, figure) {
 /** Identify a graphic by its reading scope and semantic ownership. */
 export function getGraphicReadingOwner(element, roots) {
   if (!element || !roots?.some(root => root === element || root.contains(element))) return null;
-  const graphic = element.closest('svg,canvas');
+  // A nested SVG uses the coordinate system of the outer SVG, not a separate media surface.
+  const graphic = element.closest(GRAPHIC_SURFACE);
+  if (graphic && !roots.some(root => root === graphic || root.contains(graphic))) return null;
   const pre = graphic?.parentElement;
   const replacesCodeBlock = pre?.tagName === 'PRE' && Array.from(pre.childNodes).every(node =>
     node === graphic || node.nodeType === 8 || node.nodeType === 3 && !node.textContent?.trim());
@@ -96,14 +99,14 @@ export function getGraphicReadingOwner(element, roots) {
   const figure = element.closest('figure');
   if ((!figure && !graphic) || isDecorativeLinkGraphic(graphic) || controls(element) || hidden(element, true)) return null;
   if (figure && roots.some(root => root === figure || root.contains(figure))) {
-    const graphics = Array.from(figure.querySelectorAll('svg,canvas')).filter(node => node.closest('figure') === figure &&
+    const graphics = Array.from(figure.querySelectorAll(GRAPHIC_SURFACE)).filter(node => node.closest('figure') === figure &&
       !isCaptionSvgGlyph(node, figure) && !isDecorativeLinkGraphic(node) && !controls(node) && !hidden(node, true));
     const layered = hasLayeredImages(figure);
     if (graphics.length || layered) {
       const mixed = !!figure.querySelector('figure') || Array.from(figure.querySelectorAll('p,table,img,blockquote,pre,ul,ol')).some(node =>
         !(layered && node.tagName === 'IMG') && !isRenderedPlaceholder(node) && !node.closest('figcaption,svg,[role="img"]') && !controls(node) && !hidden(node));
       if (!mixed) return figure;
-      return element.closest('svg,canvas');
+      return graphic;
     }
   }
   if (!graphic || /(?:^|[\s_-])icon(?:$|[\s_-])/i.test(graphic.getAttribute('class') || '')) return null;
@@ -352,7 +355,12 @@ export async function captureReadingGraphics(win, elements, state, constants) {
           const style = win.getComputedStyle(original);
           if (copy.style) {
             const declarations = [];
+            // The raster uses resolved properties and has no dependency on page variables.
+            for (const property of Array.from(copy.style)) {
+              if (property.startsWith('--')) copy.style.removeProperty(property);
+            }
             for (const property of Array.from(style)) {
+              if (property.startsWith('--')) continue;
               const value = style.getPropertyValue(property).replace(/url\((['"]?)(.*?)\1\)/g, (match, quote, url) => {
                 const local = localReference(url, doc); return local ? `url("${local}")` : match;
               });
@@ -376,7 +384,8 @@ export async function captureReadingGraphics(win, elements, state, constants) {
               if (!pseudoStyle.content || ['none', 'normal'].includes(pseudoStyle.content) || pseudoStyle.display === 'none') continue;
               const token = `reading-graphic-${index}-${pseudo.slice(2)}`;
               copy.classList.add(token);
-              const declarations = Array.from(pseudoStyle).map(property => `${property}:${pseudoStyle.getPropertyValue(property)}!important;`).join('');
+              const declarations = Array.from(pseudoStyle).filter(property => !property.startsWith('--'))
+                .map(property => `${property}:${pseudoStyle.getPropertyValue(property)}!important;`).join('');
               pseudoReferences.push(...[...declarations.matchAll(/url\(['"]?(#[^)'"\s]+)['"]?\)/g)].map(match => match[1]));
               pseudoRules.push(`.${token}${pseudo}{${declarations}}`);
             }
