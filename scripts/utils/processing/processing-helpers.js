@@ -478,7 +478,8 @@ export async function prepareQuickSaveProcessingData(outputFormat, pageData) {
     pageData.tabId,
     pageData.html,
     pageData.url,
-    pageData.title
+    pageData.title,
+    pageData.sourceContentType
   );
   return { ...processingData, sourceContentType: pageData.sourceContentType };
 }

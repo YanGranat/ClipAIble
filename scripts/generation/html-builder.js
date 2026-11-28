@@ -1,6 +1,5 @@
 import { buildTocStructure, renderTocAsHtml } from './toc-builder.js';
 import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, prepareDocumentContent, localDocumentName } from './document-content.js';
-import { PDF_PAGE_MARGIN_MM } from './pdf-layout.js';
 // @ts-check
 // HTML builder for PDF generation
 
@@ -550,11 +549,10 @@ function countWords(content, title, language) {
 /**
  * Apply custom styles to CSS
  * @param {string} styles - Base CSS styles
- * @param {string} pageMode - 'single' or 'multi'
  * @param {{fontFamily?: string, fontSize?: string, bgColor?: string, textColor?: string, headingColor?: string, linkColor?: string}} customColors - Custom color settings
  * @returns {string} Modified CSS
  */
-export function applyCustomStyles(styles, pageMode, customColors) {
+export function applyCustomStyles(styles, customColors) {
   const { fontFamily, fontSize, bgColor, textColor, headingColor, linkColor } = customColors;
   if (![bgColor, textColor, headingColor, linkColor].every(isDocumentColor)) {
     throw new Error('Invalid document color. Use a six-digit hexadecimal color.');
@@ -563,11 +561,6 @@ export function applyCustomStyles(styles, pageMode, customColors) {
     throw new Error('Unsupported document font family.');
   }
   
-  if (pageMode === 'multi') {
-    const margin = `${PDF_PAGE_MARGIN_MM}mm`;
-    styles += `\n@media print { @page { margin: ${margin} ${margin} 0 ${margin}; } body { padding: 0 !important; } }`;
-  }
-
   // Parse font size
   const oldToNew = { 'small': 24, 'medium': 31, 'large': 38, 'xlarge': 45 };
   const baseFontSize = oldToNew[fontSize] || parseInt(fontSize) || 31;

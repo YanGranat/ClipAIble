@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { PDF_MAX_SINGLE_PAGE_INCHES, preparePdfLayout } from '../../scripts/generation/pdf-layout.js';
 import { buildHtmlForPdf } from '../../scripts/generation/html-builder.js';
@@ -60,14 +60,29 @@ describe('Final PDF print layout', () => {
     expect(await prepare()).toMatchObject({ contentHeight: 438, pageMode: 'single' });
   });
 
-  it('moves padding to A4 page margins before printing content beyond the compatible single-page height', async () => {
+  it('scales both dimensions and keeps one page when content exceeds the compatible height', async () => {
     const { doc, prepare } = page('<p>Opening observation.</p><p id="end">Closing observation.</p>');
     const article = doc.querySelector('article');
-    Object.defineProperty(article, 'scrollHeight', { value: PDF_MAX_SINGLE_PAGE_INCHES * 96 });
-    expect(await prepare()).toMatchObject({ pageMode: 'multi' });
-    expect(doc.documentElement.style.getPropertyValue('--pdf-layout-width')).toBe('calc(8.27in - 10mm)');
-    expect([...doc.querySelectorAll('style')].at(-1).textContent).toContain('@page { margin: 5mm 5mm 0; }');
+    Object.defineProperty(article, 'scrollHeight', { value: PDF_MAX_SINGLE_PAGE_INCHES * 96 * 2 });
+    const layout = await prepare();
+    expect(layout).toMatchObject({ pageMode: 'single', contentHeight: expect.any(Number) });
+    expect(layout.contentHeight).toBeLessThanOrEqual(PDF_MAX_SINGLE_PAGE_INCHES * 96);
+    expect(layout.paperWidth).toBeCloseTo(8.27 / 2, 1);
+    expect(layout.printScale).toBeCloseTo(0.5, 1);
+    expect(doc.documentElement.dataset.pdfPageMode).toBe('single');
     expect(doc.getElementById('end').textContent).toBe('Closing observation.');
+  });
+
+  it('keeps one page when the required scale is below the browser print parameter minimum', async () => {
+    const { doc, prepare } = page('<p>Opening observation.</p><p>Closing observation.</p>');
+    Object.defineProperty(doc.querySelector('article'), 'scrollHeight', { value: PDF_MAX_SINGLE_PAGE_INCHES * 96 * 20 });
+    const setStyle = vi.spyOn(doc.documentElement.style, 'setProperty');
+    const layout = await prepare();
+    expect(layout.pageMode).toBe('single');
+    expect(layout.contentHeight).toBeLessThanOrEqual(PDF_MAX_SINGLE_PAGE_INCHES * 96);
+    expect(layout.printScale).toBe(0.1);
+    const zoom = setStyle.mock.calls.find(([name]) => name === 'zoom')?.[1];
+    expect(Number(zoom)).toBeCloseTo(0.5, 1);
   });
 
   it('allows long quotations to start on the current page while keeping short quotations together', async () => {

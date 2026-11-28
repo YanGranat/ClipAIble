@@ -1,9 +1,11 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { downloadBlob } from '../../scripts/api/blob-download.js';
+import { getPdfMetadata } from '../../scripts/api/pdf-offscreen.js';
 import { generatePdfWithDebugger } from '../../scripts/generation/pdf.js';
 import { isCancelled } from '../../scripts/state/processing.js';
 
 vi.mock('../../scripts/api/blob-download.js', () => ({ downloadBlob: vi.fn() }));
+vi.mock('../../scripts/api/pdf-offscreen.js', () => ({ getPdfMetadata: vi.fn() }));
 vi.mock('../../scripts/state/processing.js', async load => ({ ...(await load()), isCancelled: vi.fn() }));
 
 const runId = 'test-run';
@@ -12,8 +14,9 @@ const pdfBytes = '%PDF-1.7\n%%EOF\n';
 beforeEach(() => {
   vi.clearAllMocks();
   isCancelled.mockReturnValue(false);
+  getPdfMetadata.mockResolvedValue({ numPages: 1 });
   chrome.debugger.sendCommand.mockImplementation(async (_, method) => {
-    if (method === 'Runtime.evaluate') return { result: { value: { contentHeight: 1200 } } };
+    if (method === 'Runtime.evaluate') return { result: { value: { contentHeight: 1200, paperWidth: 8.27 } } };
     if (method === 'Page.printToPDF') return { data: btoa(pdfBytes) };
     return {};
   });
@@ -47,9 +50,9 @@ it('reports an interrupted save as an error instead of completing the run', asyn
   expect(setError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Download interrupted' }));
 });
 
-it('uses A4 when the prepared single-page document exceeds the PDF page limit', async () => {
+it('prints a tall single page with the proportional dimensions prepared in the print tab', async () => {
   chrome.debugger.sendCommand.mockImplementation(async (_, method) => {
-    if (method === 'Runtime.evaluate') return { result: { value: { contentHeight: 24000, pageMode: 'multi' } } };
+    if (method === 'Runtime.evaluate') return { result: { value: { contentHeight: 19150, paperWidth: 5.5, printScale: 5.5 / 8.27 } } };
     if (method === 'Page.printToPDF') return { data: btoa(pdfBytes) };
     return {};
   });
@@ -57,8 +60,18 @@ it('uses A4 when the prepared single-page document exceeds the PDF page limit', 
   const complete = vi.fn();
   await generatePdfWithDebugger(1, 'Research notes', 'single', complete, vi.fn(), runId);
   expect(chrome.debugger.sendCommand).toHaveBeenCalledWith({ tabId: 1 }, 'Page.printToPDF',
-    expect.objectContaining({ paperWidth: 8.27, paperHeight: 11.69, scale: 1 }));
+    expect.objectContaining({ paperWidth: 5.5, paperHeight: 19150 / 96, scale: 5.5 / 8.27 }));
   expect(complete).toHaveBeenCalledOnce();
+});
+
+it('does not offer a multipage file when a single page was requested', async () => {
+  getPdfMetadata.mockResolvedValueOnce({ numPages: 2 });
+  const complete = vi.fn(), setError = vi.fn();
+  await expect(generatePdfWithDebugger(1, 'Research notes', 'single', complete, setError, runId))
+    .rejects.toMatchObject({ translationKey: 'errorPdfGenerationFailed' });
+  expect(getPdfMetadata).toHaveBeenCalledWith('generated.pdf', expect.any(ArrayBuffer), { processingRunId: runId });
+  expect(downloadBlob).not.toHaveBeenCalled();
+  expect(complete).not.toHaveBeenCalled();
 });
 
 it('does not download or complete a run after Chromium returns no PDF payload', async () => {

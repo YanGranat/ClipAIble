@@ -144,6 +144,7 @@ async function createArchive() {
     for (const filename of ['offscreen-bundle.js', 'tts-worker-bundle.js']) {
       await fs.copyFile(path.join(root, 'dist', filename), path.join(stagingDirectory, 'dist', filename));
     }
+    await copyDirectory(path.join(root, 'dist/ocr'), path.join(stagingDirectory, 'dist/ocr'), 'dist/ocr');
     await fs.copyFile(
       path.join(root, 'dist', 'extraction-automatic-generated.js'),
       path.join(stagingDirectory, 'scripts', 'extraction', 'automatic.js')
@@ -152,6 +153,8 @@ async function createArchive() {
     for (const filename of [
       'manifest.json', 'scripts/background.js', 'popup/popup.html', 'print/print.html',
       'dist/offscreen-bundle.js', 'dist/tts-worker-bundle.js', ...ORT_RUNTIME_FILES.map(filename => 'lib/' + filename),
+      'dist/ocr/worker.min.js', 'dist/ocr/tesseract-core-simd-lstm.wasm.js',
+      'lib/ocr/eng.traineddata.gz', 'lib/ocr/rus.traineddata.gz', 'lib/ocr/ukr.traineddata.gz',
       'lib/piper-wasm/piper_phonemize.data', 'lib/piper-wasm/piper_phonemize.wasm'
     ]) await fs.access(path.join(stagingDirectory, filename));
     await createZip(stagingDirectory, outputPath);

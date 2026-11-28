@@ -538,7 +538,7 @@ th {
   }
 
   html {
-    width: var(--pdf-layout-width, var(--pdf-page-width, 8.27in));
+    width: var(--pdf-page-width, 8.27in);
     min-height: 0;
     background: #303030 !important;
     -webkit-print-color-adjust: exact !important;
@@ -558,6 +558,11 @@ th {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
     color-adjust: exact !important;
+  }
+
+  html[data-pdf-page-mode="multi"] body {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
 
   .article {

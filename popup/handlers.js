@@ -124,28 +124,6 @@ export function initHandlers(deps) {
   }
 
   /**
-   * Helper: Create a change handler that saves setting and optionally updates UI
-   * @param {string} storageKey - Storage key to save
-   * @param {Function} getValue - Function to get value from element
-   * @param {Function} [updateUI] - Optional async function to update UI after save
-   * @returns {Function} Event handler function
-   */
-  function createSettingChangeHandler(storageKey, getValue, updateUI = null) {
-    return () => {
-      const value = getValue();
-      if (updateUI) {
-        debouncedSaveSettings(storageKey, value, () => {
-          deferAsyncWork(async () => {
-            await updateUI();
-          });
-        });
-      } else {
-        debouncedSaveSettings(storageKey, value);
-      }
-    };
-  }
-
-  /**
    * Helper: Create a checkbox change handler that saves setting immediately
    * Uses scheduler.postTask for better performance
    * @param {string} storageKey - Storage key to save
@@ -450,17 +428,17 @@ export function initHandlers(deps) {
 
     // Mode, cache, and stats handlers
     if (elements.modeSelect) {
-      elements.modeSelect.addEventListener('change', () => settingsModule?.updateAbstractVisibility?.());
-      elements.modeSelect.addEventListener('change', createSettingChangeHandler(
-        STORAGE_KEYS.MODE,
-        () => elements.modeSelect.value,
-        async () => {
-          if (settingsModule) {
-            await settingsModule.updateModeHint();
-            settingsModule.updateCacheVisibility();
-          }
-        }
-      ));
+      elements.modeSelect.addEventListener('change', async () => {
+        const { value } = elements.modeSelect;
+        const ocrOption = elements.modeSelect.querySelector('option[value="ocr"]');
+        const changes = value === 'ocr' ? { [STORAGE_KEYS.PDF_OCR]: true } : { [STORAGE_KEYS.MODE]: value };
+        if (value !== 'ocr' && ocrOption && !ocrOption.hidden) changes[STORAGE_KEYS.PDF_OCR] = false;
+        settingsModule?.updateCacheVisibility();
+        void settingsModule?.updateModeHint();
+        void settingsModule?.updateTranslationVisibility();
+        try { await chrome.storage.local.set(changes); }
+        catch (error) { logError('Failed to save extraction mode', error); }
+      });
     }
 
     if (elements.useCache) {

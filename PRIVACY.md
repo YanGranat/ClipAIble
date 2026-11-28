@@ -22,6 +22,8 @@ Custom AI prompts are sent to the provider when the corresponding feature runs.
 
 AI extraction, translation, summaries, and key claims send the required page content and metadata to the selected AI service. Depending on the extraction mode, this can include page HTML, extracted text, or rendered PDF pages. For YouTube exports, the selected AI service can receive the title and description to help select a subtitle track. For YouTube and Vimeo, it receives the subtitles to structure an article.
 
+The OCR extraction mode recognizes PDF text on your device. If you also select cloud translation or narration, the recognized text is sent to the selected service for that step.
+
 With Gemini image translation, the article AI service receives images for text detection. Google Gemini receives images that the detector flags as needing translation. With OpenAI image translation, both detection and editing use OpenAI. With OpenRouter image translation, OpenRouter receives images for text detection and routes flagged images to the selected editor.
 
 Cloud audio generation sends narration text to the selected TTS service. A custom narration preparation prompt also sends text to the selected article AI service. When OpenRouter is selected for synthesis, it routes the request to the selected model provider. Piper and Supertonic narration run locally. The article AI, image translation, and TTS providers can be configured separately.

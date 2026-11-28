@@ -19,6 +19,7 @@ import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, isImageTranslationEnabled, readGemi
 import { requiresTextModel, supportsCustomNarration, supportsDocumentAbstract } from './export-requirements.js';
 import { AUDIO_PREPARATION_PROMPT_KEY, readPromptOverrides } from '../settings/prompt-catalog.js';
 import { OPENROUTER_KEY_SLOTS } from '../utils/storage/openrouter-key-slots.js';
+import { detectPdfPage } from '../utils/pdf.js';
 import { OPENROUTER_SPEECH_SETTINGS_KEY, readOpenRouterSpeechProfiles, normalizeOpenRouterSpeechOptions } from '../api/openrouter-speech-options.js';
 
 /**
@@ -30,7 +31,7 @@ export function getQuickSaveSettingsKeys() {
     'openai_api_key', 'claude_api_key', 'gemini_api_key', 'grok_api_key', 'openrouter_api_key', 'deepseek_api_key',
     OPENROUTER_KEY_SLOTS.image, OPENROUTER_KEY_SLOTS.speech,
     'openai_model', 'api_provider', 'model_by_provider', 'custom_models',
-    'extraction_mode', 'use_selector_cache', 'output_format', 'generate_toc', 'generate_abstract', 'page_mode', 'pdf_language',
+    'extraction_mode', 'pdf_ocr', 'use_selector_cache', 'output_format', 'generate_toc', 'generate_abstract', 'page_mode', 'pdf_language',
     'pdf_style_preset', 'pdf_font_family', 'pdf_font_size', 'pdf_bg_color', 'pdf_text_color',
     'pdf_heading_color', 'pdf_link_color',
     'pdf_custom_bg_color', 'pdf_custom_text_color', 'pdf_custom_heading_color', 'pdf_custom_link_color',
@@ -53,16 +54,18 @@ export function getQuickSaveSettingsKeys() {
  * @param {string} html - HTML content
  * @param {string} url - Page URL
  * @param {string} title - Page title
+ * @param {string} [sourceContentType] - Page MIME type
  * @returns {Promise<import('../types.js').ProcessingData>} Processing data object
  * @throws {Error} If API key is missing or invalid
  */
-export async function prepareQuickSaveData(settings, outputFormat, tabId, html, url, title) {
+export async function prepareQuickSaveData(settings, outputFormat, tabId, html, url, title, sourceContentType) {
   /** @type {Record<string, any>} */
   const settingsObj = settings;
   
   // Determine provider and model
   const { provider, model } = determineProviderAndModel(settingsObj);
-  const mode = settings.extraction_mode || 'automatic';
+  const useOcr = settings.pdf_ocr === true && detectPdfPage(url, url, html, sourceContentType);
+  const mode = useOcr ? 'ocr' : settings.extraction_mode || 'automatic';
   const language = settings.pdf_language || 'auto';
   const audioProvider = String(settingsObj.audio_provider || 'openai');
   const audioPreparationPrompt = supportsCustomNarration(outputFormat, audioProvider) ? readPromptOverrides(settings).audioPreparation ?? null : null;
@@ -80,7 +83,7 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
   }
   
   // Prepare translation settings
-  const translateImages = isImageTranslationEnabled({ translateImages: settings.translate_images,
+  const translateImages = !useOcr && isImageTranslationEnabled({ translateImages: settings.translate_images,
     language: settings.pdf_language, outputFormat });
   const googleApiKey = settings.google_api_key || null;
   const imageTranslationProvider = settings.image_translation_provider ?? DEFAULT_IMAGE_TRANSLATION_PROVIDER;

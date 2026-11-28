@@ -31,7 +31,9 @@ export function initUIVisibility(deps) {
     const langCode = await getUILanguage();
     const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
     
-    if (mode === 'automatic') {
+    if (mode === 'ocr') {
+      elements.modeHint.textContent = tSync('pdfOcrModeHint', langCode);
+    } else if (mode === 'automatic') {
       elements.modeHint.textContent = locale.extractionModeHintAutomatic || UI_LOCALES.en.extractionModeHintAutomatic;
     } else if (mode === 'selector') {
       elements.modeHint.textContent = locale.extractionModeHint || UI_LOCALES.en.extractionModeHint;
@@ -73,7 +75,7 @@ export function initUIVisibility(deps) {
       (mainFormatSelect?.value || outputFormat.value) === format &&
       (imageProviderSelect?.value || DEFAULT_IMAGE_TRANSLATION_PROVIDER) === provider &&
       languageSelect.value === targetLanguage && translateImages.checked === translateImagesEnabled;
-    const shouldShowTranslateImages = supportsImageTranslation(format) && isTranslating;
+    const shouldShowTranslateImages = elements.modeSelect?.value !== 'ocr' && supportsImageTranslation(format) && isTranslating;
     const active = shouldShowTranslateImages && translateImagesEnabled;
     setElementGroupDisplay('translateImagesGroup', shouldShowTranslateImages ? 'block' : 'none');
     setElementGroupDisplay('imageTranslationProviderGroup', active ? 'block' : 'none');

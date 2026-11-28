@@ -72,6 +72,10 @@ Open the original PDF in a Chrome tab and start from the ClipAIble toolbar popup
 
 To check a PDF, select and copy a paragraph in Chrome. If it pastes in the correct order, try Automatic first. If you can select only a page number while the rest of the page behaves like a picture, use an AI mode. For an AI PDF job, the model receives visible page content, including text that is part of an image.
 
+### OCR for scanned PDFs
+
+Open a PDF, then choose **Settings → Extraction Mode → OCR (Tesseract)**. ClipAIble recognizes text on every rendered page using its bundled English, Russian, and Ukrainian models. Recognition runs locally and works offline. The resulting text can be saved in any supported format. Translation and cloud narration use their selected providers when enabled.
+
 ### Local PDFs
 
 For direct access to local file tabs, open `chrome://extensions`, locate ClipAIble, open **Details**, and enable **Allow access to file URLs**. Then open the PDF in Chrome and start the export from its tab.
@@ -98,7 +102,7 @@ ClipAIble can preserve headings, paragraphs, lists, quotations, code, tables, im
 
 ### PDF layout and appearance
 
-Select **PDF** next to **Save**, then open **Settings**. **Page Layout** controls how ClipAIble divides the document. **Single long page** creates a continuous page for on-screen reading. **Multiple pages (A4)** creates conventional pages for printing or browsing by page number. If the document exceeds the single-page height limit, ClipAIble exports it on A4 pages automatically.
+Select **PDF** next to **Save**, then open **Settings**. **Page Layout** controls how ClipAIble divides the document. **Single long page** creates a continuous page for on-screen reading. **Multiple pages (A4)** creates conventional pages for printing or browsing by page number.
 
 **Style Preset** sets the document colors. Choose **Dark (default)**, **Light**, **Sepia**, or **High Contrast**, or use the font, font size, background, text, heading, and link controls for a custom look. The reset button restores the default PDF styles. The theme selector at the top of the popup affects the extension interface. The PDF’s colors come from **Style Preset** and the individual style controls in **Settings**.
 
@@ -308,7 +312,6 @@ When you use OpenRouter for more than one step, save a key for each feature you 
 | A PDF has few selectable characters | Copy a paragraph from the original PDF to check its text layer. Use an AI mode with an image-capable model when the visible page is mostly a scan. |
 | ClipAIble asks for a file while reading a local PDF | Select the same PDF while the popup is open. For direct access in the future, enable **Allow access to file URLs** in the extension’s Chrome details. |
 | A video job cannot find usable subtitles | Open the video on its own page and check for a caption track. Verify the article AI key even when Automatic is selected. |
-| A long PDF was divided into pages | ClipAIble uses A4 if the single page would be too tall. Select **Multiple pages (A4)** when you know you want conventional pages before exporting. |
 | **Translate images** is missing | Choose PDF, EPUB, or FB2 and set a specific target language. The switch and editor settings appear for those outputs. |
 | A cloud audio job asks for a different key | Pick **Audio**, reopen **Settings**, and verify the key for the selected **TTS Provider**. The OpenRouter speech key is in the audio section. The Gemini TTS key is separate from the image key. |
 | A local voice needs a download | Use a network connection for the first download and ensure there is space for the selected model. **Offline model** shows the Supertonic download status. |

@@ -240,7 +240,9 @@ export function initUI(deps) {
             
             if (elements.modeHint) {
               const mode = elements.modeSelect?.value || 'selector';
-              if (mode === 'automatic') {
+              if (mode === 'ocr') {
+                elements.modeHint.textContent = locale.pdfOcrModeHint || UI_LOCALES.en.pdfOcrModeHint;
+              } else if (mode === 'automatic') {
                 elements.modeHint.textContent = locale.extractionModeHintAutomatic || UI_LOCALES.en.extractionModeHintAutomatic;
               } else if (mode === 'selector') {
                 elements.modeHint.textContent = locale.extractionModeHint || UI_LOCALES.en.extractionModeHint;

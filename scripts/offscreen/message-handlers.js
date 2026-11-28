@@ -6,6 +6,7 @@
 import { log, logError, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { extractPdfContent } from './pdf/extract.js';
+import { recognizePdfPages } from './pdf/ocr.js';
 import { loadPdfDocument } from './pdf/core/pdf-loader.js';
 import { createPdfError, pdfFailurePayload } from '../utils/pdf-errors.js';
 import { startPdfRender, cancelPdfRender } from './pdf/render-operations.js';
@@ -248,7 +249,7 @@ export function handlePing(messageId, sendResponse) {
 /**
  * Handle EXTRACT_PDF message
  * @param {string} messageId - Message ID for logging
- * @param {{pdfUrl: string, operationId?: string, processingRunId?: string, pdfDataRef?: string, preserveImagePages?: boolean, preserveOriginalFigures?: boolean, preserveOriginalEquations?: boolean}} data - Owned extraction request
+ * @param {{pdfUrl: string, operationId?: string, processingRunId?: string, pdfDataRef?: string, ocr?: boolean, preserveImagePages?: boolean, preserveOriginalFigures?: boolean, preserveOriginalEquations?: boolean}} data - Owned extraction request
  * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
  * @returns {Promise<void>}
  * @throws {Error} If PDF extraction fails
@@ -311,9 +312,11 @@ export async function handleExtractPdf(messageId, data, sendResponse) {
       if (!(pdfData instanceof ArrayBuffer)) throw createPdfError('PDF data is unavailable', 'errorPdfDataUnavailable');
     }
     operation.check();
-    const result = await extractPdfContent(data.pdfUrl, pdfData, { signal: operation.signal, checkCancelled: operation.check,
-      preserveImagePage, preserveFigure, preserveEquations,
-      onProgress: (current, total) => reportPdfProgress(data, current, total) });
+    const onProgress = (current, total) => reportPdfProgress(data, current, total);
+    const result = data.ocr === true
+      ? await recognizePdfPages(data.pdfUrl, pdfData, operation, onProgress)
+      : await extractPdfContent(data.pdfUrl, pdfData, { signal: operation.signal, checkCancelled: operation.check,
+          preserveImagePage, preserveFigure, preserveEquations, onProgress });
     operation.check();
     const { metrics: _metrics, ...documentResult } = result;
     payload = { success: true, result: documentResult };

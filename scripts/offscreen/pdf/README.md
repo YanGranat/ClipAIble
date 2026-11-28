@@ -6,7 +6,7 @@ This module parses PDF text and layout and renders PDF pages in the extension's 
 
 Service worker callers use `scripts/api/pdf-offscreen.js`:
 
-- `extractPdfViaOffscreen` returns structured content for Automatic extraction.
+- `extractPdfViaOffscreen` returns structured content for Automatic or OCR extraction.
 - `getPdfMetadata` returns the page count and document metadata.
 - `renderAllPdfPages` renders the document once and returns owned page references. `readRenderedPdfPage` consumes a rendered page for the AI pipeline.
 
@@ -23,7 +23,7 @@ Service worker callers use `scripts/api/pdf-offscreen.js`:
 5. Classifies and merges headings, paragraphs, lists, tables, and other content.
 6. Returns the document title, author, publication date, and structured content.
 
-Native extraction uses the PDF text layer. It can preserve visual-only pages as images when the document contains a text layer on other pages. For PDFs without a text layer, use an AI mode with a model that accepts images.
+Automatic uses the PDF text layer. It can preserve visual-only pages as images when the document contains a text layer on other pages. OCR recognizes text in the pixels of every rendered page using the bundled worker and language data. AI modes can also extract scanned pages using models that accept images.
 
 ## Main modules
 

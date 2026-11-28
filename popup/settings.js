@@ -8,6 +8,7 @@ import { OPENROUTER_KEY_STORAGE_FIELDS, OPENROUTER_KEYS_SEPARATED } from '../scr
 import { t, tSync, getUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { log, logError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
+import { isPdfTab } from '../scripts/utils/pdf.js';
 import { resolveStoredModelSelection } from '../scripts/utils/model-catalog.js';
 import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS, readGeminiImageModel } from '../scripts/api/image-translation-catalog.js';
 import { refreshCustomSelectSelection } from './utils/custom-select.js';
@@ -136,6 +137,7 @@ export function initSettings(deps) {
         STORAGE_KEYS.CUSTOM_MODELS,
         STORAGE_KEYS.HIDDEN_MODELS,
         STORAGE_KEYS.MODE,
+        STORAGE_KEYS.PDF_OCR,
         STORAGE_KEYS.USE_CACHE,
         STORAGE_KEYS.ENABLE_CACHE,
         STORAGE_KEYS.ENABLE_STATS,
@@ -322,6 +324,17 @@ export function initSettings(deps) {
       
       if (result[STORAGE_KEYS.MODE]) {
         elements.modeSelect.value = String(result[STORAGE_KEYS.MODE]);
+      }
+      const pdfOcrOption = elements.modeSelect?.querySelector('option[value="ocr"]');
+      if (pdfOcrOption) {
+        let tab;
+        try { [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); }
+        catch { /* Other settings remain available without an active tab. */ }
+        const available = await isPdfTab(tab);
+        pdfOcrOption.hidden = !available;
+        /** @type {HTMLOptionElement} */ (pdfOcrOption).disabled = !available;
+        if (available && result[STORAGE_KEYS.PDF_OCR] === true) elements.modeSelect.value = 'ocr';
+        refreshCustomSelectSelection(elements.modeSelect);
       }
       
       // Default: enabled (true) - cache selectors by default

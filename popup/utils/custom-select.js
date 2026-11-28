@@ -205,6 +205,8 @@ export function enhanceCustomSelect(select, container = select?.closest('.custom
     listbox.toggleAttribute('inert', !isOpen());
     if (!label) trigger.setAttribute('aria-label', select.getAttribute('aria-label') || select.title || select.id);
     all.forEach((item, index) => {
+      const native = select.options?.[index];
+      if (native) item.toggleAttribute('hidden', native.hidden || Boolean(native.closest('optgroup')?.hidden));
       item.id ||= `${select.id}Option${index}`;
       item.setAttribute('role', 'option');
       item.setAttribute('aria-disabled', String(isDisabled(index)));

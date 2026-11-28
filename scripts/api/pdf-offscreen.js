@@ -37,11 +37,12 @@ function sendOffscreenMessage(message, callback, admission) {
  * @throws {Error} If no response from offscreen document
  */
 export async function extractPdfViaOffscreen(pdfUrl, pdfData = null, cancellationOptions) {
-  const preserveImagePages = cancellationOptions?.preserveImagePages === true;
+  const ocr = cancellationOptions?.ocr === true;
+  const preserveImagePages = !ocr && cancellationOptions?.preserveImagePages === true;
   const preserveOriginalFigures = cancellationOptions?.preserveOriginalFigures === true;
   const preserveOriginalEquations = cancellationOptions?.preserveOriginalEquations === true;
   const response = await requestPdfOperation('EXTRACT_PDF', pdfUrl, pdfData,
-    { preserveImagePages, ...(preserveOriginalFigures ? { preserveOriginalFigures } : {}),
+    { ...(ocr ? { ocr } : {}), preserveImagePages, ...(preserveOriginalFigures ? { preserveOriginalFigures } : {}),
       ...(preserveOriginalEquations ? { preserveOriginalEquations } : {}) }, cancellationOptions,
     CONFIG.PROCESSING_INACTIVITY_TIMEOUT_MS, true);
   if (!preserveImagePages) return response.result;

@@ -14,3 +14,12 @@ it.each(['selector', 'extract'])('preserves the explicitly saved %s mode', async
   expect(result.mode).toBe(mode);
   expect(result.apiKey).toBe('synthetic-api-key');
 });
+
+it('applies the OCR preference only to PDF input, including URLs without an extension', async () => {
+  const settings = { pdf_ocr: true, extraction_mode: 'automatic' };
+  const url = 'https://example.org/document';
+  const pdf = await prepareQuickSaveData(settings, 'markdown', 3, '', url, 'Document', 'application/pdf');
+  const web = await prepareQuickSaveData(settings, 'markdown', 3, '', url, 'Article', 'text/html');
+  expect(pdf).toMatchObject({ mode: 'ocr', apiKey: '', translateImages: false });
+  expect(web.mode).toBe('automatic');
+});

@@ -11,6 +11,7 @@ import { buildHtmlForPdf, applyCustomStyles } from './html-builder.js';
 import { putPrintJob, removePrintJob } from '../api/print-storage.js';
 import { downloadBlob } from '../api/blob-download.js';
 import { closeOwnedPrintTab } from '../api/print-lifecycle.js';
+import { getPdfMetadata } from '../api/pdf-offscreen.js';
 import { formatDateForDisplay } from '../utils/config.js';
 import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
@@ -159,7 +160,7 @@ export async function generatePdf(data, updateState) {
     }
     
     // Apply custom styles
-    styles = applyCustomStyles(styles, pageMode, {
+    styles = applyCustomStyles(styles, {
       fontFamily, fontSize, bgColor, textColor, headingColor, linkColor
     });
     log('Applied custom styles');
@@ -363,7 +364,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, completePr
     const a4Height = 11.69;
     
     await chrome.debugger.sendCommand(debuggee, 'Emulation.setEmulatedMedia', { media: 'print' });
-    const layoutResult = /** @type {{result?: {value?: {contentHeight?: number, pageMode?: string}}, exceptionDetails?: unknown}} */ (await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+    const layoutResult = /** @type {{result?: {value?: {contentHeight?: number, paperWidth?: number, printScale?: number}}, exceptionDetails?: unknown}} */ (await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
       expression: `(${preparePdfLayout.toString()})(${paperWidth}, ${JSON.stringify(pageMode)}, ${a4Height}, ${PDF_PAGE_MARGIN_MM}, ${PDF_MAX_SINGLE_PAGE_INCHES})`,
       awaitPromise: true,
       returnByValue: true
@@ -371,20 +372,18 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, completePr
     if (layoutResult.exceptionDetails) throw new Error('Failed to prepare the PDF print layout.');
     const layout = layoutResult.result?.value;
     if (!Number.isFinite(layout?.contentHeight) || layout.contentHeight <= 0) throw new Error('Invalid PDF print dimensions.');
-    let paperHeight;
-    if (pageMode === 'single' && layout.pageMode !== 'multi') {
-      paperHeight = layout.contentHeight / 96;
-      log(`Single page: ${paperWidth}x${paperHeight.toFixed(2)} inches`);
-    } else {
-      paperHeight = a4Height;
-      log(`A4 mode: ${paperWidth}x${paperHeight} inches`);
+    const single = pageMode === 'single';
+    const width = single ? layout.paperWidth : paperWidth;
+    const paperHeight = single ? layout.contentHeight / 96 : a4Height;
+    if (!Number.isFinite(width) || width <= 0 || (single && paperHeight > PDF_MAX_SINGLE_PAGE_INCHES)) {
+      throw Object.assign(new Error('Invalid PDF page dimensions'), { translationKey: 'errorPdfGenerationFailed' });
     }
     
     // Generate PDF
     if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
     log('Generating PDF...');
     const result = await chrome.debugger.sendCommand(debuggee, 'Page.printToPDF', {
-      paperWidth: paperWidth,
+      paperWidth: width,
       paperHeight: paperHeight,
       marginTop: 0,
       marginBottom: 0,
@@ -392,7 +391,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, completePr
       marginRight: 0,
       printBackground: true,
       preferCSSPageSize: false,
-      scale: 1,
+      scale: single ? layout.printScale ?? 1 : 1,
       displayHeaderFooter: false,
       headerTemplate: '',
       footerTemplate: '',
@@ -413,6 +412,12 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, completePr
     if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
 
     const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    if (single) {
+      const { numPages } = await getPdfMetadata('generated.pdf', bytes.buffer, { processingRunId });
+      if (numPages !== 1) {
+        throw Object.assign(new Error('PDF output does not have exactly one page'), { translationKey });
+      }
+    }
     await downloadBlob(new Blob([bytes], { type: 'application/pdf' }), sanitizeFilename(title || 'article') + '.pdf', processingRunId);
 
     if (!isCancelled(processingRunId) && completeProcessing) await completeProcessing();

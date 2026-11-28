@@ -24,11 +24,11 @@ For web articles:
 - **AI Selector** uses cached CSS selectors when available and enabled. Otherwise, it asks the selected AI provider for selectors. ClipAIble extracts the matching content locally.
 - **AI Extract** asks the provider to produce structured content from page HTML, using chunks for large inputs.
 
-For PDFs, Automatic parses the text layer and layout with PDF.js. AI modes render pages with PDF.js and send them to an image-capable AI model. To open a local PDF, ClipAIble tries direct file access if Chrome allows it, then tries to read the PDF from the active tab before requesting the matching file in the popup. See the [PDF module](../scripts/offscreen/pdf/README.md).
+For PDFs, Automatic parses the text layer and layout with PDF.js. OCR renders every page with PDF.js and recognizes text with a bundled Tesseract worker. AI modes render pages with PDF.js and send them to an image-capable AI model. To open a local PDF, ClipAIble tries direct file access if Chrome allows it, then tries to read the PDF from the active tab before requesting the matching file in the popup. See the [PDF module](../scripts/offscreen/pdf/README.md).
 
 YouTube and Vimeo exports use the selected article AI provider to turn available subtitles into an article, regardless of the extraction mode. The output generators create PDF, EPUB, FB2, Markdown, or audio.
 
-The PDF generator measures the rendered document in the print tab. If **Single long page** would exceed the 200-inch PDF page height limit, it exports the document on A4 pages.
+The PDF generator measures the rendered document in the print tab. **Single long page** scales the page proportionally if needed and verifies that the PDF contains one page before download. **Multiple pages (A4)** keeps the page background behind the repeated content spacing.
 
 `scripts/state/processing.js` owns document progress, cancellation, and terminal state. Each document operation has a `processingRunId`; asynchronous updates must still belong to that operation. After a service worker restart, startup restores progress, reconciles interrupted work, and cleans owned temporary resources. Summary and key-claim generation have separate job owners.
 

@@ -114,6 +114,19 @@ async function build() {
         'global': 'window'
       }
     });
+
+    const ocrDir = path.join(outdir, 'ocr');
+    await fs.mkdir(ocrDir, { recursive: true });
+    const ocrFiles = [
+      ['tesseract.js/dist/worker.min.js', 'worker.min.js'],
+      ['tesseract.js/dist/worker.min.js.LICENSE.txt', 'worker.min.js.LICENSE.txt'],
+      ['tesseract.js/LICENSE.md', 'TESSERACT-JS-LICENSE'],
+      ['tesseract.js-core/tesseract-core-simd-lstm.wasm.js', 'tesseract-core-simd-lstm.wasm.js'],
+      ['tesseract.js-core/LICENSE', 'TESSERACT-CORE-LICENSE']
+    ];
+    await Promise.all(ocrFiles.map(([source, target]) =>
+      fs.copyFile(require.resolve(source), path.join(ocrDir, target))
+    ));
     
     console.log('✅ Offscreen bundle created successfully!');
     console.log(`📦 Output: ${outfile}`);

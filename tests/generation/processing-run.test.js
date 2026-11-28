@@ -16,6 +16,7 @@ vi.mock('../../scripts/locales.js', async importOriginal => ({ ...await importOr
 vi.mock('../../scripts/translation/index.js', () => ({ translateMetadata: vi.fn(async text => text) }));
 vi.mock('../../scripts/api/print-storage.js', () => ({ putPrintJob: vi.fn(async () => {}), removePrintJob: vi.fn(async () => {}), prunePrintJobs: vi.fn(async () => 0) }));
 vi.mock('../../scripts/api/blob-download.js', () => ({ downloadBlob: vi.fn(async () => 1) }));
+vi.mock('../../scripts/api/pdf-offscreen.js', () => ({ getPdfMetadata: vi.fn(async () => ({ numPages: 1 })) }));
 vi.mock('../../scripts/api/tts.js', async original => ({ ...await original(), chunksToSpeech: vi.fn(async () => new ArrayBuffer(16)), getAudioExtension: vi.fn(() => 'wav') }));
 
 function deferred() {
@@ -42,7 +43,7 @@ beforeEach(async () => {
   global.chrome.windows = { getCurrent: vi.fn(async () => ({ id: 1 })) };
   global.chrome.tabs.create = vi.fn(async () => ({ id: 12 }));
   global.chrome.tabs.remove = vi.fn(async () => {});
-  global.chrome.debugger = { attach: vi.fn(async () => {}), detach: vi.fn(async () => {}), sendCommand: vi.fn(async () => ({ data: 'JVBERi0xLjQ=', result: { value: { contentHeight: 1000 } } })) };
+  global.chrome.debugger = { attach: vi.fn(async () => {}), detach: vi.fn(async () => {}), sendCommand: vi.fn(async () => ({ data: 'JVBERi0xLjQ=', result: { value: { contentHeight: 1000, paperWidth: 8.27 } } })) };
   global.fetch = vi.fn(async () => ({ ok: true, text: async () => 'body { color: #111; }' }));
   putPrintJob.mockImplementation(async () => {});
   processImagesInBatches.mockImplementation(async () => []);
@@ -140,7 +141,7 @@ describe('document processing ownership', () => {
 
   it('detaches an owned PDF debugger and rejects a stale print result', async () => {
     const pending = deferred();
-    global.chrome.debugger.sendCommand.mockImplementation(async (_target, method) => method === 'Page.printToPDF' ? pending.promise : { result: { value: { contentHeight: 1000 } } });
+    global.chrome.debugger.sendCommand.mockImplementation(async (_target, method) => method === 'Page.printToPDF' ? pending.promise : { result: { value: { contentHeight: 1000, paperWidth: 8.27 } } });
     const oldRun = await beginRun('pdf');
     const complete = vi.fn(), fail = vi.fn();
     const generation = generatePdfWithDebugger(12, 'Sample', 'multi', complete, fail, oldRun);

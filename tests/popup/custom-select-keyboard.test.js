@@ -24,6 +24,19 @@ const key = value => trigger.dispatchEvent(new dom.window.KeyboardEvent('keydown
 async function flush() { await vi.runAllTimersAsync(); }
 
 describe('custom select keyboard behavior', () => {
+  it('reflects native option visibility in the rendered list when it changes', async () => {
+    const native = select.querySelector('[value="p"]');
+    const item = document.querySelector('#choiceOptions [data-value="p"]');
+    native.hidden = true;
+    await flush();
+    expect(item.hidden).toBe(true);
+    expect(item.getAttribute('aria-disabled')).toBe('true');
+    native.hidden = false;
+    await flush();
+    expect(item.hidden).toBe(false);
+    expect(item.getAttribute('aria-disabled')).toBe('false');
+  });
+
   it('keeps a pressed option open until mouse release commits it once', async () => {
     trigger.focus();
     trigger.click();

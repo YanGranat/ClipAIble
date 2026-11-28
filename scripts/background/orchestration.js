@@ -134,6 +134,16 @@ export function initOrchestration(deps) {
     );
   }
   
+  if (data.mode === 'ocr') {
+    const uiLang = await getUILanguageCached();
+    await setError({
+      message: tSync('errorPdfOcrSource', uiLang),
+      code: ERROR_CODES.VALIDATION_ERROR,
+      translationKey: 'errorPdfOcrSource',
+      translationParams: {}
+    }, stopKeepAlive, data.processingRunId);
+    return false;
+  }
   // Check if this is a video page (YouTube/Vimeo)
   const videoInfo = detectVideoPlatform(data.url);
   if (videoInfo) {

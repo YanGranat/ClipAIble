@@ -566,7 +566,7 @@
 /** @typedef {(data: ProcessingData, result: ExtractionResult, stopKeepAlive?: StopKeepAliveFunction) => Promise<DocumentGenerationResult>} ContinueProcessingPipelineFunction */
 
 /**
- * @typedef {('automatic'|'selector'|'extract')} ExtractionMode
+ * @typedef {('automatic'|'selector'|'extract'|'ocr')} ExtractionMode
  */
 
 /**
@@ -743,7 +743,7 @@
  * @property {string} apiKey - API key for AI processing
  * @property {string} provider - AI provider name
  * @property {string} model - Model name
- * @property {string} mode - Extraction mode ('automatic'|'selector'|'extract')
+ * @property {ExtractionMode} mode - Extraction mode
  * @property {boolean} [useCache] - Whether to use selector cache
  * @property {ExportFormat} outputFormat - Output format
  * @property {boolean} [generateToc] - Whether to generate table of contents

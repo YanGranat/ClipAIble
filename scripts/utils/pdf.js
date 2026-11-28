@@ -108,6 +108,26 @@ export function detectPdfPage(url, tabUrl, html, sourceContentType) {
   return null;
 }
 
+/** Detect a top-level PDF, including URLs without a .pdf extension. */
+export async function isPdfTab(tab) {
+  if (!tab?.id || !tab.url) return false;
+  if (detectPdfPage(tab.url, tab.url)) return true;
+  if (!/^https?:\/\//i.test(tab.url)) return false;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => document.contentType === 'application/pdf'
+    });
+    if (results[0]?.result === true) return true;
+  } catch { /* Chrome can isolate the PDF viewer from injected scripts. */ }
+  try {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id });
+    return frames?.some(frame => frame.parentFrameId === 0 && isChromePdfViewer(frame.url)) ?? false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Get original PDF URL from Chrome PDF viewer tab
  * Uses webNavigation API to find the original URL

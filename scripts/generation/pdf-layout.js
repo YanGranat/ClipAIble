@@ -8,9 +8,9 @@ export const PDF_MAX_SINGLE_PAGE_INCHES = 200;
 export async function preparePdfLayout(paperWidthInches, pageMode = 'single', paperHeightInches = 0, pageMarginMm = 5,
   maxSinglePageInches = Infinity) {
   if (!window.matchMedia('print').matches) throw new Error('PDF layout requires print media.');
-  document.documentElement.style.setProperty('--pdf-page-width', `${paperWidthInches}in`);
-  const multiPageWidth = `calc(${paperWidthInches}in - ${2 * pageMarginMm}mm)`;
-  document.documentElement.style.setProperty('--pdf-layout-width', pageMode === 'multi' ? multiPageWidth : `${paperWidthInches}in`);
+  const root = document.documentElement;
+  root.style.setProperty('--pdf-page-width', `${paperWidthInches}in`);
+  root.dataset.pdfPageMode = pageMode;
   if (document.fonts?.ready) await document.fonts.ready;
   const article = document.querySelector('.article') || document.body;
   fitSourceTextColors();
@@ -259,14 +259,6 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
     tableLayouts.push({ mode: 'records', columns: projection.columns, scale: 1 });
   }
 
-  if (pageMode === 'single' && measureHeight() > maxSinglePageInches * 96) {
-    pageMode = 'multi';
-    // Move the original body padding to page margins without reducing the article's line width.
-    const rules = document.createElement('style');
-    rules.textContent = `@media print { @page { margin: ${pageMarginMm}mm ${pageMarginMm}mm 0; } body { padding: 0 !important; } }`;
-    document.head.append(rules);
-    document.documentElement.style.setProperty('--pdf-layout-width', multiPageWidth);
-  }
   if (pageMode === 'multi' && paperHeightInches > pageMarginMm / 25.4) {
     const printableHeight = (paperHeightInches - pageMarginMm / 25.4) * 96;
     for (const block of article.querySelectorAll('.article-content :is(blockquote, pre)')) {
@@ -277,7 +269,23 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
     fitPageEndFigures(printableHeight);
   }
 
-  return { contentWidth: article.getBoundingClientRect().width, contentHeight: measureHeight(), tableLayouts, pageMode };
+  let contentHeight = measureHeight();
+  let sizeScale = 1;
+  if (pageMode === 'single') {
+    const maxHeight = maxSinglePageInches * 96 - 4;
+    if (contentHeight > maxHeight) {
+      // Leave room for line layout and rounding differences in the print engine.
+      sizeScale = maxHeight / contentHeight * 0.99;
+      contentHeight = maxHeight;
+    }
+  }
+  const printScale = Math.max(sizeScale, 0.1);
+  // Chromium rejects print scales below 0.1. Apply any remaining reduction to the document.
+  if (sizeScale < printScale) {
+    root.style.setProperty('zoom', String(sizeScale / printScale));
+  }
+  return { contentWidth: article.getBoundingClientRect().width, contentHeight,
+    tableLayouts, pageMode, paperWidth: paperWidthInches * sizeScale, printScale };
 
   function measureHeight() {
     const bounds = article.getBoundingClientRect();

@@ -7,6 +7,7 @@ import { isProviderModelReady, resolveProviderApiKey, readApiKeyDraft } from '..
 import { isMaskedKey } from '../../scripts/utils/security/encryption.js';
 import { getOpenAiKeyValidationError } from '../utils/api-key-validation.js';
 import { OPENROUTER_KEY_SLOTS } from '../../scripts/utils/storage/openrouter-key-slots.js';
+import { isChromePdfViewer } from '../../scripts/utils/pdf.js';
 
 /** Read only configuration used by the export admission check. */
 export function readExportOptions(elements, getProviderFromModel, getVoiceIdByIndex) {
@@ -18,7 +19,7 @@ export function readExportOptions(elements, getProviderFromModel, getVoiceIdByIn
   const audioProvider = elements.audioProvider?.value || 'openai';
   const imageTranslationProvider = elements.imageTranslationProvider?.value || DEFAULT_IMAGE_TRANSLATION_PROVIDER;
   const geminiImageModel = readGeminiImageModel(elements.geminiImageModel?.value);
-  const translateImages = isImageTranslationEnabled({ translateImages: elements.translateImages?.checked, language, outputFormat });
+  const translateImages = mode !== 'ocr' && isImageTranslationEnabled({ translateImages: elements.translateImages?.checked, language, outputFormat });
   const generateAbstract = supportsDocumentAbstract(mode, outputFormat) && !!elements.generateAbstract?.checked;
   const voice = elements.audioVoice;
   const option = voice?.options[voice.selectedIndex];
@@ -51,7 +52,9 @@ export function readExportOptions(elements, getProviderFromModel, getVoiceIdByIn
 /** @returns {import('../../scripts/types.js').LocalizedMessage|null} */
 export function getExportPageIssue(tab) {
   if (!tab?.id) return { key: 'errorTabNotFound' };
-  if (!tab.url || /^(?:chrome|chrome-extension|edge|about):/.test(tab.url)) return { key: 'pageNotAccessible' };
+  if (!tab.url || (!isChromePdfViewer(tab.url) && /^(?:chrome|chrome-extension|edge|about):/.test(tab.url))) {
+    return { key: 'pageNotAccessible' };
+  }
   return null;
 }
 

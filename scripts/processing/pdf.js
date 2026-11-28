@@ -238,7 +238,8 @@ async function processPdfPage(data, pdfUrl) {
   
   log('📖 Extracting content from PDF');
   // Stage 1: Extract PDF content (5-40%)
-  await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingPdf', 5);
+  const ocr = data.mode === 'ocr';
+  await updateProgress(PROCESSING_STAGES.EXTRACTING, ocr ? 'statusRecognizingPdf' : 'statusExtractingPdf', 5);
   
   let result;
   
@@ -254,12 +255,12 @@ async function processPdfPage(data, pdfUrl) {
     
     const requestOptions = { ...getAIRequestOptions(data), processingRunId: data.processingRunId };
     const pdfData = await getPdfDataWithFallback(pdfUrl.split('#')[0], tabId, requestOptions);
-    const preserveImagePages = !data.extractionOnly && ['pdf', 'epub', 'fb2', 'markdown'].includes(data.outputFormat || 'pdf');
+    const preserveImagePages = !ocr && !data.extractionOnly && ['pdf', 'epub', 'fb2', 'markdown'].includes(data.outputFormat || 'pdf');
     const originalLanguage = !data.language || data.language === 'auto';
     const preserveOriginalFigures = preserveImagePages && (data.outputFormat || 'pdf') === 'pdf' && originalLanguage;
     const preserveOriginalEquations = preserveImagePages && originalLanguage;
     result = await extractPdfContent(pdfUrl, pdfData, {
-      ...requestOptions, preserveImagePages, preserveOriginalFigures, preserveOriginalEquations, onProgress: progressCallback
+      ...requestOptions, ocr, preserveImagePages, preserveOriginalFigures, preserveOriginalEquations, onProgress: progressCallback
     });
     await checkCancellation('PDF extraction');
     

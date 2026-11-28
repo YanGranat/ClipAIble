@@ -429,7 +429,6 @@ describe('generation/html-builder', () => {
     it('should apply custom colors', () => {
       const styles = applyCustomStyles(
         '<style>body { color: black; }</style>',
-        'single',
         {
           bgColor: '#ffffff',
           textColor: '#000000',
@@ -446,12 +445,10 @@ describe('generation/html-builder', () => {
       expect(styles).toContain('#0066cc');
     });
 
-    it('should handle single page mode', () => {
-      // Single page mode doesn't add page-break rules, it keeps existing ones
+    it('keeps page sizing separate from style overrides', () => {
       const baseStyles = '<style>@page { margin: 0; size: 210mm 9999mm; }</style>';
       const styles = applyCustomStyles(
         baseStyles,
-        'single',
         {
           bgColor: '#ffffff',
           textColor: '#000000',
@@ -460,15 +457,13 @@ describe('generation/html-builder', () => {
         }
       );
 
-      // Single page mode keeps the long page size
       expect(styles).toContain('210mm 9999mm');
     });
 
-    it('should handle multi page mode', () => {
+    it('keeps A4 padding inside the painted page', () => {
       const baseStyles = readFileSync(new URL('../../config/pdf-styles.css', import.meta.url), 'utf8');
       const styles = applyCustomStyles(
         baseStyles,
-        'multi',
         {
           bgColor: '#ffffff',
           textColor: '#000000',
@@ -486,9 +481,11 @@ describe('generation/html-builder', () => {
         .flatMap(rule => [...rule.cssRules]);
       const pages = printRules.filter(rule => rule.cssText.startsWith('@page'));
       expect(['marginTop', 'marginRight', 'marginBottom', 'marginLeft'].map(name => pages.at(-1).style[name]))
-        .toEqual(['5mm', '5mm', '0px', '5mm']);
+        .toEqual(['0px', '0px', '0px', '0px']);
       expect(styles).not.toContain('9999mm');
-      expect(printRules.filter(rule => rule.selectorText === 'body' && rule.style.padding).at(-1).style.padding).toBe('0px');
+      const { style: body } = printRules.find(rule => rule.selectorText === 'body' && rule.style.padding);
+      expect([body.paddingTop, body.paddingRight, body.paddingBottom, body.paddingLeft]).toEqual(['5mm', '5mm', '0px', '5mm']);
+      expect(printRules.find(rule => rule.selectorText === 'html[data-pdf-page-mode="multi"] body').style.getPropertyValue('box-decoration-break')).toBe('clone');
       sheet.remove();
       dom.window.close();
     });

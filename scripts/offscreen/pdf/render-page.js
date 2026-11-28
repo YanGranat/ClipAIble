@@ -60,8 +60,8 @@ function cropCanvas(canvas, x, y, width, height) {
   return cropped;
 }
 
-export async function renderPdfPage(page, pageNum, scale, operation, trimBlankMargins = false, selectRegion) {
-  const result = await renderPdfPageImpl(page, pageNum, scale, operation, trimBlankMargins, selectRegion);
+export async function renderPdfPage(page, pageNum, scale, operation, trimBlankMargins = false, selectRegion, mimeType = 'image/jpeg') {
+  const result = await renderPdfPageImpl(page, pageNum, scale, operation, trimBlankMargins, selectRegion, undefined, mimeType);
   return result && 'blob' in result ? result : null;
 }
 
@@ -80,7 +80,7 @@ export async function renderPdfEquationRegions(page, pageNum, operation, equatio
  * @param {(viewport: any, width: number, height: number) => Promise<any>} [selectRegion]
  * @param {Array<{left: number, right: number, top: number, bottom: number}>} [equationRegions] - known regions at page scale 1
  */
-async function renderPdfPageImpl(page, pageNum, scale, operation, trimBlankMargins = false, selectRegion, equationRegions = undefined) {
+async function renderPdfPageImpl(page, pageNum, scale, operation, trimBlankMargins = false, selectRegion, equationRegions = undefined, mimeType = 'image/jpeg') {
   operation.check();
   const { viewport, width, height } = getPdfRenderViewport(page, scale);
   const canvas = document.createElement('canvas');
@@ -136,7 +136,7 @@ async function renderPdfPageImpl(page, pageNum, scale, operation, trimBlankMargi
         canvas.width = canvas.height = 0;
       }
     }
-    return { ...await encodePdfCanvas(cropped || canvas, operation), ...(region ? { region } : {}) };
+    return { ...await encodePdfCanvas(cropped || canvas, operation, mimeType), ...(region ? { region } : {}) };
   } catch (error) {
     try { renderTask?.cancel(); } catch {}
     throw error;

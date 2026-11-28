@@ -255,6 +255,7 @@ export const STORAGE_KEYS = {
 
   // Settings
   MODE: 'extraction_mode',
+  PDF_OCR: 'pdf_ocr',
   USE_CACHE: 'use_selector_cache',
   ENABLE_CACHE: 'enable_selector_caching',
   ENABLE_STATS: 'enable_statistics',
