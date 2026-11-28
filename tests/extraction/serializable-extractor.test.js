@@ -38,6 +38,49 @@ describe('Serializable article runtime', () => {
 
   const report = 'The survey records the route from the valley to the upper ridge. The observers compared the depth of each channel and marked where the ridge begins. They returned the next morning to confirm their measurements and to inspect the reference markers beside the path. The report gives each result alongside the conditions for interpreting it. The accompanying illustrations identify the points at which the instruments were placed. These independent checks preserve enough context for a second group to understand the account.';
 
+  it('keeps a direct figure media reference clickable with a compact label and separate caption', async () => {
+    const url = 'https://media.example/assets/streams/survey.m4v';
+    const result = await extract(`<article><h1>Field report</h1><p>${report}</p>
+      <figure><div>${url}</div><figcaption>A view of the recorded survey.</figcaption></figure>
+      <p>In ordinary prose the reference ${url} is part of the text.</p></article>`);
+    const texts = result.content.map(item => item.text);
+    const media = result.content.find(item => item.text === 'media.example');
+    expect(media?.html).toBe(`<a href="${url}">media.example</a>`);
+    expect(texts).toContain('A view of the recorded survey.');
+    expect(texts.join(' ')).toContain('In ordinary prose the reference');
+    expect(texts).not.toContain(url);
+  });
+
+  it.each([null, { content: 'article' }])('retains article-owned notes and omits adjacent publisher controls in mode %j', async selectors => {
+    const subject = encodeURIComponent('https://example.test/report');
+    const result = await extract(`
+      <article><h1>Field report</h1><section><div>
+        <div><h2>Contents menu</h2><a href="#results">Measured results</a>
+          <a href="https://social.example/intent/post?url=${subject}">Send this page</a>
+          <a href="https://network.example/share?url=${subject}">Share with contacts</a></div>
+        <div class="entry-content"><p>${report}</p><h2 id="results">Measured results</h2>
+          <p>The conclusion refers to <a href="#note">the source note</a>.</p></div>
+        <section id="note"><h2>Source note</h2><p>The cited survey confirms the measurements.</p>
+          <a href="https://social.example/intent/post?url=${subject}">Send this page</a>
+          <a href="https://network.example/share?url=${subject}">Share with contacts</a></section>
+      </div>
+      <div><h2>Browse more topics</h2><div>
+        <a href="/archive/one"><figure><img src="/one.png" alt=""><figcaption>Archive item one</figcaption></figure></a>
+        <a href="/archive/two"><figure><img src="/two.png" alt=""><figcaption>Archive item two</figcaption></figure></a>
+      </div></div>
+      <div><h2>Original survey photos</h2><div>
+        <a href="/survey/north.png"><img src="/north-small.png" alt="North slope" width="640" height="400">North slope</a>
+        <a href="/survey/south.png"><img src="/south-small.png" alt="South slope" width="640" height="400">South slope</a>
+      </div></div>
+      <div><h2>Publication details</h2><p>Latest update</p>
+        <a href="https://social.example/intent/post?url=${subject}">Send this page</a>
+        <a href="https://network.example/share?url=${subject}">Share with contacts</a></div></section></article>`, selectors);
+    const content = JSON.stringify(result.content);
+    expect(content).toMatch(/Measured results.*The conclusion refers.*The cited survey confirms/s);
+    expect(content).toContain('Original survey photos');
+    expect(content).not.toMatch(/Contents menu|Browse more topics|Archive item|Publication details|Latest update/);
+  });
+
   it.each([null, { content: 'article' }])('excludes a recommendation collection while preserving reading order in mode %j', async selectors => {
     const result = await extract(`
       <article><h1>Field report</h1><p>${report}</p><div>

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ClipAIble",
-  "version": "3.3.25",
+  "version": "3.3.26",
   "minimum_chrome_version": "116",
   "description": "Save web articles as PDF, EPUB, FB2, Markdown, or audio with automatic extraction, AI extraction, and translation.",
   "content_security_policy": {

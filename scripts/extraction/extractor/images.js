@@ -734,10 +734,11 @@ export function hasSourceReadingMedia(roots, logoPatterns = []) {
 /**
  * Preserve readable references and static previews for article media embeds.
  * @param {Element} element
+ * @param {string} [fallbackSource] - A standalone media URL in a figure
  * @returns {import('./types.js').ContentItem[]}
  */
-export function getEmbeddedMediaItems(element) {
-  if (!element || !['IFRAME', 'VIDEO', 'AUDIO'].includes(element.tagName)) return [];
+export function getEmbeddedMediaItems(element, fallbackSource = '') {
+  if (!element || (!fallbackSource && !['IFRAME', 'VIDEO', 'AUDIO'].includes(element.tagName))) return [];
   const base = element.ownerDocument.baseURI;
   const safeUrl = value => {
     if (!value || !value.trim()) return null;
@@ -746,8 +747,10 @@ export function getEmbeddedMediaItems(element) {
       return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url : null;
     } catch (_) { return null; }
   };
-  const source = safeUrl(element.getAttribute('src') || element.querySelector('source[src]')?.getAttribute('src'));
+  const source = safeUrl(fallbackSource || element.getAttribute('src') || element.querySelector('source[src]')?.getAttribute('src'));
   if (!source) return [];
+  if (fallbackSource && (!/^https?:\/\/[^\s<>]+$/i.test(fallbackSource) ||
+      !/\.(?:mp4|m4v|webm|mov|ogv|mp3|m4a|aac|wav|ogg|flac)$/i.test(source.pathname))) return [];
   const escape = value => String(value).replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);

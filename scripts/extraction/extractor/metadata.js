@@ -5,6 +5,7 @@
 import { cleanHeadingText } from './text-utils.js';
 import { readArticleMetadataText, safeGetComputedStyle } from './dom-utils.js';
 import { isDocumentHeadline } from './reading-context.js';
+import { decodeEntities } from '../../utils/html/tokenizer.js';
 
 /**
  * Check if h1 looks like a valid article title (not site name)
@@ -235,7 +236,7 @@ export function readStructuredArticleMetadata(doc, baseUrl) {
     const record = resolve(source);
     const articleType = hasType(record, /(?:Article|BlogPosting)$/);
     const pageTitleMatches = [record.headline, record.name].some(name =>
-      typeof name === 'string' && name.replace(/\s+/g, ' ').trim() === title);
+      typeof name === 'string' && [name, decodeEntities(name)].some(text => text.replace(/\s+/g, ' ').trim() === title));
     const currentEditorialPage = !articleType && hasType(record, /WebPage$/) && pageTitleMatches &&
       matchesPage(record.url || record['@id']) && (record.author || record.datePublished);
     if (!articleType && !currentEditorialPage) continue;

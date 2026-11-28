@@ -1,6 +1,6 @@
 // @ts-check
 
-import { getDocumentFragmentTarget, readArticleMetadataText, INTERFACE_REGIONS } from './dom-utils.js';
+import { getDocumentFragmentTarget, readArticleMetadataText, INTERFACE_REGIONS, isPublisherLinkAction } from './dom-utils.js';
 import { RELATED_ARTICLES_PATTERNS } from '../patterns/exclusion-patterns.js';
 
 const DECLARED_BODY = '[itemprop~="articleBody"],.instapaper_body';
@@ -276,6 +276,46 @@ export function findRecommendationRegions(root) {
     if (links && !linkedTargets.has(links) && isLinkCollection(links, linkedPage)) regions.push(label, links);
   }
   return [...new Set(regions)];
+}
+
+/**
+ * Publisher panels can be siblings of a declared article body even inside ARTICLE.
+ * Require evidence from controls or linked cards before excluding a sibling.
+ * @param {Element} root
+ * @returns {Element[]}
+ */
+export function findPublisherAccessoryRegions(root) {
+  if (!root.matches('article,[role~="article"]') || !isEditorialOwner(root)) return [];
+  const bodySelector = DECLARED_BODY + ',.entry-content,.post-content,.article-content,.article-body,.post-body,.wp-block-post-content';
+  const bodies = Array.from(root.querySelectorAll(bodySelector)).filter(body =>
+    body.closest('article,[role~="article"]') === root && !body.parentElement?.closest(bodySelector));
+  if (bodies.length !== 1 || bodies[0].querySelectorAll('p').length < 2) return [];
+  const body = bodies[0];
+  const destinations = Array.from(body.querySelectorAll('a[href*="#"]'), getDocumentFragmentTarget).filter(Boolean);
+  const panels = [];
+  for (let branch = body; branch !== root; branch = branch.parentElement) {
+    for (const region of branch.parentElement.children) {
+      if (region === branch || destinations.some(target => region.contains(target)) ||
+          region.querySelector('h1,article,table,pre,blockquote,math,[role~="doc-toc"],[role~="doc-bibliography"],[role~="doc-endnotes"]')) continue;
+      const links = Array.from(region.querySelectorAll('a[href]'));
+      const hasProse = Array.from(region.querySelectorAll('p')).some(paragraph =>
+        !paragraph.closest('a[href]') && normalizedLabel(paragraph.textContent).length >= 80);
+      if (hasProse) continue;
+      if (!region.querySelector('figure') && links.filter(isPublisherLinkAction).length >= 2) {
+        panels.push(region);
+        continue;
+      }
+      const cards = links.filter(link => link.querySelector('img,picture') && normalizedLabel(link.textContent) &&
+        !imageAssetDestination(link) && !getDocumentFragmentTarget(link) &&
+        /^https?:\/\//i.test(/** @type {HTMLAnchorElement} */ (link).href));
+      if (new Set(cards.map(card => /** @type {HTMLAnchorElement} */ (card).href)).size < 2) continue;
+      const cardGroup = cards[0].parentElement;
+      if (cards.length !== links.length || !cards.every(card => cardGroup.contains(card))) continue;
+      if (!Array.from(region.querySelectorAll(HEADINGS)).some(heading => !cards.some(card => card.contains(heading)))) continue;
+      if (Array.from(region.querySelectorAll('figure,img,picture')).every(image => cards.some(card => card.contains(image)))) panels.push(region);
+    }
+  }
+  return panels;
 }
 
 function isWhitespaceNode(node) {

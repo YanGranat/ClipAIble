@@ -1065,8 +1065,11 @@ export function handleDiv(element, state, constants) {
   const figure = element.closest('figure');
   if (figure && !element.closest('figcaption') && hasFigureBodyText(figure)) {
     const clone = cloneFigureText(element);
-    if (!clone.textContent?.trim()) return null;
+    const text = clone.textContent?.trim();
+    if (!text) return null;
     const original = getOriginalTextIfTranslated(element);
+    const media = !original && !clone.querySelector('a[href]') && getEmbeddedMediaItems(figure, text)[0];
+    if (media) return media;
     const html = original ? encodeOriginalText(element, original) : serializeReadingHtml(clone, state.selectionExclusions, state.referenceRoots, preserveRoot);
     return html ? { type: 'paragraph', text: html, html } : null;
   }

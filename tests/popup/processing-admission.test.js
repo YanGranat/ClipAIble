@@ -68,6 +68,25 @@ it('keeps an admitted operation active until its state is polled', async () => {
   expect(noteAdmission).toHaveBeenCalledExactlyOnceWith(admittedRunId);
 });
 
+it.each([['extract', 'Field survey methods'], ['selector', '1. Introduction']])(
+  'supplies the correct document title for %s when the first heading is a section',
+  async (mode, expectedTitle) => {
+    elements.modeSelect.value = mode;
+    elements.modelSelect.replaceChildren(new Option('Example model', 'example-model'));
+    document.title = 'Field survey methods';
+    const heading = document.createElement('h1');
+    heading.textContent = '1. Introduction';
+    document.body.prepend(heading);
+    chrome.tabs.sendMessage.mockRejectedValue(new Error('No content script'));
+    chrome.scripting.executeScript.mockImplementation(({ func, args }) => [
+      { result: { ...func(...(args || [])), url: page.url } }
+    ]);
+    await processing.handleSavePdf();
+    const request = chrome.runtime.sendMessage.mock.calls.find(([packet]) => packet.action === 'processArticle')?.[0];
+    expect(request?.data).toMatchObject({ mode, title: expectedTitle });
+  }
+);
+
 it('follows worker state without showing a failed start for an existing export', async () => {
   chrome.runtime.sendMessage.mockResolvedValue({
     started: false, success: false, busy: true, activeRunId: admittedRunId,

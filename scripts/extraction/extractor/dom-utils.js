@@ -261,13 +261,53 @@ function readLazyMathPair(source, excluded) {
   return { renderer };
 }
 
-function isClippedAccessibilityText(source, style) {
+function hasZeroAreaClip(style) {
+  if (style.clipPath === 'inset(50%)') return true;
+  const offsets = /^rect\(([^)]+)\)$/u.exec(style.clip || '')?.[1].trim().split(/[,\s]+/u);
+  if (offsets?.length !== 4 || !offsets.every(value => /^-?(?:\d+(?:\.\d+)?|\.\d+)px$/u.test(value))) return false;
+  const [top, right, bottom, left] = offsets.map(Number.parseFloat);
+  return right <= left || bottom <= top;
+}
+
+function isClippedAccessibilityText(source, style, requireZeroArea = false) {
   if (style?.position !== 'absolute' && style?.position !== 'fixed') return false;
-  const clipped = /^rect\(0px,0px,0px,0px\)$/u.test((style.clip || '').replace(/\s/gu, '')) ||
-    style.clipPath === 'inset(50%)' || [style.overflowX, style.overflowY].every(value => /^(?:hidden|clip)$/u.test(value));
+  const clipped = hasZeroAreaClip(style) ||
+    (!requireZeroArea && [style.overflowX, style.overflowY].every(value => /^(?:hidden|clip)$/u.test(value)));
   if (!clipped) return false;
   const { width, height } = source.getBoundingClientRect();
   return width > 0 && width <= 1 && height > 0 && height <= 1;
+}
+
+/** A reciprocal backlink can use a CSS counter instead of its DOM text. */
+function isCounterBacklinkLabel(source, style, win) {
+  if (style?.display !== 'none' || source.children.length || !/^\d+$/u.test(source.textContent?.trim() || '')) return false;
+  const link = source.parentElement;
+  if (!link?.matches('a[href]')) return false;
+  const note = link.closest('li[id],[role="doc-footnote"][id],[role="doc-endnote"][id]');
+  const target = getDocumentFragmentTarget(link);
+  if (!note || !target || note.contains(target)) return false;
+  const references = target.matches('a[href]') ? [target] : Array.from(target.querySelectorAll('a[href]'));
+  if (!references.some(reference => getDocumentFragmentTarget(reference) === note)) return false;
+  const marker = win.getComputedStyle(link, '::before');
+  return marker.display !== 'none' && !['hidden', 'collapse'].includes(marker.visibility) &&
+    /^counter\(/u.test(marker.content);
+}
+
+/** Drop a clipped supplement only when the link still has a visible text label. */
+function isClippedLinkHint(source, style, win) {
+  if (!isClippedAccessibilityText(source, style, true) || source.id || source.children.length) return false;
+  const link = source.parentElement;
+  if (!link?.matches('a[href]')) return false;
+  return Array.from(link.childNodes).some(node => {
+    if (node === source || !node.textContent?.trim()) return false;
+    if (node.nodeType === 3) return true;
+    if (node.nodeType !== 1) return false;
+    const label = /** @type {Element} */ (node);
+    const labelStyle = safeGetComputedStyle(win, label);
+    return isCounterBacklinkLabel(label, labelStyle, win) ||
+      (labelStyle && labelStyle.display !== 'none' && !['hidden', 'collapse'].includes(labelStyle.visibility) &&
+        !isClippedAccessibilityText(label, labelStyle, true));
+  });
 }
 
 function isHiddenMathSource(source, style) {
@@ -296,6 +336,10 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
       isPublisherLinkAction(node) || isSourceExcluded(node, exclusions) || (win && isHiddenSlotAssignment(win, node));
   };
   if (excluded(element)) { clone.replaceChildren(); return clone; }
+  const comments = [];
+  const commentWalker = clone.ownerDocument.createTreeWalker(clone, win?.NodeFilter.SHOW_COMMENT ?? 128);
+  while (commentWalker.nextNode()) comments.push(commentWalker.currentNode);
+  for (const comment of comments) comment.parentNode.removeChild(comment);
   const originals = Array.from(element.querySelectorAll('*'));
   const copies = Array.from(clone.querySelectorAll('*'));
   const rootStyle = disclosed && win ? safeGetComputedStyle(win, element) : null;
@@ -308,7 +352,7 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
     if (excluded(original)) { copy.remove(); continue; }
     const literal = original.closest('pre,code,math,mjx-container,.MathJax,.katex,' + MATHJAX_COMMON_HTML);
     const style = original.ownerDocument.defaultView ? safeGetComputedStyle(original.ownerDocument.defaultView, original) : null;
-    if (!literal && isCopyExcludedLinkHint(original, style)) {
+    if (!literal && (isCopyExcludedLinkHint(original, style) || isClippedLinkHint(original, style, win))) {
       copy.remove();
       continue;
     }
@@ -320,6 +364,11 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
         copy.remove();
         continue;
       }
+    }
+    if (!literal && isCounterBacklinkLabel(original, style, win)) {
+      copy.removeAttribute('style');
+      copy.removeAttribute('hidden');
+      continue;
     }
     if (!literal && (original.matches('script,style,template,noscript,input,select,textarea') || style?.display === 'none' || (!style && original.hasAttribute('hidden')))) {
       copy.remove();

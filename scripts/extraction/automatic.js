@@ -458,12 +458,47 @@ var clipaibleArticleExtractor = (() => {
     }
     return { renderer };
   }
-  function isClippedAccessibilityText(source, style) {
+  function hasZeroAreaClip(style) {
+    if (style.clipPath === "inset(50%)") return true;
+    const offsets = /^rect\(([^)]+)\)$/u.exec(style.clip || "")?.[1].trim().split(/[,\s]+/u);
+    if (offsets?.length !== 4 || !offsets.every((value) => /^-?(?:\d+(?:\.\d+)?|\.\d+)px$/u.test(value))) return false;
+    const [top, right, bottom, left] = offsets.map(Number.parseFloat);
+    return right <= left || bottom <= top;
+  }
+  function isClippedAccessibilityText(source, style, requireZeroArea = false) {
     if (style?.position !== "absolute" && style?.position !== "fixed") return false;
-    const clipped = /^rect\(0px,0px,0px,0px\)$/u.test((style.clip || "").replace(/\s/gu, "")) || style.clipPath === "inset(50%)" || [style.overflowX, style.overflowY].every((value) => /^(?:hidden|clip)$/u.test(value));
+    const clipped = hasZeroAreaClip(style) || !requireZeroArea && [style.overflowX, style.overflowY].every((value) => /^(?:hidden|clip)$/u.test(value));
     if (!clipped) return false;
     const { width, height } = source.getBoundingClientRect();
     return width > 0 && width <= 1 && height > 0 && height <= 1;
+  }
+  function isCounterBacklinkLabel(source, style, win) {
+    if (style?.display !== "none" || source.children.length || !/^\d+$/u.test(source.textContent?.trim() || "")) return false;
+    const link = source.parentElement;
+    if (!link?.matches("a[href]")) return false;
+    const note = link.closest('li[id],[role="doc-footnote"][id],[role="doc-endnote"][id]');
+    const target = getDocumentFragmentTarget(link);
+    if (!note || !target || note.contains(target)) return false;
+    const references = target.matches("a[href]") ? [target] : Array.from(target.querySelectorAll("a[href]"));
+    if (!references.some((reference) => getDocumentFragmentTarget(reference) === note)) return false;
+    const marker = win.getComputedStyle(link, "::before");
+    return marker.display !== "none" && !["hidden", "collapse"].includes(marker.visibility) && /^counter\(/u.test(marker.content);
+  }
+  function isClippedLinkHint(source, style, win) {
+    if (!isClippedAccessibilityText(source, style, true) || source.id || source.children.length) return false;
+    const link = source.parentElement;
+    if (!link?.matches("a[href]")) return false;
+    return Array.from(link.childNodes).some((node) => {
+      if (node === source || !node.textContent?.trim()) return false;
+      if (node.nodeType === 3) return true;
+      if (node.nodeType !== 1) return false;
+      const label = (
+        /** @type {Element} */
+        node
+      );
+      const labelStyle = safeGetComputedStyle(win, label);
+      return isCounterBacklinkLabel(label, labelStyle, win) || labelStyle && labelStyle.display !== "none" && !["hidden", "collapse"].includes(labelStyle.visibility) && !isClippedAccessibilityText(label, labelStyle, true);
+    });
   }
   function isHiddenMathSource(source, style) {
     return source.matches("span") && source.firstElementChild?.localName === "math" && (style?.display === "none" || /** @type {HTMLElement} */
@@ -485,6 +520,10 @@ var clipaibleArticleExtractor = (() => {
       clone.replaceChildren();
       return clone;
     }
+    const comments = [];
+    const commentWalker = clone.ownerDocument.createTreeWalker(clone, win?.NodeFilter.SHOW_COMMENT ?? 128);
+    while (commentWalker.nextNode()) comments.push(commentWalker.currentNode);
+    for (const comment of comments) comment.parentNode.removeChild(comment);
     const originals = Array.from(element.querySelectorAll("*"));
     const copies = Array.from(clone.querySelectorAll("*"));
     const rootStyle = disclosed && win ? safeGetComputedStyle(win, element) : null;
@@ -500,7 +539,7 @@ var clipaibleArticleExtractor = (() => {
       }
       const literal = original.closest("pre,code,math,mjx-container,.MathJax,.katex," + MATHJAX_COMMON_HTML);
       const style = original.ownerDocument.defaultView ? safeGetComputedStyle(original.ownerDocument.defaultView, original) : null;
-      if (!literal && isCopyExcludedLinkHint(original, style)) {
+      if (!literal && (isCopyExcludedLinkHint(original, style) || isClippedLinkHint(original, style, win))) {
         copy.remove();
         continue;
       }
@@ -512,6 +551,11 @@ var clipaibleArticleExtractor = (() => {
           copy.remove();
           continue;
         }
+      }
+      if (!literal && isCounterBacklinkLabel(original, style, win)) {
+        copy.removeAttribute("style");
+        copy.removeAttribute("hidden");
+        continue;
       }
       if (!literal && (original.matches("script,style,template,noscript,input,select,textarea") || style?.display === "none" || !style && original.hasAttribute("hidden"))) {
         copy.remove();
@@ -1777,6 +1821,40 @@ var clipaibleArticleExtractor = (() => {
     }
     return [...new Set(regions)];
   }
+  function findPublisherAccessoryRegions(root) {
+    if (!root.matches('article,[role~="article"]') || !isEditorialOwner(root)) return [];
+    const bodySelector = DECLARED_BODY + ",.entry-content,.post-content,.article-content,.article-body,.post-body,.wp-block-post-content";
+    const bodies = Array.from(root.querySelectorAll(bodySelector)).filter((body2) => body2.closest('article,[role~="article"]') === root && !body2.parentElement?.closest(bodySelector));
+    if (bodies.length !== 1 || bodies[0].querySelectorAll("p").length < 2) return [];
+    const body = bodies[0];
+    const destinations = Array.from(body.querySelectorAll('a[href*="#"]'), getDocumentFragmentTarget).filter(Boolean);
+    const panels = [];
+    for (let branch = body; branch !== root; branch = branch.parentElement) {
+      for (const region of branch.parentElement.children) {
+        if (region === branch || destinations.some((target) => region.contains(target)) || region.querySelector('h1,article,table,pre,blockquote,math,[role~="doc-toc"],[role~="doc-bibliography"],[role~="doc-endnotes"]')) continue;
+        const links = Array.from(region.querySelectorAll("a[href]"));
+        const hasProse = Array.from(region.querySelectorAll("p")).some((paragraph) => !paragraph.closest("a[href]") && normalizedLabel(paragraph.textContent).length >= 80);
+        if (hasProse) continue;
+        if (!region.querySelector("figure") && links.filter(isPublisherLinkAction).length >= 2) {
+          panels.push(region);
+          continue;
+        }
+        const cards = links.filter((link) => link.querySelector("img,picture") && normalizedLabel(link.textContent) && !imageAssetDestination(link) && !getDocumentFragmentTarget(link) && /^https?:\/\//i.test(
+          /** @type {HTMLAnchorElement} */
+          link.href
+        ));
+        if (new Set(cards.map((card) => (
+          /** @type {HTMLAnchorElement} */
+          card.href
+        ))).size < 2) continue;
+        const cardGroup = cards[0].parentElement;
+        if (cards.length !== links.length || !cards.every((card) => cardGroup.contains(card))) continue;
+        if (!Array.from(region.querySelectorAll(HEADINGS)).some((heading) => !cards.some((card) => card.contains(heading)))) continue;
+        if (Array.from(region.querySelectorAll("figure,img,picture")).every((image) => cards.some((card) => card.contains(image)))) panels.push(region);
+      }
+    }
+    return panels;
+  }
   function isWhitespaceNode(node) {
     return node.nodeType === 8 || node.nodeType === 3 && !node.textContent?.trim();
   }
@@ -1838,6 +1916,43 @@ var clipaibleArticleExtractor = (() => {
   function isFlowContainer(element) {
     return ["DIV", "ARTICLE", "SECTION", "MAIN", "ASIDE", "BODY", "DL", "DT", "DD", "TD", "TH"].includes(element.tagName);
   }
+
+  // scripts/utils/html/tokenizer.js
+  var ENTITIES = {
+    amp: "&",
+    AMP: "&",
+    lt: "<",
+    LT: "<",
+    gt: ">",
+    GT: ">",
+    quot: '"',
+    QUOT: '"',
+    apos: "'",
+    nbsp: " ",
+    mdash: "—",
+    ndash: "–",
+    hellip: "…",
+    laquo: "«",
+    raquo: "»",
+    copy: "©",
+    reg: "®",
+    trade: "™",
+    colon: ":",
+    semi: ";",
+    Tab: "	",
+    NewLine: "\n"
+  };
+  function decodeEntities(value) {
+    return String(value ?? "").replace(/&#(\d+);?|&#x([a-f\d]+);?|&([a-z][a-z\d]+);/gi, (entity, decimal, hex, named) => {
+      if (named !== void 0) return ENTITIES[named] ?? entity;
+      const point = decimal !== void 0 ? Number(decimal) : parseInt(hex, 16);
+      return point > 0 && point <= 1114111 && !(point >= 55296 && point <= 57343) ? String.fromCodePoint(point) : "�";
+    });
+  }
+  var INLINE = new Set("a strong b em i u s del ins code br sub sup mark small span abbr cite q time dfn kbd var samp".split(" "));
+  var BLOCK = /* @__PURE__ */ new Set([...INLINE, ..."h1 h2 h3 h4 h5 h6 p hr pre blockquote ul ol li table thead tbody tfoot tr th td".split(" ")]);
+  var BLOCK_BOUNDARIES = new Set("p div li tr h1 h2 h3 h4 h5 h6 blockquote ul ol pre table section article".split(" "));
+  var DROP = new Set("script style iframe object embed form input button textarea select template".split(" "));
 
   // scripts/extraction/extractor/metadata.js
   function isValidArticleTitle(h1Element) {
@@ -2042,7 +2157,7 @@ var clipaibleArticleExtractor = (() => {
     for (const source of records) {
       const record = resolve(source);
       const articleType = hasType(record, /(?:Article|BlogPosting)$/);
-      const pageTitleMatches = [record.headline, record.name].some((name) => typeof name === "string" && name.replace(/\s+/g, " ").trim() === title);
+      const pageTitleMatches = [record.headline, record.name].some((name) => typeof name === "string" && [name, decodeEntities(name)].some((text) => text.replace(/\s+/g, " ").trim() === title));
       const currentEditorialPage = !articleType && hasType(record, /WebPage$/) && pageTitleMatches && matchesPage(record.url || record["@id"]) && (record.author || record.datePublished);
       if (!articleType && !currentEditorialPage) continue;
       const id = absoluteId(record["@id"]);
@@ -2648,11 +2763,11 @@ var clipaibleArticleExtractor = (() => {
     }
     if (paragraphs.length < 3) {
       try {
-        const BLOCK = /* @__PURE__ */ new Set(["p", "ul", "ol", "table", "blockquote", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "div", "section", "article"]);
+        const BLOCK2 = /* @__PURE__ */ new Set(["p", "ul", "ol", "table", "blockquote", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "div", "section", "article"]);
         const divs = Array.from(element.querySelectorAll("div")).slice(0, 100);
         let virtualParas = 0;
         for (const div of divs) {
-          const hasBlockChild = Array.from(div.children).some((c) => BLOCK.has(c.tagName.toLowerCase()));
+          const hasBlockChild = Array.from(div.children).some((c) => BLOCK2.has(c.tagName.toLowerCase()));
           if (!hasBlockChild && (div.textContent || "").trim().length > 80) {
             virtualParas++;
           }
@@ -4174,14 +4289,15 @@ var clipaibleArticleExtractor = (() => {
     }
     return false;
   }
-  function unreadableCanvasReference(owner, roots, text) {
+  function unavailableGraphicReference(owner, roots, text, allowPageLink = false) {
     const doc = owner.ownerDocument;
     const link = doc.createElement("a");
     const target = owner.closest("[id]");
-    if (target?.id && roots.some((root) => root === target || root.contains(target))) {
+    const articleTarget = target?.id && roots.some((root) => root === target || root.contains(target));
+    if (articleTarget || allowPageLink) {
       const url = new URL(doc.URL);
       if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) {
-        url.hash = encodeURIComponent(target.id);
+        url.hash = articleTarget ? encodeURIComponent(target.id) : "";
         link.href = url.href;
       }
     }
@@ -4189,6 +4305,32 @@ var clipaibleArticleExtractor = (() => {
     link.textContent = text || "Open original graphic";
     const html = link.hasAttribute("href") ? link.outerHTML : link.innerHTML;
     return { type: "paragraph", text: html, html };
+  }
+  function isBrowserDeferredGraphic(win, graphic) {
+    let reportsDeferredLayout = false;
+    const options = { get contentVisibilityAuto() {
+      reportsDeferredLayout = true;
+      return true;
+    } };
+    const skipped = (node) => node.checkVisibility?.() === true && node.checkVisibility(options) === false;
+    if (skipped(graphic)) return true;
+    if (win.getComputedStyle(graphic).contentVisibility === "auto" && Array.from(graphic.children).some((child) => !child.matches(DEFINITIONS) && skipped(child))) return true;
+    if (reportsDeferredLayout || graphic.checkVisibility?.() !== true) return false;
+    const { width, height, top, left, bottom, right } = graphic.getBoundingClientRect();
+    const outsideViewport = top >= win.innerHeight || left >= win.innerWidth || bottom < 0 || right < 0;
+    if (width || height || !outsideViewport || graphic.localName !== "svg") return false;
+    const svg = (
+      /** @type {SVGSVGElement} */
+      graphic
+    );
+    const viewBox = svg.viewBox?.baseVal;
+    if (!(viewBox?.width > 0 && viewBox?.height > 0)) return false;
+    const style = svg.computedStyleMap?.();
+    if (!style || ["width", "height", "max-width", "max-height"].some((property) => /^0(?:px|%)?$/.test(String(style.get(property))))) return false;
+    for (let node = graphic; node; node = node.parentElement) {
+      if (win.getComputedStyle(node).contentVisibility === "auto") return true;
+    }
+    return false;
   }
   function localReference(value, doc) {
     try {
@@ -4321,6 +4463,12 @@ var clipaibleArticleExtractor = (() => {
         const alt = [label.trim() && label.trim() !== text && label.trim() !== caption ? label.trim() : "", text].filter(Boolean).join("\n");
         const nodes = [owner, ...Array.from(owner.querySelectorAll("*"))];
         const included = nodes.filter((node) => !excluded(node, owner, selectors) && !node.closest(DEFINITIONS));
+        const surfaces = included.filter((node) => node.matches(GRAPHIC_SURFACE));
+        if (surfaces.length && surfaces.every((surface) => isBrowserDeferredGraphic(win, surface))) {
+          const reference = unavailableGraphicReference(owner, roots, [caption, alt].filter(Boolean).join("\n"), true);
+          if (reference) result.set(owner, reference);
+          continue;
+        }
         const rectangles = paintedRectangles(win, owner, owner.tagName === "FIGURE" ? included.slice(1) : included);
         if (!rectangles.length) throw failure();
         const extent = rectangles.reduce((bounds, rect) => ({ left: Math.min(bounds.left, rect.left), top: Math.min(bounds.top, rect.top), right: Math.max(bounds.right, rect.right), bottom: Math.max(bounds.bottom, rect.bottom) }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
@@ -4349,7 +4497,7 @@ var clipaibleArticleExtractor = (() => {
         if (owner.tagName === "CANVAS") {
           context.drawImage(owner, 0, 0, canvas.width, canvas.height);
           if (!hasCanvasPixels(context, canvas, deadline)) {
-            const reference = unreadableCanvasReference(owner, roots, alt);
+            const reference = unavailableGraphicReference(owner, roots, alt);
             if (reference) result.set(owner, reference);
             continue;
           }
@@ -6124,8 +6272,8 @@ var clipaibleArticleExtractor = (() => {
       logoPatterns
     )));
   }
-  function getEmbeddedMediaItems(element) {
-    if (!element || !["IFRAME", "VIDEO", "AUDIO"].includes(element.tagName)) return [];
+  function getEmbeddedMediaItems(element, fallbackSource = "") {
+    if (!element || !fallbackSource && !["IFRAME", "VIDEO", "AUDIO"].includes(element.tagName)) return [];
     const base = element.ownerDocument.baseURI;
     const safeUrl = (value) => {
       if (!value || !value.trim()) return null;
@@ -6136,8 +6284,9 @@ var clipaibleArticleExtractor = (() => {
         return null;
       }
     };
-    const source = safeUrl(element.getAttribute("src") || element.querySelector("source[src]")?.getAttribute("src"));
+    const source = safeUrl(fallbackSource || element.getAttribute("src") || element.querySelector("source[src]")?.getAttribute("src"));
     if (!source) return [];
+    if (fallbackSource && (!/^https?:\/\/[^\s<>]+$/i.test(fallbackSource) || !/\.(?:mp4|m4v|webm|mov|ogv|mp3|m4a|aac|wav|ogg|flac)$/i.test(source.pathname))) return [];
     const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({
       "&": "&amp;",
       "<": "&lt;",
@@ -7414,8 +7563,11 @@ var clipaibleArticleExtractor = (() => {
     const figure = element.closest("figure");
     if (figure && !element.closest("figcaption") && hasFigureBodyText(figure)) {
       const clone = cloneFigureText(element);
-      if (!clone.textContent?.trim()) return null;
+      const text2 = clone.textContent?.trim();
+      if (!text2) return null;
       const original = getOriginalTextIfTranslated(element);
+      const media = !original && !clone.querySelector("a[href]") && getEmbeddedMediaItems(figure, text2)[0];
+      if (media) return media;
       const html = original ? encodeOriginalText(element, original) : serializeReadingHtml(clone, state.selectionExclusions, state.referenceRoots, preserveRoot);
       return html ? { type: "paragraph", text: html, html } : null;
     }
@@ -7674,7 +7826,7 @@ var clipaibleArticleExtractor = (() => {
         const readingRoots = [.../* @__PURE__ */ new Set([...bodyRoots, ...media.roots, ...standfirst.element ? [standfirst.element] : []])];
         const recommendationRegions = bodyRoots.flatMap(findRecommendationRegions);
         const publisherIgnores = bodyRoots.flatMap((root) => Array.from(root.querySelectorAll(".instapaper_body .instapaper_ignore")));
-        const interfaceRegions = bodyRoots.flatMap(findPublisherFormRegions).concat(recommendationRegions, publisherIgnores);
+        const interfaceRegions = bodyRoots.flatMap(findPublisherFormRegions).concat(bodyRoots.flatMap(findPublisherAccessoryRegions), recommendationRegions, publisherIgnores);
         const explicitFlowRoots = selection ? collectExplicitFlowRoots(bodyRoots) : void 0;
         const state = {
           processedImages: /* @__PURE__ */ new Set(),

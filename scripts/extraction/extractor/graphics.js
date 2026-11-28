@@ -168,14 +168,15 @@ function hasCanvasPixels(context, canvas, deadline) {
   return false;
 }
 
-function unreadableCanvasReference(owner, roots, text) {
+function unavailableGraphicReference(owner, roots, text, allowPageLink = false) {
   const doc = owner.ownerDocument;
   const link = doc.createElement('a');
   const target = owner.closest('[id]');
-  if (target?.id && roots.some(root => root === target || root.contains(target))) {
+  const articleTarget = target?.id && roots.some(root => root === target || root.contains(target));
+  if (articleTarget || allowPageLink) {
     const url = new URL(doc.URL);
     if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) {
-      url.hash = encodeURIComponent(target.id);
+      url.hash = articleTarget ? encodeURIComponent(target.id) : '';
       link.href = url.href;
     }
   }
@@ -183,6 +184,31 @@ function unreadableCanvasReference(owner, roots, text) {
   link.textContent = text || 'Open original graphic';
   const html = link.hasAttribute('href') ? link.outerHTML : link.innerHTML;
   return { type: 'paragraph', text: html, html };
+}
+
+function isBrowserDeferredGraphic(win, graphic) {
+  let reportsDeferredLayout = false;
+  const options = { get contentVisibilityAuto() { reportsDeferredLayout = true; return true; } };
+  const skipped = node => node.checkVisibility?.() === true && node.checkVisibility(options) === false;
+  if (skipped(graphic)) return true;
+  // The outer SVG can retain a box while the browser skips painting its children.
+  if (win.getComputedStyle(graphic).contentVisibility === 'auto' &&
+      Array.from(graphic.children).some(child => !child.matches(DEFINITIONS) && skipped(child))) return true;
+  if (reportsDeferredLayout || graphic.checkVisibility?.() !== true) return false;
+
+  // Older Chromium can reduce an offscreen, intrinsically sized SVG to an empty box.
+  const { width, height, top, left, bottom, right } = graphic.getBoundingClientRect();
+  const outsideViewport = top >= win.innerHeight || left >= win.innerWidth || bottom < 0 || right < 0;
+  if (width || height || !outsideViewport || graphic.localName !== 'svg') return false;
+  const svg = /** @type {SVGSVGElement} */ (graphic);
+  const viewBox = svg.viewBox?.baseVal;
+  if (!(viewBox?.width > 0 && viewBox?.height > 0)) return false;
+  const style = svg.computedStyleMap?.();
+  if (!style || ['width', 'height', 'max-width', 'max-height'].some(property => /^0(?:px|%)?$/.test(String(style.get(property))))) return false;
+  for (let node = graphic; node; node = node.parentElement) {
+    if (win.getComputedStyle(node).contentVisibility === 'auto') return true;
+  }
+  return false;
 }
 
 function localReference(value, doc) {
@@ -304,6 +330,12 @@ export async function captureReadingGraphics(win, elements, state, constants) {
       const alt = [label.trim() && label.trim() !== text && label.trim() !== caption ? label.trim() : '', text].filter(Boolean).join('\n');
       const nodes = [owner, ...Array.from(owner.querySelectorAll('*'))];
       const included = nodes.filter(node => !excluded(node, owner, selectors) && !node.closest(DEFINITIONS));
+      const surfaces = included.filter(node => node.matches(GRAPHIC_SURFACE));
+      if (surfaces.length && surfaces.every(surface => isBrowserDeferredGraphic(win, surface))) {
+        const reference = unavailableGraphicReference(owner, roots, [caption, alt].filter(Boolean).join('\n'), true);
+        if (reference) result.set(owner, reference);
+        continue;
+      }
       const rectangles = paintedRectangles(win, owner, owner.tagName === 'FIGURE' ? included.slice(1) : included);
       if (!rectangles.length) throw failure();
       const extent = rectangles.reduce((bounds, rect) => ({ left: Math.min(bounds.left, rect.left), top: Math.min(bounds.top, rect.top), right: Math.max(bounds.right, rect.right), bottom: Math.max(bounds.bottom, rect.bottom) }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
@@ -331,7 +363,7 @@ export async function captureReadingGraphics(win, elements, state, constants) {
       if (owner.tagName === 'CANVAS') {
         context.drawImage(owner, 0, 0, canvas.width, canvas.height);
         if (!hasCanvasPixels(context, canvas, deadline)) {
-          const reference = unreadableCanvasReference(owner, roots, alt);
+          const reference = unavailableGraphicReference(owner, roots, alt);
           if (reference) result.set(owner, reference);
           continue;
         }

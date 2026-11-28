@@ -219,6 +219,62 @@ describe('Reading graphic ownership', () => {
     }
   });
 
+  it.each([
+    ['automatic containment on an ancestor', '<div style="content-visibility:auto"><svg><path/></svg></div>', 'svg', 'figure id="measurements"', '#measurements'],
+    ['automatic containment on the graphic itself', '<svg style="content-visibility:auto"><path/></svg>', 'path', 'figure', ''],
+  ])('preserves the caption and complete reading flow for %s', async (_name, markup, skipped, figureMarkup, fragment) => {
+    const { win, doc, root } = page(`<p>The first observation describes the independent measurement conditions.</p>
+      <${figureMarkup}>${markup}<figcaption>Observed sample distribution.</figcaption></figure>
+      <p>The final observation describes the conclusions supported by that measurement.</p>`);
+    const figure = doc.querySelector('figure');
+    const svg = doc.querySelector('svg');
+    doc.querySelector(skipped).checkVisibility = options => !options?.contentVisibilityAuto;
+    if (skipped === 'path') position(svg, 10, 30, 140, 90);
+    const before = root.outerHTML;
+    const elements = [...root.querySelectorAll('p,figure,svg,figcaption')];
+    const state = { referenceRoots: [root], processedImages: new Set(), addedHeadings: new Set(), content: [], debugInfo: null };
+    const callsBefore = vi.mocked(toSvg).mock.calls.length;
+
+    state.readingGraphics = await captureReadingGraphics(win, elements, state, CONSTANTS);
+    const items = parseElements(win, elements, state, CONSTANTS, doc.URL);
+
+    expect(vi.mocked(toSvg).mock.calls).toHaveLength(callsBefore);
+    expect(state.readingGraphics.get(figure)).toMatchObject({ type: 'paragraph' });
+    expect(items).toEqual([
+      expect.objectContaining({ type: 'paragraph', text: expect.stringContaining('The first observation') }),
+      expect.objectContaining({ type: 'paragraph', html: `<a href="https://example.test/report${fragment}">Observed sample distribution.</a>` }),
+      expect.objectContaining({ type: 'paragraph', text: expect.stringContaining('The final observation') }),
+    ]);
+    expect(root.outerHTML).toBe(before);
+  });
+
+  it('retains a capture failure for a visible zero-size graphic', async () => {
+    const { win, doc, root } = page('<figure><svg style="content-visibility:auto"><path/></svg><figcaption>Observed data.</figcaption></figure>');
+    const svg = doc.querySelector('svg');
+    svg.checkVisibility = () => true;
+    doc.querySelector('path').checkVisibility = () => true;
+    await expect(captureReadingGraphics(win, [svg], { referenceRoots: [root] }, CONSTANTS)).rejects.toMatchObject({ code: 'GRAPHIC_CAPTURE_FAILED' });
+  });
+
+  it.each(['auto', '0px'])('distinguishes deferred and explicitly zero-sized offscreen SVGs on older browsers (width %s)', async width => {
+    const { win, doc, root } = page(`<div style="content-visibility:auto">
+      <figure id="profile"><svg viewBox="0 0 160 90"><path/></svg><figcaption>Profile of the field.</figcaption></figure></div>`);
+    const svg = doc.querySelector('svg');
+    svg.checkVisibility = () => true;
+    Object.defineProperty(svg, 'viewBox', { value: { baseVal: { width: 160, height: 90 } } });
+    svg.computedStyleMap = () => new Map([['width', width]]);
+    position(svg, 0, 2500, 0, 2500);
+    const capture = captureReadingGraphics(win, [svg], { referenceRoots: [root] }, CONSTANTS);
+
+    if (width === 'auto') {
+      expect((await capture).get(doc.querySelector('figure'))).toMatchObject({
+        type: 'paragraph', html: '<a href="https://example.test/report#profile">Profile of the field.</a>',
+      });
+    } else {
+      await expect(capture).rejects.toMatchObject({ code: 'GRAPHIC_CAPTURE_FAILED' });
+    }
+  });
+
   it('retains a visibility override while rejecting a display-none ancestor', () => {
     const { doc, owner } = page('<figure style="visibility:hidden"><svg role="img"><path style="visibility:visible"/></svg></figure><div style="display:none"><svg role="img" style="visibility:visible"/></div><aside style="visibility:hidden"><svg role="img"/></aside>');
     expect(owner('figure svg')).toBe(doc.querySelector('figure'));

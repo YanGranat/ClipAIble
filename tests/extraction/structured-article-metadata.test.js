@@ -50,6 +50,15 @@ describe('Current structured article metadata', () => {
     expect(metadata(current)).toMatchObject({ author: 'Morgan Example', publishDate: '2024-04-17' });
   });
 
+  it('distinguishes the current byline when structured titles encode punctuation as entities', () => {
+    const exact = { ...current, headline: 'Observation &#8216;report&#8217; &amp; notes' };
+    const other = { ...current, headline: 'Observation report - Publisher', author: { name: 'Other Example' } };
+    const heading = '<h1>Observation ‘report’ &amp; notes</h1>';
+    expect(metadata([other, exact], { heading })).toMatchObject({ author: 'Morgan Example' });
+    const conflicting = { ...exact, author: { name: 'Other Example' } };
+    expect(metadata([conflicting, exact], { heading }).author).toBe('');
+  });
+
   it('keeps a media credit from becoming the article author', () => {
     const extra = `<meta property="article:author" content="https://example.test/author/morgan">
       <div itemtype="https://schema.org/ImageObject" itemscope>

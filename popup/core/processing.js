@@ -344,14 +344,15 @@ export function initProcessing(deps) {
           
           const scriptPromise = chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            func: function() {
+            args: [mode === 'extract'],
+            func: function(useDocumentTitle) {
               try {
                 // Always use full HTML - let AI figure out what's important
                 const html = document.documentElement.outerHTML;
                 
                 // Get title from various sources
-                let pageTitle = document.title;
-                const h1 = document.querySelector('h1');
+                let pageTitle = document.title.trim();
+                const h1 = useDocumentTitle && pageTitle ? null : document.querySelector('h1');
                 if (h1) {
                   // Clean title from Wikipedia edit section spans
                   const titleMain = h1.querySelector('.mw-page-title-main');

@@ -16,7 +16,7 @@ import { resolveContentSelection, isSelectedContentExcluded, findSelectedTextEle
 import { findPublisherFormRegions, isExcluded } from './filters.js';
 import { normalizeHeadingForDedup } from './text-utils.js';
 import { findSocialReadingRoot, findFallbackReadingRoots } from './fallbacks.js';
-import { findRecommendationRegions, isEditorialOwner, isSemanticReadingScope } from './reading-context.js';
+import { findPublisherAccessoryRegions, findRecommendationRegions, isEditorialOwner, isSemanticReadingScope } from './reading-context.js';
 import { CONSTANTS } from './constants.js';
 import { CONFIG } from '../../utils/config.js';
 
@@ -132,7 +132,8 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
       const readingRoots = [...new Set([...bodyRoots, ...media.roots, ...(standfirst.element ? [standfirst.element] : [])])];
       const recommendationRegions = bodyRoots.flatMap(findRecommendationRegions);
       const publisherIgnores = bodyRoots.flatMap(root => Array.from(root.querySelectorAll('.instapaper_body .instapaper_ignore')));
-      const interfaceRegions = bodyRoots.flatMap(findPublisherFormRegions).concat(recommendationRegions, publisherIgnores);
+      const interfaceRegions = bodyRoots.flatMap(findPublisherFormRegions)
+        .concat(bodyRoots.flatMap(findPublisherAccessoryRegions), recommendationRegions, publisherIgnores);
       const explicitFlowRoots = selection ? collectExplicitFlowRoots(bodyRoots) : undefined;
       /** @type {ExtractionState} */
       const state = {
