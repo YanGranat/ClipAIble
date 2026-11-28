@@ -4,6 +4,8 @@ Last updated: November 2026
 
 ClipAIble processes selected web pages, video subtitles, and PDFs in the browser and through the external services used by enabled features.
 
+ClipAIble uses this data to provide and support the features described in this policy. Its use of user data complies with the [Chrome Web Store User Data Policy](https://developer.chrome.com/docs/webstore/program-policies/user-data-faq), including the Limited Use requirements.
+
 ## Local data
 
 The extension uses Chrome extension storage, IndexedDB, and local model caches for:

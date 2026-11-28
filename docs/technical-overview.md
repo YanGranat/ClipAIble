@@ -81,4 +81,4 @@ For local development, `npm run build:offscreen:watch` and `npm run build:worker
 npm run package:production
 ```
 
-The packager builds the extension and writes the runtime ZIP and matching `-sources.zip` under `workspace/releases/`. Pass a custom output ZIP path after `--`. The source archive includes the build inputs and [third-party source kits](https://github.com/YanGranat/ClipAIble/blob/main/third_party/sources/README.md). See the [test commands](https://github.com/YanGranat/ClipAIble/blob/main/tests/README.md).
+The packager builds the extension and writes the runtime ZIP and matching `-sources.zip` under `workspace/releases/`. Pass a custom output ZIP path after `--`. Each archive includes the license notices for the files it contains. The source archive includes the build inputs and [third-party source kits](https://github.com/YanGranat/ClipAIble/blob/main/third_party/sources/README.md). See the [test commands](https://github.com/YanGranat/ClipAIble/blob/main/tests/README.md).

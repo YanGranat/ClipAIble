@@ -7,7 +7,7 @@ ClipAIble is a Chrome extension for saving web articles, PDFs, and subtitled vid
 | What you want to do | Where to start |
 | --- | --- |
 | Save an article without an AI account | [First export](#first-export) |
-| Choose among three extraction modes | [How extraction works](#how-extraction-works) |
+| Choose how to read a web article | [How extraction works](#how-extraction-works) |
 | Save a PDF or turn video captions into an article | [PDF and video sources](#pdf-and-video-sources) |
 | Choose a format and customize a PDF | [Output formats](#output-formats) |
 | Set up API keys or add an AI model | [AI providers and models](#ai-providers-and-models) |
@@ -31,7 +31,7 @@ Install ClipAIble from the Chrome Web Store and pin it from Chrome’s Extension
 4. Choose **PDF** beside **Save**, then click **Save**. Keep the source tab open while ClipAIble reads the page. The file appears in Chrome’s downloads.
 5. Run the export again with **EPUB**, **FB2**, **MD**, or **Audio** selected when you need another format. Audio requires a speech provider or a local voice model.
 
-<img src="screenshots/quick-start.png" width="368" alt="ClipAIble toolbar popup showing Ready, Save, and PDF output">
+<img src="https://raw.githubusercontent.com/YanGranat/ClipAIble/main/screenshots/quick-start.png" width="368" alt="ClipAIble toolbar popup showing Ready, Save, and PDF output">
 
 An article in **Automatic (no AI)** with its original language can be saved without an API key. The **AI Provider** and **Model** fields configure options that use the article AI model. Retrieving original images can still make requests to the source websites.
 
@@ -68,9 +68,10 @@ Extraction is one part of an export. For example, you can select Automatic to re
 Open the original PDF in a Chrome tab and start from the ClipAIble toolbar popup. Choose an output format, then save. You can turn a report into Markdown, make an EPUB from a paper, or listen to its text as narration.
 
 - **Automatic (no AI)** reads the PDF’s text layer. The bundled PDF parser uses the positions of words and lines to reconstruct content. Start here when the original has selectable paragraphs in a sensible reading order.
+- **OCR (Tesseract)** recognizes text in rendered pages on your device. Use it for scanned PDFs or an incomplete text layer.
 - **AI Selector** and **AI Extract** both render the PDF pages and send the rendered images to the article AI provider. Select a model that accepts **image input** and save its key. Use this route for scans and pages whose text layer differs from what you see.
 
-To check a PDF, select and copy a paragraph in Chrome. If it pastes in the correct order, try Automatic first. If you can select only a page number while the rest of the page behaves like a picture, use an AI mode. For an AI PDF job, the model receives visible page content, including text that is part of an image.
+To check a PDF, select and copy a paragraph in Chrome. If it pastes in the correct order, try Automatic first. If only the page number is selectable, try OCR. For an AI PDF job, the model receives visible page content, including text that is part of an image.
 
 ### OCR for scanned PDFs
 
@@ -106,11 +107,11 @@ Select **PDF** next to **Save**, then open **Settings**. **Page Layout** control
 
 **Style Preset** sets the document colors. Choose **Dark (default)**, **Light**, **Sepia**, or **High Contrast**, or use the font, font size, background, text, heading, and link controls for a custom look. The reset button restores the default PDF styles. The theme selector at the top of the popup affects the extension interface. The PDF’s colors come from **Style Preset** and the individual style controls in **Settings**.
 
-<img src="screenshots/pdf-export.png" width="740" alt="An exported ClipAIble PDF with formatted article text and an illustration">
+<img src="https://raw.githubusercontent.com/YanGranat/ClipAIble/main/screenshots/pdf-export.png" width="740" alt="An exported ClipAIble PDF with formatted article text and an illustration">
 
 ### Sample downloads
 
-Compare the repository’s sample article in [PDF](examples/PDF/Style%20Preset%20-%20Light/Measuring_Light_in_a_Greenhouse.pdf), [EPUB](examples/EPUB/Measuring_Light_in_a_Greenhouse.epub), [FB2](examples/FB2/Measuring_Light_in_a_Greenhouse.fb2), or [Markdown](examples/Markdown/Measuring_Light_in_a_Greenhouse.md). Its [Piper audio export](examples/Audio/Piper%20TTS%20%28offline%29/Measuring_Light_in_a_Greenhouse.wav) shows the same article as narration.
+Compare the repository’s sample article in [PDF](https://github.com/YanGranat/ClipAIble/blob/main/examples/PDF/Style%20Preset%20-%20Light/Measuring_Light_in_a_Greenhouse.pdf), [EPUB](https://github.com/YanGranat/ClipAIble/blob/main/examples/EPUB/Measuring_Light_in_a_Greenhouse.epub), [FB2](https://github.com/YanGranat/ClipAIble/blob/main/examples/FB2/Measuring_Light_in_a_Greenhouse.fb2), or [Markdown](https://github.com/YanGranat/ClipAIble/blob/main/examples/Markdown/Measuring_Light_in_a_Greenhouse.md). Its [Piper audio export](https://github.com/YanGranat/ClipAIble/blob/main/examples/Audio/Piper%20TTS%20%28offline%29/Measuring_Light_in_a_Greenhouse.wav) shows the same article as narration.
 
 Try different formats on the same representative article if you are deciding how to keep a collection. PDF preserves a reading layout. EPUB is useful when a reader needs to resize the text. Markdown makes the extracted structure easy to edit. For an article with wide tables, check how the table lays out at your chosen PDF size before saving a set of similar documents.
 
@@ -154,7 +155,7 @@ Headings and supported parts of the article are translated alongside paragraphs.
 
 ### Translate lettering inside images
 
-Image translation edits text inside the pixels of an illustration, diagram, or screenshot. It is available with **PDF**, **EPUB**, and **FB2** when you choose a target language. ClipAIble checks whether an image has text that needs translation. It sends eligible images to the editor and embeds the returned images in the document. An individual edit failure can leave the original image in place.
+Image translation edits text inside the pixels of an illustration, diagram, or screenshot. It is available with **PDF**, **EPUB**, and **FB2** when you choose a target language and an extraction mode that preserves images. ClipAIble checks whether an image has text that needs translation. It sends eligible images to the editor and embeds the returned images in the document. An individual edit failure can leave the original image in place.
 
 1. Choose **PDF**, **EPUB**, or **FB2** beside **Save**.
 2. Open **Settings** and pick a **Target Language**. Enable **Translate images**.
@@ -162,7 +163,7 @@ Image translation edits text inside the pixels of an illustration, diagram, or s
 4. Save the API key for the editing step. When detection uses the article AI model, make sure that model accepts images and its provider has a key.
 5. Export the document. Inspect the lettering in figures, especially units, values, legends, and axis labels.
 
-<img src="screenshots/image-translation.png" width="342" alt="Image translation settings with the OpenRouter image provider, model selector, and API-key field">
+<img src="https://raw.githubusercontent.com/YanGranat/ClipAIble/main/screenshots/image-translation.png" width="342" alt="Image translation settings with the OpenRouter image provider, model selector, and API-key field">
 
 | Image provider | What it uses | Official documentation |
 | --- | --- | --- |
@@ -185,7 +186,7 @@ Piper and Supertonic run on your device after their files are downloaded. You ca
 - **Piper TTS (offline)** downloads a voice model when it is first needed. Choose the voice before exporting. The next export can reuse that model. When you choose a different voice, ClipAIble may need to download files for it. [Piper voice catalog](https://huggingface.co/rhasspy/piper-voices)
 - **Supertonic 3 (offline)** uses one shared model of about **401 MB** for its voices. Select the provider, then use the download control under **Offline model**. Wait for the model to be ready, choose a voice, and click **Save** to export the audio. You can remove the downloaded model from the same settings when you need the disk space. [Supertonic documentation](https://github.com/supertone-oss-archive/supertonic)
 
-<img src="screenshots/local-audio.png" width="342" alt="Supertonic 3 settings showing an offline model download and the voice selector">
+<img src="https://raw.githubusercontent.com/YanGranat/ClipAIble/main/screenshots/local-audio.png" width="342" alt="Supertonic 3 settings showing an offline model download and the voice selector">
 
 Downloading the model and generating the narration are separate steps. Get the model while you have a connection, then open a source that is already available and export it. Downloading a local model does not send article text to a speech service. Cloud translation can still be used with a local voice if you choose to translate before narration.
 
@@ -230,7 +231,7 @@ Each prompt can include variables that ClipAIble fills in for a job. For example
 
 **Save** applies the change to new jobs. **Discard changes** removes edits you have not saved. **Restore default** restores the individual prompt. You can view the default to compare it with a custom version. Try a short representative source after editing a prompt. The settings backup includes saved custom prompts.
 
-<img src="screenshots/prompt-editor.png" width="960" alt="Advanced settings with the text translation prompt selected and its required targetLanguage variable shown">
+<img src="https://raw.githubusercontent.com/YanGranat/ClipAIble/main/screenshots/prompt-editor.png" width="960" alt="Advanced settings with the text translation prompt selected and its required targetLanguage variable shown">
 
 ## Local data and backups
 
@@ -240,7 +241,7 @@ Open **Statistics** in the popup to see export totals, the format breakdown, and
 
 The panel also shows information about the selector cache and lets you clear it. The cache holds rules for finding content on familiar sites. Clearing it is useful after a site changes how it displays articles. It does not remove history entries. If one export needs fresh selectors, you can turn off **Use cached selectors** in **Settings** before the export, then turn it back on for later pages.
 
-<img src="screenshots/export-statistics.png" width="368" alt="Statistics showing one saved PDF and export totals by format">
+<img src="https://raw.githubusercontent.com/YanGranat/ClipAIble/main/screenshots/export-statistics.png" width="368" alt="Statistics showing one saved PDF and export totals by format">
 
 ### Export and restore settings
 
@@ -261,6 +262,7 @@ ClipAIble stores settings, custom prompts, encrypted API keys, history, and cach
 | Action | Where data is processed |
 | --- | --- |
 | Automatic article extraction in the original language | In Chrome. Loading the source and retrieving original images can make requests to their websites. |
+| PDF OCR in the original language | In Chrome. ClipAIble uses its bundled Tesseract worker to recognize every page. |
 | AI extraction, translation, summaries, or video processing | The article AI service receives the data needed for the task. This can include page HTML, extracted text, video subtitles, or rendered PDF pages. |
 | Image translation | Detection and editing services receive the images needed for the selected workflow. |
 | Local narration | The local voice model runs in Chrome. Any enabled translation takes place separately. |
@@ -282,9 +284,9 @@ Reusing selectors saves the step that asks a provider to identify the same artic
 ### Make a translated reading copy of a report
 
 1. Open the report in Chrome. Decide whether you have a web article or a PDF. For a PDF, check whether ordinary text selection works.
-2. Choose the extraction mode for the source. Use Automatic on a clean text layer, or select a model with image input and use an AI mode for a scan.
+2. Choose the extraction mode for the source. Use **Automatic** on a clean PDF text layer, **OCR (Tesseract)** to recover text from a scan locally, or an AI mode with an image-capable model to read page content and structure.
 3. Set **Target Language**. Use **PDF** with A4 pages if the report needs a fixed layout, or **EPUB** if the reader wants to adjust the size of the text.
-4. If the report has important labels inside images, enable **Translate images** and choose an editor. Confirm that the configured provider can run the detection and edit steps for that editor.
+4. If the report has important labels inside images, choose an extraction mode that preserves illustrations, enable **Translate images**, and choose an editor. Confirm that the configured provider can run the detection and edit steps for that editor.
 5. Export and check the table headings, units, citations, and image captions. Save another copy with **Auto (original)** if readers need the original wording beside the translation.
 
 ### Listen to an article without a speech API
@@ -309,10 +311,10 @@ When you use OpenRouter for more than one step, save a key for each feature you 
 | The provider reports that a model is unavailable | Open the model catalog for the chosen provider. Check the full ID, any variant suffix, and whether the model is active for your account. If you added reasoning effort manually, check that the model accepts it. |
 | The job cannot reach the provider or hits a rate limit | Check the provider’s service status and usage dashboard. For rate limits, wait for the provider’s quota to reset or use a suitable model available to your key. **Cancel** stops the current job in ClipAIble. |
 | The export includes page controls or misses the end of the article | Confirm that the full article is visible in Chrome. Try **AI Selector** with **Use cached selectors** turned off. If the article is still incomplete, compare an **AI Extract** run against the source. |
-| A PDF has few selectable characters | Copy a paragraph from the original PDF to check its text layer. Use an AI mode with an image-capable model when the visible page is mostly a scan. |
+| A PDF has few selectable characters | Copy a paragraph from the original PDF to check its text layer. If the visible page is mostly a scan, select **OCR (Tesseract)** in **Settings → Extraction Mode**. |
 | ClipAIble asks for a file while reading a local PDF | Select the same PDF while the popup is open. For direct access in the future, enable **Allow access to file URLs** in the extension’s Chrome details. |
 | A video job cannot find usable subtitles | Open the video on its own page and check for a caption track. Verify the article AI key even when Automatic is selected. |
-| **Translate images** is missing | Choose PDF, EPUB, or FB2 and set a specific target language. The switch and editor settings appear for those outputs. |
+| **Translate images** is missing | Choose PDF, EPUB, or FB2 and set a specific target language. Use an extraction mode that preserves images. **OCR (Tesseract)** extracts text. |
 | A cloud audio job asks for a different key | Pick **Audio**, reopen **Settings**, and verify the key for the selected **TTS Provider**. The OpenRouter speech key is in the audio section. The Gemini TTS key is separate from the image key. |
 | A local voice needs a download | Use a network connection for the first download and ensure there is space for the selected model. **Offline model** shows the Supertonic download status. |
 | Qwen rejects the workspace | Use the region and workspace ID from the Alibaba Cloud Model Studio account that issued the API key. Confirm that your model and voice are available in that workspace. |
@@ -351,7 +353,7 @@ Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**,
 - `scripts/generation/` turns the article into a document or audio file. `print/` contains the print page used for PDF generation.
 - The extension’s offscreen document handles work such as PDF reading, image decoding, and local speech synthesis independently of the popup.
 
-See the [technical overview](docs/technical-overview.md) for runtime components, how content moves through them, and what they store. See [test commands](tests/README.md) for targeted checks and [third-party source packages](third_party/sources/README.md) for the corresponding build inputs.
+See the [technical overview](docs/technical-overview.md) for runtime components, how content moves through them, and what they store. See [test commands](https://github.com/YanGranat/ClipAIble/blob/main/tests/README.md) for targeted checks and [third-party source packages](https://github.com/YanGranat/ClipAIble/blob/main/third_party/sources/README.md) for the corresponding build inputs.
 
 ## License
 

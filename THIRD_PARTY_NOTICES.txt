@@ -1,5 +1,7 @@
 Third-party licenses
 
+PDF OCR notices are in lib/ocr/THIRD_PARTY_NOTICES.txt.
+
 ========================================================================
 PDF.js 6.5.438
 https://github.com/mozilla/pdf.js/tree/v6.5.438
